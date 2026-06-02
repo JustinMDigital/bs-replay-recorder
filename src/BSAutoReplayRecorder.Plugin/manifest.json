@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/beat-saber-modding-group/BSIPA-MetadataFileSchema/master/Schema.json",
+  "author": "Auto Replay Recorder",
+  "description": "Automated Beat Saber replay capture with OBS and BeatLeader playback.",
+  "gameVersion": "1.40.6",
+  "id": "BSAutoReplayRecorder",
+  "name": "Beat Saber Auto Replay Recorder",
+  "version": "0.1.0",
+  "dependsOn": {
+    "BSIPA": "^4.3.6",
+    "BeatLeader": "^0.9.33",
+    "websocket-sharp": "^1.0.4"
+  },
+  "files": [
+    "Plugins/BSAutoReplayRecorder.Plugin.dll",
+    "Libs/BSAutoReplayRecorder.Core.dll"
+  ]
+}
