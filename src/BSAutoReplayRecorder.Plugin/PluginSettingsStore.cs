@@ -44,6 +44,11 @@ public static class PluginSettingsStore
             shouldSave = true;
         }
 
+        if (NormalizeLegacyLockMode(settings))
+        {
+            shouldSave = true;
+        }
+
         if (ApplySettingsLock(settings, logger))
         {
             shouldSave = true;
@@ -117,6 +122,17 @@ public static class PluginSettingsStore
     {
         return string.Equals(lockMode, "Standard", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(lockMode, "Tournament", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool NormalizeLegacyLockMode(BatchRecorderSettings settings)
+    {
+        if (!string.Equals(settings.SettingsLockMode, "Tournament", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        settings.SettingsLockMode = "Standard";
+        return true;
     }
 
     private static bool NormalizeLegacyRecorderPaths(BatchRecorderSettings settings)

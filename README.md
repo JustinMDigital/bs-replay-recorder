@@ -49,9 +49,13 @@ Each session also has its own `completed-replays.json`, so rerunning one week do
 Press `F9` in game to toggle the recorder panel.
 
 - `Rescan / Import` imports new `.bsor` files from the active session import folder.
+- `Check Setup` verifies OBS websocket access and recorder folders.
+- `Test OBS` records a short 3 second OBS clip and reports the output path.
 - `Start Batch` starts the pending queue when auto-start is disabled or after adding files.
 - `Stop After Current` lets the current recording finish, then stops the batch.
 - `Clear Completed` clears the active session's completed state so the same queue can be rerun.
+- `Switch` changes or creates the active session from the session text field.
+- Folder buttons open the import, queue, session, settings, and logs locations.
 
 The status overlay shows preflight, OBS start, active recording, delays between recordings, failures, and completion.
 

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using BeatLeader.Models;
@@ -15,6 +17,7 @@ public sealed class Plugin
 {
     private readonly object _runtimeSync = new object();
     private Logger? _logger;
+    private BatchRecorderSettings? _configuredSettings;
     private BatchRecorderSettings? _settings;
     private RecorderSessionContext? _session;
     private CancellationTokenSource? _shutdownCancellation;
@@ -27,6 +30,8 @@ public sealed class Plugin
     private Task? _batchTask;
     private bool _batchRunning;
     private string _runtimeStatus = "Starting";
+    private string _setupStatus = "Starting";
+    private string _setupDetail = "Loading recorder";
 
     [Init]
     public void Init(Logger logger)
@@ -49,28 +54,29 @@ public sealed class Plugin
             RescanRequested = RequestRescan,
             StartBatchRequested = RequestStartBatch,
             StopAfterCurrentRequested = RequestStopAfterCurrent,
-            ClearCompletedRequested = RequestClearCompleted
+            ClearCompletedRequested = RequestClearCompleted,
+            CheckSetupRequested = RequestSetupCheck,
+            TestObsRequested = RequestTestObs,
+            SwitchSessionRequested = RequestSwitchSession,
+            OpenImportFolderRequested = () => OpenFolder(_session?.ImportInboxDirectory),
+            OpenQueueFolderRequested = () => OpenFolder(_session?.QueueDirectory),
+            OpenSessionFolderRequested = () => OpenFolder(_session?.SessionDirectory),
+            OpenSettingsRequested = () => OpenFile(GamePaths.GetSettingsPath()),
+            OpenLogsRequested = () => OpenFolder(Path.Combine(GamePaths.GetGameRoot(), "Logs"))
         });
         ReplayerLauncher.ReplayWasStartedEvent += HandleReplayWasStarted;
         ReplayerLauncher.ReplayWasFinishedEvent += HandleReplayWasFinished;
 
         _shutdownCancellation = new CancellationTokenSource();
-        var configuredSettings = PluginSettingsStore.LoadOrCreate(_logger);
-        _session = RecorderSessionContext.Create(configuredSettings);
-        _settings = _session.EffectiveSettings;
-        _logger.Info("Active recorder session: " + _session.SessionName);
-        _logger.Info("Replay import folder: " + _session.ImportInboxDirectory);
-        _logger.Info("Replay queue folder: " + _session.QueueDirectory);
+        _configuredSettings = PluginSettingsStore.LoadOrCreate(_logger);
+        ActivateSession(importReplays: _configuredSettings.AutoImportReplays);
+        if (_settings == null)
+        {
+            return;
+        }
 
         _obsRecorder = new ObsWebSocketRecorder(_settings.Obs, _logger);
-        _completedReplayStore = CompletedReplayStore.Load(_settings, _logger);
-        RescanQueue(importReplays: _settings.AutoImportReplays);
-
-        _manualReplayRecorder = new ManualReplayRecorder(
-            _settings,
-            _obsRecorder,
-            _logger,
-            _shutdownCancellation.Token);
+        RecreateManualRecorder();
 
         _logger.Info("Manual replay recording is " +
                      (_settings.RecordManualReplayStarts ? "enabled" : "disabled") + ".");
@@ -96,7 +102,11 @@ public sealed class Plugin
         else
         {
             _logger.Info("Batch auto-start is disabled. Set AutoStartBatch=true in settings.json to run the queue.");
-            StartObsProbe(_obsRecorder, _shutdownCancellation.Token);
+        }
+
+        if (!_settings.AutoStartBatch || _queueItems.Count == 0)
+        {
+            RequestSetupCheck();
         }
     }
 
@@ -110,6 +120,45 @@ public sealed class Plugin
         ReplayerLauncher.ReplayWasStartedEvent -= HandleReplayWasStarted;
         ReplayerLauncher.ReplayWasFinishedEvent -= HandleReplayWasFinished;
         _logger?.Info("Beat Saber Auto Replay Recorder shut down.");
+    }
+
+    private void ActivateSession(bool importReplays)
+    {
+        var logger = _logger;
+        var configuredSettings = _configuredSettings;
+        if (logger == null || configuredSettings == null)
+        {
+            return;
+        }
+
+        _session = RecorderSessionContext.Create(configuredSettings);
+        _settings = _session.EffectiveSettings;
+        _completedReplayStore = CompletedReplayStore.Load(_settings, logger);
+        _lastImportResult = new ReplayImportResult(0, 0, 0, 0);
+
+        logger.Info("Active recorder session: " + _session.SessionName);
+        logger.Info("Replay import folder: " + _session.ImportInboxDirectory);
+        logger.Info("Replay queue folder: " + _session.QueueDirectory);
+        RescanQueue(importReplays);
+    }
+
+    private void RecreateManualRecorder()
+    {
+        var settings = _settings;
+        var obsRecorder = _obsRecorder;
+        var logger = _logger;
+        var shutdownCancellation = _shutdownCancellation;
+        if (settings == null || obsRecorder == null || logger == null || shutdownCancellation == null)
+        {
+            return;
+        }
+
+        _manualReplayRecorder?.Dispose();
+        _manualReplayRecorder = new ManualReplayRecorder(
+            settings,
+            obsRecorder,
+            logger,
+            shutdownCancellation.Token);
     }
 
     private void StartBatch(
@@ -341,6 +390,281 @@ public sealed class Plugin
             TimeSpan.FromSeconds(6));
     }
 
+    private void RequestSwitchSession(string sessionName)
+    {
+        var logger = _logger;
+        var configuredSettings = _configuredSettings;
+        if (logger == null || configuredSettings == null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(sessionName))
+        {
+            RecordingStatusOverlay.ShowToast(
+                "Session name required",
+                "Enter a session name before switching",
+                TimeSpan.FromSeconds(5),
+                isError: true);
+            return;
+        }
+
+        if (_batchRunning)
+        {
+            RecordingStatusOverlay.ShowToast(
+                "Cannot switch session",
+                "Wait until the batch is idle",
+                TimeSpan.FromSeconds(5),
+                isError: true);
+            return;
+        }
+
+        configuredSettings.ActiveSessionName = sessionName.Trim();
+        PluginSettingsStore.Save(configuredSettings);
+        ActivateSession(importReplays: configuredSettings.AutoImportReplays);
+        RecreateManualRecorder();
+        RequestSetupCheck();
+
+        RecordingStatusOverlay.ShowToast(
+            "Session switched",
+            "Active session: " + (_session?.SessionName ?? configuredSettings.ActiveSessionName),
+            TimeSpan.FromSeconds(5));
+    }
+
+    private void RequestSetupCheck()
+    {
+        var obsRecorder = _obsRecorder;
+        var shutdownCancellation = _shutdownCancellation;
+        if (obsRecorder == null || shutdownCancellation == null)
+        {
+            return;
+        }
+
+        Task.Run(async () =>
+        {
+            SetSetupStatus("Checking setup", "Testing OBS and recorder folders");
+            try
+            {
+                EnsureSessionFolders();
+                var status = await obsRecorder.GetRecordingStatusAsync(shutdownCancellation.Token)
+                    .ConfigureAwait(false);
+
+                int queueCount;
+                lock (_runtimeSync)
+                {
+                    queueCount = _queueItems.Count;
+                }
+
+                if (status.OutputActive)
+                {
+                    SetSetupStatus("OBS is already recording", "Stop OBS recording before starting a batch");
+                    return;
+                }
+
+                SetSetupStatus(
+                    queueCount > 0 ? "Ready to record" : "Ready, no replays queued",
+                    "OBS connected, BeatLeader loaded, folders ready");
+            }
+            catch (OperationCanceledException)
+            {
+                SetSetupStatus("Setup check canceled", "");
+            }
+            catch (Exception ex)
+            {
+                SetSetupStatus("OBS not connected", ex.Message);
+                _logger?.Warn("Setup check failed: " + ex.Message);
+            }
+        }, shutdownCancellation.Token);
+    }
+
+    private void RequestTestObs()
+    {
+        var obsRecorder = _obsRecorder;
+        var settings = _settings;
+        var shutdownCancellation = _shutdownCancellation;
+        if (obsRecorder == null || settings == null || shutdownCancellation == null)
+        {
+            return;
+        }
+
+        if (_batchRunning)
+        {
+            RecordingStatusOverlay.ShowToast(
+                "Cannot test OBS",
+                "Wait until the batch is idle",
+                TimeSpan.FromSeconds(5),
+                isError: true);
+            return;
+        }
+
+        Task.Run(async () =>
+        {
+            var item = new ReplayQueueItem(
+                1,
+                "obs-test",
+                new BSAutoReplayRecorder.Core.Replay.BsorInfo
+                {
+                    SongName = "OBS Test",
+                    Difficulty = "Setup"
+                });
+            var plan = new RecordingPlan(
+                item,
+                "auto-replay-recorder-obs-test",
+                TimeSpan.Zero,
+                TimeSpan.Zero);
+            var recordingStarted = false;
+
+            try
+            {
+                SetSetupStatus("Testing OBS", "Recording a 3 second test clip");
+                var status = await obsRecorder.GetRecordingStatusAsync(shutdownCancellation.Token)
+                    .ConfigureAwait(false);
+                if (status.OutputActive)
+                {
+                    SetSetupStatus("OBS is already recording", "Stop OBS recording before testing");
+                    RecordingStatusOverlay.ShowToast(
+                        "OBS test skipped",
+                        "OBS is already recording",
+                        TimeSpan.FromSeconds(5),
+                        isError: true);
+                    return;
+                }
+
+                await obsRecorder.StartRecordingAsync(plan, shutdownCancellation.Token)
+                    .ConfigureAwait(false);
+                recordingStarted = true;
+                await Task.Delay(TimeSpan.FromSeconds(3), shutdownCancellation.Token)
+                    .ConfigureAwait(false);
+                var stopResult = await obsRecorder.StopRecordingAsync(plan, CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                SetSetupStatus("OBS test passed", "Output: " + (stopResult.OutputPath ?? "OBS output folder"));
+                RecordingStatusOverlay.ShowToast(
+                    "OBS test passed",
+                    string.IsNullOrEmpty(stopResult.OutputPath) ? "Check OBS output folder" : stopResult.OutputPath,
+                    TimeSpan.FromSeconds(8));
+            }
+            catch (OperationCanceledException)
+            {
+                SetSetupStatus("OBS test canceled", "");
+            }
+            catch (Exception ex)
+            {
+                SetSetupStatus("OBS test failed", ex.Message);
+                RecordingStatusOverlay.ShowToast(
+                    "OBS test failed",
+                    "Check OBS websocket settings",
+                    TimeSpan.FromSeconds(8),
+                    isError: true);
+
+                if (recordingStarted)
+                {
+                    try
+                    {
+                        await obsRecorder.StopRecordingAsync(plan, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception stopEx)
+                    {
+                        _logger?.Error("Failed to stop OBS after failed test recording: " + stopEx);
+                    }
+                }
+            }
+        }, shutdownCancellation.Token);
+    }
+
+    private void EnsureSessionFolders()
+    {
+        var session = _session;
+        if (session == null)
+        {
+            throw new InvalidOperationException("No active session.");
+        }
+
+        Directory.CreateDirectory(session.SessionDirectory);
+        Directory.CreateDirectory(session.ImportInboxDirectory);
+        Directory.CreateDirectory(session.QueueDirectory);
+        Directory.CreateDirectory(Path.Combine(session.SessionDirectory, "Recordings"));
+    }
+
+    private void SetSetupStatus(string status, string detail)
+    {
+        lock (_runtimeSync)
+        {
+            _setupStatus = status;
+            _setupDetail = detail;
+        }
+
+        UpdateControlPanel();
+    }
+
+    private void OpenFolder(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(path);
+            StartWindowsProcess("explorer.exe", QuoteArgument(path));
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn("Could not open folder " + path + ": " + ex.Message);
+            RecordingStatusOverlay.ShowToast(
+                "Could not open folder",
+                path,
+                TimeSpan.FromSeconds(6),
+                isError: true);
+        }
+    }
+
+    private void OpenFile(string path)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            if (!File.Exists(path))
+            {
+                File.WriteAllText(path, "");
+            }
+
+            StartWindowsProcess("notepad.exe", QuoteArgument(path));
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn("Could not open file " + path + ": " + ex.Message);
+            RecordingStatusOverlay.ShowToast(
+                "Could not open file",
+                path,
+                TimeSpan.FromSeconds(6),
+                isError: true);
+        }
+    }
+
+    private static void StartWindowsProcess(string fileName, string arguments)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return "\"" + value.Replace("\"", "") + "\"";
+    }
+
     private void UpdateControlPanel()
     {
         var session = _session;
@@ -354,24 +678,38 @@ public sealed class Plugin
         int queueCount;
         bool batchRunning;
         string runtimeStatus;
+        string setupStatus;
+        string setupDetail;
         lock (_runtimeSync)
         {
             queueCount = _queueItems.Count;
             batchRunning = _batchRunning;
             runtimeStatus = _runtimeStatus;
+            setupStatus = _setupStatus;
+            setupDetail = _setupDetail;
         }
 
         RecordingStatusOverlay.SetControlPanelState(new ControlPanelState
         {
             SessionName = session.SessionName,
+            SessionInput = session.SessionName,
             QueueCount = queueCount,
             CompletedCount = completedReplayStore?.Count ?? 0,
             ImportSummary = _lastImportResult.ToSummary(),
             ObsSummary = settings.Obs.WebSocketUri,
             RuntimeStatus = runtimeStatus,
+            SetupStatus = setupStatus,
+            SetupDetail = setupDetail,
+            SettingsLockMode = settings.SettingsLockMode,
             ImportFolder = session.ImportInboxDirectory,
+            QueueFolder = session.QueueDirectory,
+            SessionFolder = session.SessionDirectory,
+            SettingsPath = GamePaths.GetSettingsPath(),
+            LogsFolder = Path.Combine(GamePaths.GetGameRoot(), "Logs"),
             CanStartBatch = !batchRunning && queueCount > 0,
-            CanStopAfterCurrent = batchRunning
+            CanStopAfterCurrent = batchRunning,
+            CanSwitchSession = !batchRunning,
+            CanTestObs = !batchRunning
         });
     }
 

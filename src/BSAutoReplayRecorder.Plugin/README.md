@@ -39,6 +39,8 @@ The current plugin is BeatLeader-only:
 - starts/stops OBS through obs-websocket v5
 - validates replay launchability before starting OBS
 - shows batch status and controls in game
+- opens import, queue, session, settings, and logs locations from the F9 panel
+- switches/creates sessions without hand-editing settings
 
 It does not yet include ScoreSaber playback adapters.
 
