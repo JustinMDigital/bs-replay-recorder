@@ -556,7 +556,13 @@ function Apply-PresetSettingsOverrides {
     )) {
         $value = Get-LocalSettingDouble -Settings $LocalSettings -Names $mapping.Names
         if ($null -ne $value) {
-            $PresetSettings.($mapping.Property) = [Math]::Min(30.0, [Math]::Max(0.0, [double]$value))
+            $normalizedValue = [Math]::Min(30.0, [Math]::Max(0.0, [double]$value))
+            if ($PresetSettings.PSObject.Properties.Name -contains $mapping.Property) {
+                $PresetSettings.($mapping.Property) = $normalizedValue
+            }
+            else {
+                Add-Member -InputObject $PresetSettings -NotePropertyName $mapping.Property -NotePropertyValue $normalizedValue
+            }
         }
     }
 
