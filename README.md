@@ -1,136 +1,218 @@
 # Beat Saber Auto Replay Recorder
 
-Batch recorder prototype for Beat Saber replay capture workflows.
+Record batches of Beat Saber `.bsor` replays from a local browser control panel.
 
-The target workflow is:
+This project runs one or more managed Beat Saber worker copies, plays each replay through BeatLeader, records the game window with FFmpeg, captures that Beat Saber process's audio, sync-corrects the result, and writes finished video files to a local recordings folder.
 
-1. Drop `.bsor` replay files into an input folder.
-2. A Beat Saber mod builds a replay queue from those files.
-3. The mod starts OBS recording, launches each replay, waits for completion, stops OBS, and advances to the next replay.
-4. Finished recordings are named consistently for editing.
+The normal user flow is:
 
-## Current State
+1. Run `install.bat`.
+2. Open the control panel at `http://127.0.0.1:5770`.
+3. Launch the managed Beat Saber workers.
+4. Import `.bsor` replay files.
+5. Press `Start run`.
+6. Pick up the finished recordings from `ControlPanelWorkspace\Recordings`.
 
-This repo contains the first working foundation for that Option C plan:
+The recorder does not use OBS, obs-websocket, VB-CABLE, or BSManager as runtime tools.
 
-- `.bsor` metadata parser
-- replay queue loader
-- recording plan and output filename generator
-- OBS WebSocket protocol request scaffolding
-- replay provider/reference classifier for BeatLeader, legacy ScoreSaber, and ScoreSaber 2
-- Beat Saber / BSIPA plugin that can batch-launch BeatLeader `.bsor` replays
-- OBS WebSocket recorder integration
-- in-game status overlay and F9 control panel
-- session-based import folders
-- local test harness for the parser and queue logic
+## What You Need
 
-The remaining integration work is provider-specific:
+- Windows.
+- PowerShell.
+- .NET SDK 10.
+- FFmpeg and ffprobe. The installer can find common WinGet, Chocolatey, and PATH installs, offer to install `Gyan.FFmpeg` with WinGet, or save a custom `ffmpeg.exe` path.
+- A local PC Beat Saber install.
+- BSIPA and BeatLeader installed in the Beat Saber folder used as the source template.
+- Optional: `tools\SetDpi\SetDpi.exe`, or `BSARR_SETDPI_PATH`, if you use presets that temporarily change Windows display scaling.
 
-- bind ScoreSaber replay launching separately; ScoreSaber 2 should be treated as a different provider
+The default plugin manifest targets Beat Saber `1.40.6`, BSIPA `^4.3.6`, and BeatLeader `^0.9.33`. You can build against a different Beat Saber version later, but the first-time install expects a working BeatLeader setup in the source folder.
 
-## Session Workflow
+## First-Time Install
 
-The plugin now organizes replay batches by session. By default, the active session is `Default`.
+From the repo root:
 
-1. Open `UserData/BSAutoReplayRecorder/settings.json`.
-2. Set `ActiveSessionName` to the week or pool name, for example `Week 1 Pool Reveal`.
-3. Drop `.bsor` files into:
-
-```text
-UserData/BSAutoReplayRecorder/Sessions/<ActiveSessionName>/Import
+```bat
+install.bat
 ```
 
-On game start, or when pressing `Rescan / Import` in the F9 panel, valid imports are copied into the session `Queue` folder. Imported originals move to `Imported`, duplicate files move to `Duplicate Imports`, and unreadable files move to `Failed Imports`.
+The installer creates a local `settings.json` from `settings.example.json` if one does not already exist. That local file is ignored by git and is where machine-specific values live.
 
-Each session also has its own `completed-replays.json`, so rerunning one week does not affect another week.
+During install, you may be asked for:
 
-## In-Game Controls
+- FFmpeg. Press Enter to retry detection, accept the WinGet install prompt, or paste a path to `ffmpeg.exe`. The selected FFmpeg install must also include `ffprobe.exe`, normally in the same folder.
+- the Beat Saber source folder. Press Enter to use the detected Steam install, or paste another folder that contains `Beat Saber.exe`.
+- the number of managed Beat Saber workers to create. The default is 3. Choose 1 for the simplest first test, or 2-4 for parallel recording.
+- whether to create missing managed copies. Say yes for a new install.
+- whether to import existing `CustomLevels` and `CustomWIPLevels`. The recommended answer is no unless you intentionally want to copy those songs into the recorder's shared-song layout.
+- whether to repair shared song/content folder links. Say yes unless you are deliberately managing those folders yourself.
 
-Press `F9` in game to toggle the recorder panel.
+The installer will:
 
-- `Rescan / Import` imports new `.bsor` files from the active session import folder.
-- `Check Setup` verifies OBS websocket access and recorder folders.
-- `Test OBS` records a short 3 second OBS clip and reports the output path.
-- `Start Batch` starts the pending queue when auto-start is disabled or after adding files.
-- `Stop After Current` lets the current recording finish, then stops the batch.
-- `Clear Completed` clears the active session's completed state so the same queue can be rerun.
-- `Switch` changes or creates the active session from the session text field.
-- Folder buttons open the import, queue, session, settings, and logs locations.
+- create or update `settings.json`;
+- resolve FFmpeg/ffprobe and save `ffmpegPath` when it discovers or installs a usable FFmpeg;
+- create managed Beat Saber folders under `ControlPanelWorkspace\BeatSaberInstances`;
+- build the control panel, recorder host, ProcessLoopback helper, and worker plugin;
+- deploy the plugin into each managed Beat Saber worker;
+- write `ControlPanelWorkspace\control-panel-state.json`;
+- start recorder hosts and the browser control panel;
+- run shared-folder and baseline checks.
 
-The status overlay shows preflight, OBS start, active recording, delays between recordings, failures, and completion.
+## Local Settings
 
-## Locked Standard Settings
+Edit `settings.json` when you want defaults to stick between launches. Common values:
 
-Fresh settings files default to `SettingsLockMode: Standard`. Existing settings files that do not already opt into `Standard` are migrated without forcing the lock. The old `Tournament` value is still accepted as a legacy alias. That lock pins the settings that were painful during recording tests:
+```json
+{
+  "preset": "4k-monitor-2x2",
+  "bindUrl": "http://127.0.0.1:5770",
+  "workspaceDirectory": "ControlPanelWorkspace",
+  "instanceCount": 3,
+  "maxConcurrentRecordings": 3,
+  "sourceBeatSaberPath": "",
+  "ffmpegPath": ""
+}
+```
 
-- pre-roll and post-roll are `0`
-- delay between recordings is `5` seconds
-- dry-run is off
-- completed replays are skipped
-- failed recordings do not stop the whole batch
-- session folders and auto-import are enabled
-- preflight replay validation runs before OBS recording starts
+Keep personal paths in `settings.json`. Keep portable defaults in `settings.example.json`.
 
-Set `SettingsLockMode` to `None` if you need to override those locked values. Set `MoveRecordingsToOutputDirectory` to `true` if you want OBS outputs moved into the active session's `Recordings` folder; leave it `false` to keep recordings in OBS's configured output folder.
-
-The standard lock never changes OBS host, port, or password. When the settings file is rewritten during migration, the previous file is copied next to it as a timestamped `.bak`.
-
-## Quick Check
-
-Run the core test harness:
+The launcher also accepts environment overrides:
 
 ```powershell
-dotnet run --project tests/BSAutoReplayRecorder.Core.Tests
+$env:BSARR_CONTROL_PANEL_WORKSPACE = "D:\bsarr-workspace"
+$env:BSARR_CONTROL_PANEL_URL = "http://127.0.0.1:5770"
 ```
 
-## Recommended Architecture
+## Daily Use
 
-Keep the boring batch logic in `BSAutoReplayRecorder.Core` and keep game-specific logic in the plugin layer.
+Start the recorder stack:
+
+```bat
+start.bat
+```
+
+Open:
 
 ```text
-Beat Saber mod
-  |
-  |-- Replay queue and metadata parser      src/BSAutoReplayRecorder.Core
-  |-- BeatLeader replay launcher adapter    src/BSAutoReplayRecorder.Plugin
-  |-- OBS WebSocket recorder adapter        src/BSAutoReplayRecorder.Plugin
-  |-- In-game menu / progress UI            src/BSAutoReplayRecorder.Plugin
+http://127.0.0.1:5770
 ```
 
-This split matters because the queue/parser can be tested quickly outside the game, while the plugin adapter can evolve around whatever API the installed replay mod exposes.
+In the control panel:
 
-## Replay Providers
+1. Go to `Files` and confirm the workspace, output, instance, shared-song, and shared-content paths.
+2. Go to `Settings` and choose the recording monitor and feed preset.
+3. Use `Diagnostics` -> `Launch + Verify` when you want the panel to launch workers and check readiness.
+4. Use `Run` -> `Import .bsor` to add replays.
+5. Confirm the status chips for workers, maps, baseline, audio, disk, and sync.
+6. Press `Start run`.
+7. Review completed queue items and open recordings from the queue details.
 
-Do not assume every replay is BeatLeader `.bsor`.
+Stop the recorder stack:
 
-| Provider | Input shape | Current recorder handling |
+```bat
+stop.bat
+```
+
+Stop the stack and any Beat Saber workers launched by the control panel:
+
+```powershell
+scripts\launcher\Stop-ReplayRecorder.ps1 -StopGames
+```
+
+The dashboard `Quit` button uses the same stop-and-games path.
+
+## Presets
+
+The `Settings` view recommends feed presets based on the selected recording monitor.
+
+| Preset | Best for | Output per worker |
 | --- | --- | --- |
-| BeatLeader | local `.bsor`, BeatLeader replay URL, BeatLeader score URL | direct metadata parsing for local `.bsor`; URL/download adapter still needed |
-| ScoreSaber legacy | local `UserData/ScoreSaber/Replays/*.dat`, old ScoreSaber score links | classified, but playback must go through a ScoreSaber-specific adapter |
-| ScoreSaber 2 | new website/API score links and browser replay surfaces | classified separately so the adapter can follow the new API/mod refresh |
+| `single-1080p` | one 1080p feed | 1920x1080 |
+| `single-1440p` | one 1440p feed | 2560x1440 |
+| `single-4k` | one 4K feed | 3840x2160 |
+| `1440p-monitor-2x2` | up to four feeds on a 1440p monitor | 1280x720 |
+| `4k-monitor-2x2` | up to four feeds on a 4K monitor | 1920x1080 |
 
-ScoreSaber 2 is not just an old API skin. Its announcement says the backend has a new API with OpenAPI support, the old API remains via compatibility layers, browser replays are powered by ArcViewer, and the mod refresh is planned separately. That is why the project keeps replay providers behind an adapter boundary instead of hardcoding BeatLeader or legacy ScoreSaber behavior.
+The multi-feed presets can run 2, 3, or 4 managed workers. If four concurrent captures are unstable on your machine, lower the enabled instance count in the control panel.
 
-Sources:
+Warning: the current FFmpeg `ddagrab` video path records a desktop region, not an application-only frame. Keep desktop overlays and notifications disabled while recording, because Steam, Windows, Discord, or other popups drawn over the capture region can appear in the finished video. ProcessLoopback still captures only the assigned Beat Saber process tree for audio, so unrelated notification sounds should not be muxed into the recording.
 
-- BeatLeader BSOR format: https://github.com/BeatLeader/BS-Open-Replay
-- BeatLeader server / replay-first model: https://github.com/BeatLeader/beatleader-server
-- ScoreSaber API docs: https://docs.scoresaber.com/
-- ScoreSaber 2 announcement: https://www.patreon.com/posts/announcing-2-157688806
+Open `Advanced Settings` only when you want to edit capture size, FPS, encoder, bitrate, container, launch arguments, audio, display scaling, or run guards directly.
 
-## OBS Setup
+## Where Files Go
 
-OBS Studio 28+ includes obs-websocket. Enable it in:
+By default, runtime files live under:
 
-`Tools -> WebSocket Server Settings`
+```text
+ControlPanelWorkspace/
+  control-panel-state.json
+  Queue/
+  Recordings/
+  BeatSaberInstances/
+  SharedSongs/
+  SharedContent/
+  recorder-host-5757.settings.json
+  started-processes.json
+```
 
-Default values:
+## How It Works
 
-- Host: `127.0.0.1`
-- Port: `4455`
-- Password: configurable
+```text
+Control panel
+  -> owns settings, queue, worker launch, readiness checks, and run state
+  -> assigns one replay at a time to each online worker
 
-## Beat Saber Mod Setup
+Beat Saber worker plugin
+  -> registers with the control panel
+  -> starts recording through its assigned recorder host
+  -> plays a visual/audio sync marker
+  -> launches the BeatLeader replay
+  -> reports success, failure, output path, and sync metadata
 
-This project is intended for PC Beat Saber modding with BSIPA. The plugin scaffold is documented in:
+Recorder host
+  -> runs FFmpeg video capture
+  -> captures audio from the assigned Beat Saber process with ProcessLoopback
+  -> analyzes the sync marker
+  -> trims pre-roll and muxes the final recording
+```
 
-`src/BSAutoReplayRecorder.Plugin/README.md`
+The stack is intentionally control-panel-first. The plugin does not own the queue, and users should not need in-game recording menus.
+
+## Important Notes
+
+- Current replay playback is BeatLeader `.bsor` focused.
+- ScoreSaber replay playback is not part of the current user workflow.
+- The managed workers are local Beat Saber folders created for recording. Do not point the managed instance root at your everyday Beat Saber folder.
+- Some `Game settings` options in the control panel are Beat Saber profile settings for the current Windows user. Change those intentionally, because Beat Saber stores some of them outside the managed game folders.
+- The recorder expects maps to exist in the shared song folders. On import, the control panel checks maps and can download by hash from BeatSaver or accept a manual song zip upload for a queue item.
+
+## Troubleshooting
+
+If the control panel does not open, run:
+
+```bat
+start.bat
+```
+
+If FFmpeg is not found, re-run `install.bat` and accept the WinGet install prompt, or set the path in `settings.json`:
+
+```json
+{
+  "ffmpegPath": "C:\\ffmpeg\\bin\\ffmpeg.exe"
+}
+```
+
+The folder that contains `ffmpeg.exe` must also contain `ffprobe.exe`, because completed recordings are verified before they are accepted.
+
+If workers do not connect, use `Diagnostics` -> `Launch + Verify`, then check that each managed Beat Saber instance has the worker plugin installed and BeatLeader available.
+
+If audio fails, keep `Audio` set to `Process loopback` and make sure workers are launched from the control panel so the recorder knows the correct Beat Saber process id.
+
+If maps are missing, use the queue item's map download/upload action or run shared-folder repair from `Files`.
+
+If sync fails, the replay should fail instead of producing an unproven recording. Check the queue details and the adjacent `*.sync.json` file next to the recording.
+
+## More Detail
+
+- Control panel user guide: `src/BSAutoReplayRecorder.ControlPanel/README.md`
+- Worker plugin user guide: `src/BSAutoReplayRecorder.Plugin/README.md`
+- Recorder host user guide: `src/BSAutoReplayRecorder.RecorderHost/README.md`

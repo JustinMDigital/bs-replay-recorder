@@ -1,0 +1,9 @@
+ProcessAudioCapture.dll
+
+Source: https://github.com/tsubome/ProcessAudioCapture
+Package tested: process-audio-capture 1.0.0
+License: MIT
+
+This DLL wraps Windows process-loopback capture using
+AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS and is based on Microsoft's
+ApplicationLoopback sample.

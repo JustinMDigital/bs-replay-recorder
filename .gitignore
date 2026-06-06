@@ -5,3 +5,72 @@ obj/
 *.user
 *.suo
 TestResults/
+
+# Local environment and secrets.
+.env
+.env.*
+!.env.example
+*.local
+*.bak
+/settings.json
+
+# Local Codex/agent workspace metadata.
+.agents/
+skills-lock.json
+
+# Runtime output and logs.
+*.log
+dist/
+tmp/
+scripts/diagnostics/tmp/
+scripts/display/tmp/
+recorder-host.settings.json
+recorder-host-*.settings.json
+Recordings/
+src/BSAutoReplayRecorder.RecorderHost/Recordings/
+ControlPanelWorkspace/
+src/BSAutoReplayRecorder.ControlPanel/ControlPanelWorkspace/
+BeatSaberInstances/
+**/BeatSaberInstances/
+
+# Local replay inputs and generated recording artifacts.
+*.bsor
+*.mkv
+*.mp4
+*.mov
+*.webm
+*.video.mkv
+*.video.mp4
+*.process-loopback.wav
+*.sync.json
+
+# Internal design/planning artifacts not needed for public users.
+assets/ui-concepts/
+docs/control-panel-architecture.md
+scripts/build/Build-PluginProfiles.ps1
+src/BSAutoReplayRecorder.Plugin/BSAutoReplayRecorder.Plugin.manifest.json
+src/BSAutoReplayRecorder.RecorderHost/MULTI_INSTANCE.md
+src/BSAutoReplayRecorder.RecorderHost/samples/
+
+# Local display helper binary; scripts can also use BSARR_SETDPI_PATH.
+tools/SetDpi/SetDpi.exe
+
+# Local Beat Saber song libraries managed by the control panel.
+SharedSongs/
+**/SharedSongs/
+**/Beat Saber_Data/CustomLevels/
+**/Beat Saber_Data/CustomWIPLevels/
+**/Beat Saber_Data/CustomLevels.local-*/
+**/Beat Saber_Data/CustomWIPLevels.local-*/
+**/CustomSabers/
+**/CustomNotes/
+**/CustomPlatforms/
+**/CustomAvatars/
+**/CustomWalls/
+**/CustomBombs/
+**/CustomSabers.local-*/
+**/CustomNotes.local-*/
+**/CustomPlatforms.local-*/
+**/CustomAvatars.local-*/
+**/CustomWalls.local-*/
+**/CustomBombs.local-*/

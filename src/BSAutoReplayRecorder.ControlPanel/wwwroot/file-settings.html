@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>File Settings - Replay Recorder</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell fileSettingsShell">
+    <header class="appHeader">
+      <div class="brandCluster">
+        <button class="menuButton" type="button" aria-label="Menu"><span aria-hidden="true">&#9776;</span></button>
+        <span class="brandMark" aria-hidden="true">&#9654;</span>
+        <div class="titleBlock">
+          <div class="titleLine">
+            <h1>File Settings</h1>
+            <span id="fileSettingsPill" class="statusPill">Loading</span>
+          </div>
+          <div id="fileSettingsStatus" class="runMeta">Loading file settings</div>
+        </div>
+      </div>
+      <div class="headerControls">
+        <nav class="viewTabs" aria-label="Control panel navigation">
+          <a class="viewTab" href="/">Run</a>
+          <a class="viewTab" href="/#settings">Settings</a>
+          <a class="viewTab" href="/#diagnostics">Diagnostics</a>
+          <a class="viewTab active" href="/file-settings.html">Files</a>
+        </nav>
+        <div class="toolbar">
+          <span id="fileSettingsDirtyBadge" class="muted">Saved</span>
+          <button id="saveFileSettings" class="primaryButton" type="button">Save</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="fileSettingsGrid">
+      <section class="panel filePrimaryPanel">
+        <div class="panelHeader">
+          <div class="panelTitleGroup">
+            <h2>Core Locations</h2>
+            <span class="muted">Always used by launch and recording</span>
+          </div>
+        </div>
+        <div class="formGrid">
+          <label class="span2">Recording folder <input id="recordingOutputDirectory" type="text"></label>
+          <label class="span2">Beat Saber instances root <input id="beatSaberInstancesRoot" type="text"></label>
+          <label class="span2">Shared CustomLevels <input id="sharedCustomLevelsDirectory" type="text"></label>
+          <label class="span2">Shared CustomWIPLevels <input id="sharedCustomWipLevelsDirectory" type="text"></label>
+        </div>
+      </section>
+
+      <section class="panel fileSharePanel">
+        <div class="panelHeader">
+          <div class="panelTitleGroup">
+            <h2>Optional Shared Folders</h2>
+            <span class="muted">Only enabled folders stay expanded</span>
+          </div>
+        </div>
+        <div class="shareOptionList">
+          <div class="shareOption">
+            <label class="checkboxLabel">
+              <input id="shareCustomSabers" type="checkbox" data-share-toggle="sharedCustomSabersDirectory">
+              <span>Share CustomSabers</span>
+            </label>
+            <label class="sharePath" data-share-path="sharedCustomSabersDirectory">Folder <input id="sharedCustomSabersDirectory" type="text"></label>
+          </div>
+          <div class="shareOption">
+            <label class="checkboxLabel">
+              <input id="shareCustomNotes" type="checkbox" data-share-toggle="sharedCustomNotesDirectory">
+              <span>Share CustomNotes</span>
+            </label>
+            <label class="sharePath" data-share-path="sharedCustomNotesDirectory">Folder <input id="sharedCustomNotesDirectory" type="text"></label>
+          </div>
+          <div class="shareOption">
+            <label class="checkboxLabel">
+              <input id="shareCustomPlatforms" type="checkbox" data-share-toggle="sharedCustomPlatformsDirectory">
+              <span>Share CustomPlatforms</span>
+            </label>
+            <label class="sharePath" data-share-path="sharedCustomPlatformsDirectory">Folder <input id="sharedCustomPlatformsDirectory" type="text"></label>
+          </div>
+          <div class="shareOption">
+            <label class="checkboxLabel">
+              <input id="shareCustomAvatars" type="checkbox" data-share-toggle="sharedCustomAvatarsDirectory">
+              <span>Share CustomAvatars</span>
+            </label>
+            <label class="sharePath" data-share-path="sharedCustomAvatarsDirectory">Folder <input id="sharedCustomAvatarsDirectory" type="text"></label>
+          </div>
+          <div class="shareOption">
+            <label class="checkboxLabel">
+              <input id="shareCustomWalls" type="checkbox" data-share-toggle="sharedCustomWallsDirectory">
+              <span>Share CustomWalls</span>
+            </label>
+            <label class="sharePath" data-share-path="sharedCustomWallsDirectory">Folder <input id="sharedCustomWallsDirectory" type="text"></label>
+          </div>
+          <div class="shareOption">
+            <label class="checkboxLabel">
+              <input id="shareCustomBombs" type="checkbox" data-share-toggle="sharedCustomBombsDirectory">
+              <span>Share CustomBombs</span>
+            </label>
+            <label class="sharePath" data-share-path="sharedCustomBombsDirectory">Folder <input id="sharedCustomBombsDirectory" type="text"></label>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel songFoldersPanel fullSpan">
+        <div class="panelHeader">
+          <div class="panelTitleGroup">
+            <h2>Shared Folder Check</h2>
+            <span class="muted">Validate or repair instance folder links</span>
+          </div>
+          <div class="panelActions">
+            <button id="checkSongFolders" class="textButton" type="button">Check</button>
+            <button id="repairSongFolders" class="textButton" type="button">Repair</button>
+          </div>
+        </div>
+        <div id="songFoldersSummary" class="baselineSummary"></div>
+        <div id="songFoldersList" class="songFolderList"></div>
+      </section>
+    </section>
+  </main>
+
+  <button id="unsavedFileSettingsPrompt" class="unsavedSettingsPrompt" type="button" hidden aria-live="polite">
+    <span>Settings not saved</span>
+    <strong>Click here to Save</strong>
+  </button>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/file-settings.js"></script>
+</body>
+</html>

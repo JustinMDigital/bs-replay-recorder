@@ -8,8 +8,6 @@ namespace BSAutoReplayRecorder.Plugin;
 
 public static class PluginSettingsStore
 {
-    private const string ObsPasswordEnvironmentVariable = "BSARR_OBS_PASSWORD";
-    private const string LegacyObsPasswordEnvironmentVariable = "BSWCR_OBS_PASSWORD";
     private const string CurrentRecorderDataPath = "UserData/BSAutoReplayRecorder";
     private const string LegacyRecorderDataPath = "UserData/BSWorldCupReplayRecorder";
 
@@ -24,10 +22,12 @@ public static class PluginSettingsStore
         {
             var json = File.ReadAllText(path);
             settings = JsonConvert.DeserializeObject<BatchRecorderSettings>(json) ?? CreateDefaultSettings();
-            if (!json.Contains("\"SettingsLockMode\"") ||
-                !json.Contains("\"UseSessionFolders\"") ||
-                !json.Contains("\"ActiveSessionName\"") ||
-                !json.Contains("\"AutoImportReplays\""))
+            if (!json.Contains("\"ControlPanelWorker\"") ||
+                !json.Contains("\"WindowPlacement\"") ||
+                !json.Contains("\"LagSpikeStartupGraceSeconds\"") ||
+                !json.Contains("\"DelayBetweenRecordingsSeconds\"") ||
+                !json.Contains("\"RefreshSongCoreBeforeReplayValidation\"") ||
+                !json.Contains("\"SongCoreRefreshTimeoutSeconds\""))
             {
                 shouldSave = true;
             }
@@ -36,7 +36,12 @@ public static class PluginSettingsStore
         {
             settings = CreateDefaultSettings();
             shouldSave = true;
-            logger.Info("Created default recorder settings at " + path);
+            logger.Info("Created default recorder worker settings at " + path);
+        }
+
+        if (ApplyControlPanelWorkerMode(settings, logger))
+        {
+            shouldSave = true;
         }
 
         if (NormalizeLegacyRecorderPaths(settings))
@@ -44,31 +49,7 @@ public static class PluginSettingsStore
             shouldSave = true;
         }
 
-        if (NormalizeLegacyLockMode(settings))
-        {
-            shouldSave = true;
-        }
-
-        if (ApplySettingsLock(settings, logger))
-        {
-            shouldSave = true;
-        }
-
-        var obsPassword = Environment.GetEnvironmentVariable(ObsPasswordEnvironmentVariable);
-        var obsPasswordSource = ObsPasswordEnvironmentVariable;
-        if (string.IsNullOrEmpty(obsPassword))
-        {
-            obsPassword = Environment.GetEnvironmentVariable(LegacyObsPasswordEnvironmentVariable);
-            obsPasswordSource = LegacyObsPasswordEnvironmentVariable;
-        }
-
-        if (!string.IsNullOrEmpty(obsPassword))
-        {
-            settings.Obs.Password = obsPassword;
-            logger.Info("Using OBS password from " + obsPasswordSource + ".");
-        }
-
-        if (shouldSave && settings.PersistLockedSettings)
+        if (shouldSave)
         {
             Save(settings);
         }
@@ -84,67 +65,59 @@ public static class PluginSettingsStore
         File.WriteAllText(path, JsonConvert.SerializeObject(settings, Formatting.Indented));
     }
 
-    private static bool ApplySettingsLock(BatchRecorderSettings settings, Logger logger)
+    private static bool ApplyControlPanelWorkerMode(BatchRecorderSettings settings, Logger logger)
     {
-        if (!IsStandardLockMode(settings.SettingsLockMode))
+        var changed = false;
+
+        if (settings.ControlPanelWorker == null)
         {
-            return false;
+            settings.ControlPanelWorker = new ControlPanelWorkerSettings();
+            changed = true;
         }
 
-        var changed = false;
-        // Standard lock deliberately does not touch OBS host, port, or password.
-        changed |= SetValue(settings.PreRollSeconds, 0, value => settings.PreRollSeconds = value);
-        changed |= SetValue(settings.PostRollSeconds, 0, value => settings.PostRollSeconds = value);
-        changed |= SetValue(settings.DelayBetweenRecordingsSeconds, 5, value => settings.DelayBetweenRecordingsSeconds = value);
-        changed |= SetValue(settings.StartRecordingRetryCount, 5, value => settings.StartRecordingRetryCount = value);
-        changed |= SetValue(settings.StartRecordingRetryDelaySeconds, 2, value => settings.StartRecordingRetryDelaySeconds = value);
-        changed |= SetValue(settings.MaxReplayCount, 0, value => settings.MaxReplayCount = value);
-        changed |= SetValue(settings.IncludeSubdirectories, false, value => settings.IncludeSubdirectories = value);
-        changed |= SetValue(settings.DryRun, false, value => settings.DryRun = value);
-        changed |= SetValue(settings.MoveProcessedReplays, false, value => settings.MoveProcessedReplays = value);
-        changed |= SetValue(settings.MoveRecordingsToOutputDirectory, false, value => settings.MoveRecordingsToOutputDirectory = value);
-        changed |= SetValue(settings.SkipCompletedReplays, true, value => settings.SkipCompletedReplays = value);
-        changed |= SetValue(settings.ContinueAfterFailure, true, value => settings.ContinueAfterFailure = value);
-        changed |= SetValue(settings.AutoImportReplays, true, value => settings.AutoImportReplays = value);
-        changed |= SetValue(settings.MoveImportedReplayFiles, true, value => settings.MoveImportedReplayFiles = value);
-        changed |= SetValue(settings.RequirePreflightReplayValidation, true, value => settings.RequirePreflightReplayValidation = value);
-        changed |= SetValue(settings.UseSessionFolders, true, value => settings.UseSessionFolders = value);
+        if (!settings.ControlPanelWorker.Enabled)
+        {
+            settings.ControlPanelWorker.Enabled = true;
+            changed = true;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.ControlPanelWorker.BaseUrl))
+        {
+            settings.ControlPanelWorker.BaseUrl = "http://127.0.0.1:5770";
+            changed = true;
+        }
+
+        if (settings.RecorderHost == null)
+        {
+            settings.RecorderHost = new RecorderHostConnectionSettings();
+            changed = true;
+        }
+
+        if (settings.WindowPlacement == null)
+        {
+            settings.WindowPlacement = new WindowPlacementSettings();
+            changed = true;
+        }
+
+        if (settings.WindowPlacement.Enabled)
+        {
+            changed |= SetValue(settings.WindowPlacement.UseNativeWindowMove, true, value => settings.WindowPlacement.UseNativeWindowMove = value);
+            changed |= SetValue(settings.WindowPlacement.UseBorderlessWindow, true, value => settings.WindowPlacement.UseBorderlessWindow = value);
+        }
 
         if (changed)
         {
-            logger.Info("Applied Standard settings lock.");
+            logger.Info("Applied control panel worker settings.");
         }
 
         return changed;
     }
 
-    private static bool IsStandardLockMode(string lockMode)
-    {
-        return string.Equals(lockMode, "Standard", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(lockMode, "Tournament", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool NormalizeLegacyLockMode(BatchRecorderSettings settings)
-    {
-        if (!string.Equals(settings.SettingsLockMode, "Tournament", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        settings.SettingsLockMode = "Standard";
-        return true;
-    }
-
     private static bool NormalizeLegacyRecorderPaths(BatchRecorderSettings settings)
     {
         var changed = false;
-        changed |= NormalizePath(settings.SessionRootDirectory, value => settings.SessionRootDirectory = value);
-        changed |= NormalizePath(settings.ImportInboxDirectory, value => settings.ImportInboxDirectory = value);
-        changed |= NormalizePath(settings.ReplayInputDirectory, value => settings.ReplayInputDirectory = value);
-        changed |= NormalizePath(settings.CompletedReplayDirectory, value => settings.CompletedReplayDirectory = value);
-        changed |= NormalizePath(settings.FailedReplayDirectory, value => settings.FailedReplayDirectory = value);
         changed |= NormalizePath(settings.RecordingOutputDirectory, value => settings.RecordingOutputDirectory = value);
-        changed |= NormalizePath(settings.CompletedReplayStatePath, value => settings.CompletedReplayStatePath = value);
+        changed |= NormalizePath(settings.RecorderHost.OutputDirectory, value => settings.RecorderHost.OutputDirectory = value);
         return changed;
     }
 
@@ -180,13 +153,15 @@ public static class PluginSettingsStore
     {
         return new BatchRecorderSettings
         {
-            SettingsLockMode = "Standard",
-            ReplayInputDirectory = GamePaths.GetBeatLeaderReplaysPath(),
-            DryRun = true,
-            Obs = new ObsConnectionSettings
+            RecorderHost = new RecorderHostConnectionSettings
             {
-                Host = "127.0.0.1",
-                Port = 4455
+                BaseUrl = "http://127.0.0.1:5757",
+                WindowTitle = "Beat Saber"
+            },
+            ControlPanelWorker = new ControlPanelWorkerSettings
+            {
+                Enabled = true,
+                BaseUrl = "http://127.0.0.1:5770"
             }
         };
     }

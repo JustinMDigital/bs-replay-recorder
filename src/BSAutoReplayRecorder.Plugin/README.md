@@ -1,112 +1,112 @@
-# Beat Saber Plugin
+# Beat Saber Worker Plugin
 
-This folder is the BSIPA plugin layer for the auto replay recorder.
+This is the BSIPA plugin that turns a managed Beat Saber copy into a recorder worker.
 
-The core project handles:
+Most users should not install or configure this plugin by hand. Run the root installer:
 
-- reading `.bsor` replay metadata
-- building an ordered queue
-- estimating recording length
-- generating safe output names
-- creating OBS WebSocket request payloads
-
-The plugin layer adds:
-
-- BSIPA entry point
-- BeatLeader replay playback adapter
-- OBS WebSocket transport
-- batch recording state machine
-- session import folders
-- in-game status overlay and F9 control panel
-
-## Local Instance
-
-Set `BeatSaberDir` to the Beat Saber instance you want to build against:
-
-```powershell
-dotnet build src/BSAutoReplayRecorder.Plugin /p:BeatSaberDir="C:\path\to\Beat Saber"
+```bat
+install.bat
 ```
 
-## Current Plugin Scope
-
-The current plugin is BeatLeader-only:
-
-- initializes under BSIPA
-- subscribes to BeatLeader replay started/finished events
-- imports `.bsor` files from the active session import folder
-- scans the active session queue
-- includes a `BeatLeaderReplayPlaybackDriver` that decodes local `.bsor` files with BeatLeader's own decoder and calls `ReplayerMenuLoader.StartReplayAsync`
-- starts/stops OBS through obs-websocket v5
-- validates replay launchability before starting OBS
-- shows batch status and controls in game
-- opens import, queue, session, settings, and logs locations from the F9 panel
-- switches/creates sessions without hand-editing settings
-
-It does not yet include ScoreSaber playback adapters.
-
-## Proposed Runtime State Machine
+The installer builds the plugin and deploys it into each managed Beat Saber worker under:
 
 ```text
-Idle
-  -> BuildQueue
-  -> ConnectObs
-  -> StartRecording
-  -> LaunchReplay
-  -> WaitForReplayEnd
-  -> StopRecording
-  -> ArchiveReplay
-  -> StartRecording next item
-  -> Complete
+ControlPanelWorkspace\BeatSaberInstances
 ```
 
-## BeatLeader Adapter
+## What The Plugin Does
 
-The installed BeatLeader plugin has a usable public replay surface:
+When a managed Beat Saber worker starts, the plugin:
 
-- `BeatLeader.Models.Replay.ReplayDecoder.DecodeReplay(byte[])`
-- `BeatLeader.Replayer.ReplayerMenuLoader.Instance`
-- `ReplayerMenuLoader.StartReplayAsync(Replay, Player, ReplayerSettings, Action, CancellationToken)`
-- `BeatLeader.Replayer.ReplayerLauncher.ReplayWasStartedEvent`
-- `BeatLeader.Replayer.ReplayerLauncher.ReplayWasFinishedEvent`
+- registers with the control panel;
+- sends regular heartbeats;
+- waits for one replay assignment at a time;
+- asks its recorder host to start capture;
+- plays a short visual/audio sync marker;
+- launches the assigned BeatLeader `.bsor` replay;
+- waits for replay playback to finish;
+- stops capture with timing information;
+- reports the output path, result, error details, and sync metadata.
 
-Recommended approach:
+The plugin does not own the queue. The browser control panel owns imports, ordering, retries, run start, and run stop.
 
-- use direct references for the target Beat Saber instance first
-- keep the adapter behind `IReplayPlaybackDriver`
-- add a reflection fallback only if BeatLeader changes this API in a future Beat Saber/mod instance
+## What You See In Game
 
-The adapter should expose:
+When idle, the worker can show a small connection/status overlay so you know it is connected to the control panel.
 
-```csharp
-Task StartReplayAsync(ReplayQueueItem item, CancellationToken cancellationToken);
-bool IsReplayPlaying { get; }
-event Action<ReplayQueueItem> ReplayEnded;
+During recording, the plugin avoids normal progress text in the game view so status UI is not burned into the captured video. Watch the browser control panel for run progress.
+
+## Requirements
+
+The managed worker needs:
+
+- Beat Saber.
+- BSIPA.
+- BeatLeader.
+- `BSAutoReplayRecorder.Plugin.dll` in `Plugins`.
+- `BSAutoReplayRecorder.Core.dll` in `Libs`.
+- `UserData\BSAutoReplayRecorder\settings.json`.
+
+The installer handles these recorder files. You are responsible for having a working Beat Saber, BSIPA, and BeatLeader setup in the source folder used to create workers.
+
+## Worker Settings
+
+Each managed worker has a settings file:
+
+```text
+UserData\BSAutoReplayRecorder\settings.json
 ```
 
-## ScoreSaber Adapters
+The installer writes this file for each worker. A typical worker section looks like:
 
-ScoreSaber needs its own driver path.
+```json
+{
+  "RecorderHost": {
+    "BaseUrl": "http://127.0.0.1:5757",
+    "WindowTitle": "Beat Saber"
+  },
+  "ControlPanelWorker": {
+    "Enabled": true,
+    "BaseUrl": "http://127.0.0.1:5770",
+    "WorkerName": "BSARR I-1",
+    "PreferredInstanceIndex": 0,
+    "PollIntervalSeconds": 1,
+    "HeartbeatIntervalSeconds": 2
+  }
+}
+```
 
-Legacy ScoreSaber local replays are commonly found in `UserData/ScoreSaber/Replays` as `.dat` files. ScoreSaber 2 adds a new backend/API and browser replay support powered by ArcViewer while keeping legacy compatibility layers. Those details make it risky to hardcode a single ScoreSaber replay launch path.
+The plugin stores a `WorkerId` after it registers for the first time. Leave that value alone unless you intentionally want the control panel to treat the worker as new.
 
-Recommended approach:
+## Replay Support
 
-- add one `IReplayPlaybackDriver` for local legacy ScoreSaber `.dat` playback
-- add another driver for ScoreSaber 2 score/API references
-- prefer in-game mod APIs once the ScoreSaber 2 PC mod refresh is available
-- keep downloaded or resolved replay artifacts in the batch recorder input folder so retries are deterministic
+The current user workflow is BeatLeader `.bsor` playback. The plugin uses the installed BeatLeader mod to decode and start local replay playback.
 
-## OBS Adapter
+ScoreSaber replay playback is not part of the current user workflow.
 
-OBS Studio 28+ uses obs-websocket v5. The plugin can use the request builders in core, but still needs a WebSocket transport suitable for Unity/BSIPA.
+## Fail-Safe Behavior
 
-OBS requests needed for the MVP:
+A worker should report a replay as failed instead of silently producing a questionable recording when:
 
-- `StartRecord`
-- `StopRecord`
+- the control panel or recorder host cannot be reached;
+- the replay cannot be launched;
+- Beat Saber playback fails or times out;
+- ProcessLoopback audio cannot be captured;
+- automatic sync correction is not proven;
+- replay playback has a lag spike severe enough to invalidate the capture.
 
-Nice-to-have later:
+The control panel shows these failures in queue details and recent evidence.
 
-- `SetProfileParameter` to adjust filename formatting
-- `SetCurrentProgramScene` for map-pool reveal scenes
-- `GetRecordStatus` for recovery if OBS and Beat Saber get out of sync
+## Manual Build
+
+Only use this when the installer cannot build the plugin for your Beat Saber folder. The installer is still preferred because it also deploys files and writes worker settings.
+
+```powershell
+dotnet build src/BSAutoReplayRecorder.Plugin/BSAutoReplayRecorder.Plugin.csproj -p:BeatSaberDir="C:\path\to\Beat Saber"
+```
+
+Build against a different Beat Saber version:
+
+```powershell
+dotnet build src/BSAutoReplayRecorder.Plugin/BSAutoReplayRecorder.Plugin.csproj -p:BeatSaberDir="C:\path\to\Beat Saber" -p:BeatSaberGameVersion="1.40.8"
+```

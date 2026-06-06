@@ -1,0 +1,19 @@
+{
+  "preset": "4k-monitor-2x2",
+  "bindUrl": "http://127.0.0.1:5770",
+  "workspaceDirectory": "ControlPanelWorkspace",
+  "instanceCount": 3,
+  "maxConcurrentRecordings": 3,
+  "beatSaberInstanceNamePrefix": "BSARR I-",
+  "delayBetweenRecordingsSeconds": 5,
+  "recorderHostBasePort": 5757,
+  "sourceBeatSaberPath": "",
+  "ffmpegPath": "",
+  "copyInstances": false,
+  "copyExistingSongs": false,
+  "skipPluginDeploy": false,
+  "skipSharedFolderRepair": false,
+  "keepExistingRecorderStack": false,
+  "noStart": false,
+  "noBrowser": false
+}

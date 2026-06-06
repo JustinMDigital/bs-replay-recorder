@@ -1,14 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BeatLeader.Models;
 using BeatLeader.Replayer;
 using BSAutoReplayRecorder.Core;
 using BSAutoReplayRecorder.Core.Playback;
-using BSAutoReplayRecorder.Core.Obs;
 using IPA.Logging;
 using IPA.Utilities.Async;
 
@@ -18,126 +15,46 @@ public sealed class BatchRecordingRunner
 {
     private readonly BatchRecorderSettings _settings;
     private readonly BeatLeaderReplayPlaybackDriver _playbackDriver;
-    private readonly ObsWebSocketRecorder _obsRecorder;
-    private readonly CompletedReplayStore? _completedReplayStore;
-    private readonly BatchRunControl? _runControl;
+    private readonly IRecordingBackend _recordingBackend;
     private readonly ReplayReferenceParser _referenceParser = new ReplayReferenceParser();
     private readonly Logger _logger;
 
     public BatchRecordingRunner(
         BatchRecorderSettings settings,
         BeatLeaderReplayPlaybackDriver playbackDriver,
-        ObsWebSocketRecorder obsRecorder,
-        CompletedReplayStore? completedReplayStore,
-        BatchRunControl? runControl,
+        IRecordingBackend recordingBackend,
         Logger logger)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _playbackDriver = playbackDriver ?? throw new ArgumentNullException(nameof(playbackDriver));
-        _obsRecorder = obsRecorder ?? throw new ArgumentNullException(nameof(obsRecorder));
-        _completedReplayStore = completedReplayStore;
-        _runControl = runControl;
+        _recordingBackend = recordingBackend ?? throw new ArgumentNullException(nameof(recordingBackend));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public async Task RunAsync(IReadOnlyList<ReplayQueueItem> queueItems, CancellationToken cancellationToken)
+    public async Task<RecordingExecutionResult> RunSingleAsync(
+        RecordingPlan plan,
+        CancellationToken cancellationToken)
     {
-        if (queueItems == null)
+        if (plan == null)
         {
-            throw new ArgumentNullException(nameof(queueItems));
-        }
-
-        var selectedItems = SelectItems(queueItems);
-        if (selectedItems.Count == 0)
-        {
-            _logger.Warn("Batch recorder has no replay items to run.");
-            RecordingStatusOverlay.ShowIdle("No pending replays", "Batch recorder has no replay items to run");
-            return;
+            throw new ArgumentNullException(nameof(plan));
         }
 
         ValidateSettings();
 
-        var plans = new RecordingPlanner().CreatePlans(selectedItems, _settings.ToRecordingPlanOptions());
-        _logger.Info("Batch recorder prepared " + plans.Count + " plan(s). DryRun=" + _settings.DryRun + ".");
-        _logger.Info("Batch recorder output directory: " +
-                     GamePaths.ResolveGamePath(_settings.RecordingOutputDirectory));
-        _logger.Info("Batch recorder will " +
-                     (_settings.MoveProcessedReplays ? "" : "not ") +
-                     "move processed replay files.");
-
-        if (_settings.DryRun)
-        {
-            foreach (var plan in plans)
-            {
-                _logger.Info("Dry run plan: " + plan.OutputBaseName + " from " + plan.QueueItem.ReplayPath);
-            }
-
-            return;
-        }
-
         if (_settings.RequirePreflightReplayValidation)
         {
-            await RunPreflightAsync(plans, cancellationToken).ConfigureAwait(false);
+            await RefreshSongsBeforePreflightAsync(cancellationToken).ConfigureAwait(false);
+            await RunPreflightAsync(new[] { plan }, cancellationToken).ConfigureAwait(false);
         }
 
-        var initialObsStatus = await _obsRecorder.GetRecordingStatusAsync(cancellationToken).ConfigureAwait(false);
-        if (initialObsStatus.OutputActive)
+        var initialRecordingStatus = await _recordingBackend.GetRecordingStatusAsync(cancellationToken).ConfigureAwait(false);
+        if (initialRecordingStatus.OutputActive)
         {
-            throw new InvalidOperationException("OBS is already recording. Stop OBS recording before starting a batch.");
+            throw new InvalidOperationException("Recorder backend is already recording. Stop recording before starting an assignment.");
         }
 
-        var succeeded = 0;
-        var failed = 0;
-        var hasRunPlan = false;
-        var stoppedAfterCurrent = false;
-
-        for (var planIndex = 0; planIndex < plans.Count; planIndex++)
-        {
-            var plan = plans[planIndex];
-            var displayIndex = planIndex + 1;
-            cancellationToken.ThrowIfCancellationRequested();
-            if (hasRunPlan)
-            {
-                var delay = TimeSpan.FromSeconds(Math.Max(0, _settings.DelayBetweenRecordingsSeconds));
-                RecordingStatusOverlay.ShowCountdown(plan, displayIndex, plans.Count, delay);
-                await DelayIfNeededAsync(delay, cancellationToken).ConfigureAwait(false);
-            }
-
-            var success = await RunPlanAsync(plan, displayIndex, plans.Count, cancellationToken).ConfigureAwait(false);
-            hasRunPlan = true;
-            if (success)
-            {
-                succeeded++;
-                RecordingStatusOverlay.ShowPlanFinished(plan, succeeded, failed);
-            }
-            else
-            {
-                failed++;
-                RecordingStatusOverlay.ShowPlanFailed(plan, succeeded, failed);
-                if (!_settings.ContinueAfterFailure)
-                {
-                    break;
-                }
-            }
-
-            if (_runControl != null && _runControl.StopAfterCurrentRequested)
-            {
-                _logger.Info("Batch recorder stopping after current plan because it was requested from the control panel.");
-                stoppedAfterCurrent = true;
-                break;
-            }
-        }
-
-        if (stoppedAfterCurrent)
-        {
-            _logger.Info("Batch recorder stopped after current plan. Succeeded: " + succeeded + ", failed: " + failed + ".");
-            RecordingStatusOverlay.ShowBatchStopped(succeeded, failed);
-        }
-        else
-        {
-            _logger.Info("Batch recorder completed. Succeeded: " + succeeded + ", failed: " + failed + ".");
-            RecordingStatusOverlay.ShowBatchCompleted(succeeded, failed);
-        }
+        return await RunPlanAsync(plan, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task RunPreflightAsync(
@@ -145,11 +62,9 @@ public sealed class BatchRecordingRunner
         CancellationToken cancellationToken)
     {
         var failures = new List<string>();
-        for (var index = 0; index < plans.Count; index++)
+        foreach (var plan in plans)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var plan = plans[index];
-            RecordingStatusOverlay.ShowPreflight(plan, index + 1, plans.Count);
 
             try
             {
@@ -165,10 +80,6 @@ public sealed class BatchRecordingRunner
         if (failures.Count == 0)
         {
             _logger.Info("Preflight replay validation passed for " + plans.Count + " plan(s).");
-            RecordingStatusOverlay.ShowToast(
-                "Preflight passed",
-                plans.Count + " replay(s) ready",
-                TimeSpan.FromSeconds(4));
             return;
         }
 
@@ -177,23 +88,25 @@ public sealed class BatchRecordingRunner
             _logger.Error("Preflight replay validation failed: " + failure);
         }
 
-        RecordingStatusOverlay.ShowToast(
-            "Preflight failed",
-            failures.Count + " replay(s) need attention",
-            TimeSpan.FromSeconds(12),
-            isError: true);
         throw new InvalidOperationException(
             "Preflight replay validation failed for " + failures.Count + " replay(s). See the Beat Saber log for details.");
     }
 
-    private IReadOnlyList<ReplayQueueItem> SelectItems(IReadOnlyList<ReplayQueueItem> queueItems)
+    private Task RefreshSongsBeforePreflightAsync(CancellationToken cancellationToken)
     {
-        if (_settings.MaxReplayCount <= 0)
+        if (!_settings.RefreshSongCoreBeforeReplayValidation)
         {
-            return queueItems;
+            return Task.CompletedTask;
         }
 
-        return queueItems.Take(_settings.MaxReplayCount).ToList();
+        var timeoutSeconds = _settings.SongCoreRefreshTimeoutSeconds;
+        if (double.IsNaN(timeoutSeconds) || double.IsInfinity(timeoutSeconds) || timeoutSeconds < 1)
+        {
+            timeoutSeconds = 45;
+        }
+
+        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        return SongCoreRefreshCoordinator.RefreshAllSongsAsync(timeout, _logger, cancellationToken);
     }
 
     private void ValidateSettings()
@@ -202,55 +115,80 @@ public sealed class BatchRecordingRunner
         {
             throw new InvalidOperationException("RecordingOutputDirectory is required.");
         }
-
-        if (_settings.MoveProcessedReplays)
-        {
-            if (string.IsNullOrWhiteSpace(_settings.CompletedReplayDirectory))
-            {
-                throw new InvalidOperationException("CompletedReplayDirectory is required when MoveProcessedReplays is enabled.");
-            }
-
-            if (string.IsNullOrWhiteSpace(_settings.FailedReplayDirectory))
-            {
-                throw new InvalidOperationException("FailedReplayDirectory is required when MoveProcessedReplays is enabled.");
-            }
-        }
     }
 
-    private async Task<bool> RunPlanAsync(
+    private async Task<RecordingExecutionResult> RunPlanAsync(
         RecordingPlan plan,
-        int displayIndex,
-        int totalPlans,
         CancellationToken cancellationToken)
     {
         string? outputPath = null;
         var recordingStarted = false;
+        var replayLaunchStarted = false;
+        DateTimeOffset? contentStartUtc = null;
+        RecordingStopResult? stopResult = null;
         Exception? failure = null;
 
         try
         {
-            RecordingStatusOverlay.ShowPreparing(plan, displayIndex, totalPlans);
-            _logger.Info("Starting batch plan: " + plan.OutputBaseName);
+            _logger.Info("Starting assignment plan: " + plan.OutputBaseName);
             var replayReference = _referenceParser.Parse(plan.QueueItem.ReplayPath);
             await ValidateReplayOnMainThreadAsync(replayReference, cancellationToken).ConfigureAwait(false);
 
-            RecordingStatusOverlay.ShowStartingObs(plan, displayIndex, totalPlans);
-            await StartRecordingWithRetriesAsync(plan, cancellationToken).ConfigureAwait(false);
-            recordingStarted = await ConfirmObsRecordingStartedAsync(plan, cancellationToken).ConfigureAwait(false);
-            if (!recordingStarted)
-            {
-                throw new InvalidOperationException("OBS accepted StartRecord, but GetRecordStatus never reported an active recording.");
-            }
-
-            RecordingStatusOverlay.ShowRecording(plan, displayIndex, totalPlans);
-            await DelayIfNeededAsync(plan.PreRoll, cancellationToken).ConfigureAwait(false);
-
+            using (var startWait = new ReplayStartWait())
             using (var finishWait = new ReplayFinishWait())
+            using (var lagSpikeMonitor = await CreateLagSpikeMonitorOnMainThreadAsync(cancellationToken)
+                       .ConfigureAwait(false))
             {
-                await StartReplayOnMainThreadAsync(plan.QueueItem, replayReference, cancellationToken)
-                    .ConfigureAwait(false);
+                await StartRecordingWithRetriesAsync(plan, cancellationToken).ConfigureAwait(false);
+                recordingStarted = await ConfirmRecordingStartedAsync(plan, cancellationToken).ConfigureAwait(false);
+                if (!recordingStarted)
+                {
+                    throw new InvalidOperationException("Recorder accepted start, but status never reported an active recording.");
+                }
 
-                await finishWait.WaitAsync(CreateReplayFinishTimeout(plan), cancellationToken).ConfigureAwait(false);
+                await PlaySyncMarkerOnMainThreadAsync(cancellationToken).ConfigureAwait(false);
+                await DelayIfNeededAsync(plan.PreRoll, cancellationToken).ConfigureAwait(false);
+
+                var launchRequestedUtc = DateTimeOffset.UtcNow;
+                contentStartUtc = launchRequestedUtc;
+                replayLaunchStarted = true;
+                var launchTask = StartReplayOnMainThreadAsync(plan.QueueItem, replayReference, cancellationToken);
+                var startSignalTask = startWait.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                var completedStartTask = await Task.WhenAny(launchTask, startSignalTask).ConfigureAwait(false);
+                if (completedStartTask == launchTask)
+                {
+                    await launchTask.ConfigureAwait(false);
+                    if (!startSignalTask.IsCompleted)
+                    {
+                        _logger.Warn("BeatLeader replay start event was not observed before launch returned for " +
+                                     plan.OutputBaseName + "; using replay launch time for content trim.");
+                    }
+                    else
+                    {
+                        contentStartUtc = await startSignalTask.ConfigureAwait(false) ?? launchRequestedUtc;
+                    }
+                }
+                else
+                {
+                    contentStartUtc = await startSignalTask.ConfigureAwait(false) ?? launchRequestedUtc;
+                    if (contentStartUtc == launchRequestedUtc)
+                    {
+                        _logger.Warn("BeatLeader replay start event was not observed within the timeout for " +
+                                     plan.OutputBaseName + "; using replay launch time for content trim.");
+                    }
+                }
+
+                lagSpikeMonitor.StartMonitoring();
+                var replayFinishTask = finishWait.WaitAsync(CreateReplayFinishTimeout(plan), cancellationToken);
+                var lagSpikeTask = lagSpikeMonitor.WaitForLagSpikeAsync(cancellationToken);
+                var completedTask = await Task.WhenAny(replayFinishTask, lagSpikeTask).ConfigureAwait(false);
+                if (completedTask == lagSpikeTask)
+                {
+                    await lagSpikeTask.ConfigureAwait(false);
+                }
+
+                await replayFinishTask.ConfigureAwait(false);
+                lagSpikeMonitor.ThrowIfLagSpikeDetected();
             }
 
             await DelayIfNeededAsync(plan.PostRoll, cancellationToken).ConfigureAwait(false);
@@ -262,7 +200,7 @@ public sealed class BatchRecordingRunner
         catch (Exception ex)
         {
             failure = ex;
-            _logger.Error("Batch plan failed: " + plan.OutputBaseName + ": " + ex);
+            _logger.Error("Assignment plan failed: " + plan.OutputBaseName + ": " + ex);
         }
         finally
         {
@@ -270,34 +208,62 @@ public sealed class BatchRecordingRunner
             {
                 try
                 {
-                    var stopResult = await _obsRecorder.StopRecordingAsync(plan, CancellationToken.None)
+                    stopResult = await _recordingBackend.StopRecordingAsync(plan, contentStartUtc, CancellationToken.None)
                         .ConfigureAwait(false);
                     outputPath = stopResult.OutputPath;
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error("Failed to stop OBS recording after plan " + plan.OutputBaseName + ": " + ex);
+                    _logger.Error("Failed to stop recorder after plan " + plan.OutputBaseName + ": " + ex);
                     if (failure == null)
                     {
                         failure = ex;
                     }
                 }
             }
+
+            if ((failure != null || cancellationToken.IsCancellationRequested) && replayLaunchStarted)
+            {
+                await RequestLeaveActiveReplayAfterInterruptedPlanAsync(plan, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
         }
 
         if (failure == null)
         {
-            outputPath = await MoveRecordingOutputAsync(plan, outputPath, CancellationToken.None)
-                .ConfigureAwait(false);
-            await ArchiveReplayAsync(plan, succeeded: true, CancellationToken.None).ConfigureAwait(false);
-            _completedReplayStore?.MarkCompleted(plan.QueueItem, outputPath);
-            _logger.Info("Finished batch plan: " + plan.OutputBaseName +
-                         (string.IsNullOrEmpty(outputPath) ? "" : ". OBS output: " + outputPath));
-            return true;
+            _logger.Info("Finished assignment plan: " + plan.OutputBaseName +
+                         (string.IsNullOrEmpty(outputPath) ? "" : ". Output: " + outputPath) +
+                         (string.IsNullOrWhiteSpace(stopResult?.SyncStatus) ? "" : ". Sync=" + stopResult.SyncStatus));
+            return new RecordingExecutionResult(
+                true,
+                outputPath,
+                null,
+                stopResult?.SyncStatus,
+                stopResult?.SyncCorrectionMilliseconds,
+                stopResult?.TrimStartSeconds,
+                stopResult?.SyncReportPath);
         }
 
-        await ArchiveReplayAsync(plan, succeeded: false, CancellationToken.None).ConfigureAwait(false);
-        return false;
+        return new RecordingExecutionResult(false, outputPath, failure.Message);
+    }
+
+    private async Task RequestLeaveActiveReplayAfterInterruptedPlanAsync(
+        RecordingPlan plan,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.Warn("Requesting replay exit after interrupted plan: " + plan.OutputBaseName);
+            await UnityMainThreadTaskScheduler.Factory
+                .StartNew(
+                    () => ActiveReplayTerminator.RequestLeaveActiveReplay(_logger),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("Could not request replay exit after interrupted plan " + plan.OutputBaseName + ": " + ex.Message);
+        }
     }
 
     private Task<ReplayPlaybackSession> StartReplayOnMainThreadAsync(
@@ -308,6 +274,15 @@ public sealed class BatchRecordingRunner
         return UnityMainThreadTaskScheduler.Factory
             .StartNew(
                 () => _playbackDriver.StartReplayAsync(queueItem, replayReference, cancellationToken),
+                cancellationToken)
+            .Unwrap();
+    }
+
+    private Task PlaySyncMarkerOnMainThreadAsync(CancellationToken cancellationToken)
+    {
+        return UnityMainThreadTaskScheduler.Factory
+            .StartNew(
+                () => RecordingSyncMarkerPlayer.PlayAsync(cancellationToken),
                 cancellationToken)
             .Unwrap();
     }
@@ -326,13 +301,13 @@ public sealed class BatchRecordingRunner
 
             try
             {
-                await _obsRecorder.StartRecordingAsync(plan, cancellationToken).ConfigureAwait(false);
+                await _recordingBackend.StartRecordingAsync(plan, cancellationToken).ConfigureAwait(false);
                 return;
             }
             catch (Exception ex) when (attempt < maxAttempts)
             {
                 lastException = ex;
-                _logger.Warn("OBS StartRecord failed for " + plan.OutputBaseName +
+                _logger.Warn("Recorder start failed for " + plan.OutputBaseName +
                              " on attempt " + attempt + " of " + maxAttempts +
                              ". Retrying after " + retryDelay.TotalSeconds + " second(s): " + ex.Message);
 
@@ -344,7 +319,7 @@ public sealed class BatchRecordingRunner
             }
         }
 
-        throw lastException ?? new InvalidOperationException("OBS StartRecord failed.");
+        throw lastException ?? new InvalidOperationException("Recorder start failed.");
     }
 
     private Task ValidateReplayOnMainThreadAsync(
@@ -358,7 +333,15 @@ public sealed class BatchRecordingRunner
             .Unwrap();
     }
 
-    private async Task<bool> ConfirmObsRecordingStartedAsync(
+    private Task<ReplayLagSpikeMonitor> CreateLagSpikeMonitorOnMainThreadAsync(CancellationToken cancellationToken)
+    {
+        return UnityMainThreadTaskScheduler.Factory
+            .StartNew(
+                () => ReplayLagSpikeMonitor.Create(_settings, _logger),
+                cancellationToken);
+    }
+
+    private async Task<bool> ConfirmRecordingStartedAsync(
         RecordingPlan plan,
         CancellationToken cancellationToken)
     {
@@ -366,8 +349,8 @@ public sealed class BatchRecordingRunner
         {
             await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
 
-            var status = await _obsRecorder.GetRecordingStatusAsync(cancellationToken).ConfigureAwait(false);
-            _logger.Info("OBS recording status after StartRecord for " + plan.OutputBaseName +
+            var status = await _recordingBackend.GetRecordingStatusAsync(cancellationToken).ConfigureAwait(false);
+            _logger.Info("Recorder status after start for " + plan.OutputBaseName +
                          ": active=" + status.OutputActive +
                          ", paused=" + status.OutputPaused +
                          ", check=" + attempt + ".");
@@ -393,102 +376,36 @@ public sealed class BatchRecordingRunner
             : Task.Delay(delay, cancellationToken);
     }
 
-    private async Task<string?> MoveRecordingOutputAsync(
-        RecordingPlan plan,
-        string? outputPath,
-        CancellationToken cancellationToken)
+    private sealed class ReplayStartWait : IDisposable
     {
-        if (!_settings.MoveRecordingsToOutputDirectory || string.IsNullOrEmpty(outputPath))
+        private readonly TaskCompletionSource<DateTimeOffset> _completion = new TaskCompletionSource<DateTimeOffset>();
+
+        public ReplayStartWait()
         {
-            return outputPath;
+            ReplayerLauncher.ReplayWasStartedEvent += HandleReplayStarted;
         }
 
-        var outputDirectory = GamePaths.ResolveGamePath(_settings.RecordingOutputDirectory);
-        Directory.CreateDirectory(outputDirectory);
-
-        var extension = Path.GetExtension(outputPath);
-        if (string.IsNullOrEmpty(extension))
+        public async Task<DateTimeOffset?> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
         {
-            extension = ".mkv";
-        }
-
-        var targetPath = Path.Combine(outputDirectory, plan.OutputBaseName + extension);
-        targetPath = PrepareTargetPath(targetPath, _settings.OverwriteExistingRecordings);
-
-        return await FileMoveHelper
-            .MoveWithRetriesAsync(
-                outputPath,
-                targetPath,
-                _settings.OverwriteExistingRecordings,
-                "OBS output",
-                _logger,
-                cancellationToken)
-            .ConfigureAwait(false)
-            ? targetPath
-            : outputPath;
-    }
-
-    private async Task ArchiveReplayAsync(
-        RecordingPlan plan,
-        bool succeeded,
-        CancellationToken cancellationToken)
-    {
-        if (!_settings.MoveProcessedReplays)
-        {
-            return;
-        }
-
-        var sourcePath = plan.QueueItem.ReplayPath;
-        var archiveDirectory = GamePaths.ResolveGamePath(
-            succeeded ? _settings.CompletedReplayDirectory : _settings.FailedReplayDirectory);
-        Directory.CreateDirectory(archiveDirectory);
-
-        var targetPath = Path.Combine(archiveDirectory, Path.GetFileName(sourcePath));
-        targetPath = PrepareTargetPath(targetPath, overwrite: false);
-
-        if (string.Equals(
-                Path.GetFullPath(sourcePath),
-                Path.GetFullPath(targetPath),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        await FileMoveHelper
-            .MoveWithRetriesAsync(
-                sourcePath,
-                targetPath,
-                overwrite: false,
-                "replay",
-                _logger,
-                cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    private static string PrepareTargetPath(string targetPath, bool overwrite)
-    {
-        if (!File.Exists(targetPath))
-        {
-            return targetPath;
-        }
-
-        if (overwrite)
-        {
-            File.Delete(targetPath);
-            return targetPath;
-        }
-
-        var directory = Path.GetDirectoryName(targetPath) ?? "";
-        var baseName = Path.GetFileNameWithoutExtension(targetPath);
-        var extension = Path.GetExtension(targetPath);
-
-        for (var index = 2; ; index++)
-        {
-            var candidate = Path.Combine(directory, baseName + " (" + index + ")" + extension);
-            if (!File.Exists(candidate))
+            var timeoutTask = Task.Delay(timeout, cancellationToken);
+            var completed = await Task.WhenAny(_completion.Task, timeoutTask).ConfigureAwait(false);
+            if (completed == _completion.Task)
             {
-                return candidate;
+                return await _completion.Task.ConfigureAwait(false);
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return null;
+        }
+
+        public void Dispose()
+        {
+            ReplayerLauncher.ReplayWasStartedEvent -= HandleReplayStarted;
+        }
+
+        private void HandleReplayStarted(ReplayLaunchData launchData)
+        {
+            _completion.TrySetResult(DateTimeOffset.UtcNow);
         }
     }
 

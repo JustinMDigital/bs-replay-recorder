@@ -8,12 +8,14 @@ public sealed class RecordingPlan
         ReplayQueueItem queueItem,
         string outputBaseName,
         TimeSpan preRoll,
-        TimeSpan postRoll)
+        TimeSpan postRoll,
+        string overlayContext = "")
     {
         QueueItem = queueItem ?? throw new ArgumentNullException(nameof(queueItem));
         OutputBaseName = outputBaseName ?? throw new ArgumentNullException(nameof(outputBaseName));
         PreRoll = preRoll;
         PostRoll = postRoll;
+        OverlayContext = overlayContext ?? "";
     }
 
     public ReplayQueueItem QueueItem { get; }
@@ -24,6 +26,7 @@ public sealed class RecordingPlan
 
     public TimeSpan PostRoll { get; }
 
+    public string OverlayContext { get; }
+
     public TimeSpan EstimatedRecordingLength => PreRoll + QueueItem.EstimatedPlaybackLength + PostRoll;
 }
-

@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Replay Recorder Control Panel</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/styles.css?v=diagnostics">
+</head>
+<body>
+  <main class="shell dashboardShell">
+    <header class="appHeader commandBar">
+      <div class="brandCluster">
+        <span class="brandMark" aria-hidden="true">&#9654;</span>
+        <div class="titleBlock">
+          <div class="titleLine">
+            <h1>Replay Recorder</h1>
+            <span id="runPill" class="statusPill">Loading</span>
+          </div>
+          <div id="runStatus" class="runMeta">Loading queue state</div>
+        </div>
+      </div>
+
+      <div id="captureProfile" class="captureProfile">Loading capture profile</div>
+
+      <label class="queueSearch commandSearch" for="queueSearchInput">
+        <span class="searchIcon" aria-hidden="true">&#128269;&#65038;</span>
+        <input id="queueSearchInput" type="search" placeholder="Queue search/filter" aria-label="Search queue" autocomplete="off">
+      </label>
+
+      <div class="headerControls">
+        <nav class="viewTabs" aria-label="Control panel views">
+          <button class="viewTab active" type="button" data-view-target="run">Run</button>
+          <button class="viewTab" type="button" data-view-target="settings">Settings</button>
+          <button class="viewTab" type="button" data-view-target="diagnostics">Diagnostics</button>
+          <a class="viewTab" href="/file-settings.html">Files</a>
+        </nav>
+        <div class="toolbar">
+          <button id="addReplays" class="secondaryButton" type="button">Import .bsor</button>
+          <input id="queueReplayFiles" class="hiddenFileInput" type="file" multiple accept=".bsor">
+          <button id="launchGames" class="secondaryButton" type="button">Launch all</button>
+          <button id="startRun" class="primaryButton" type="button">Start run</button>
+          <button id="stopRun" class="secondaryButton" type="button">Stop</button>
+          <button id="forceStopGames" class="dangerButton" type="button">Force stop</button>
+          <button id="quitApp" class="dangerButton" type="button">Quit</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="statusStrip" aria-label="Run readiness">
+      <article class="statusChip">
+        <span id="queueChipDot" class="statusDot good" aria-hidden="true"></span>
+        <span class="chipLabel">Queue</span>
+        <strong><span id="pendingCount">0</span> pending</strong>
+        <span id="pendingSub">0 total</span>
+      </article>
+      <article class="statusChip">
+        <span id="activeChipDot" class="statusDot good" aria-hidden="true"></span>
+        <span class="chipLabel">Active</span>
+        <strong><span id="recordingCount">0</span> recording</strong>
+        <span id="activeSub">0 workers</span>
+      </article>
+      <article class="statusChip">
+        <span id="completeChipDot" class="statusDot good" aria-hidden="true"></span>
+        <span class="chipLabel">Complete</span>
+        <strong><span id="completedCount">0</span> done</strong>
+        <span id="completeSub">0% done</span>
+      </article>
+      <article class="statusChip">
+        <span id="failedChipDot" class="statusDot good" aria-hidden="true"></span>
+        <span class="chipLabel">Issues</span>
+        <strong><span id="failedCount">0</span> failed</strong>
+        <span id="failedSub">clear</span>
+      </article>
+      <article class="statusChip">
+        <span id="workerChipDot" class="statusDot warn" aria-hidden="true"></span>
+        <span class="chipLabel">Workers</span>
+        <strong id="workerCount">0/0</strong>
+        <span id="workerSub">configured</span>
+      </article>
+      <article class="statusChip">
+        <span id="mapsChipDot" class="statusDot warn" aria-hidden="true"></span>
+        <span class="chipLabel">Maps</span>
+        <strong id="mapsChip">0/0</strong>
+        <span id="mapsChipSub">unchecked</span>
+      </article>
+      <article class="statusChip">
+        <span id="syncChipDot" class="statusDot good" aria-hidden="true"></span>
+        <span class="chipLabel">Sync</span>
+        <strong id="syncChip">Waiting</strong>
+        <span id="syncChipSub">marker correction</span>
+      </article>
+      <article class="statusChip">
+        <span id="baselineChipDot" class="statusDot warn" aria-hidden="true"></span>
+        <span class="chipLabel">Baseline</span>
+        <strong id="baselineChip">Unchecked</strong>
+        <span id="baselineChipSub">instance check</span>
+      </article>
+      <article class="statusChip">
+        <span id="audioChipDot" class="statusDot good" aria-hidden="true"></span>
+        <span class="chipLabel">Audio</span>
+        <strong id="audioChip">Process Loopback</strong>
+        <span id="audioChipSub">active when workers connect</span>
+      </article>
+      <article class="statusChip">
+        <span id="diskChipDot" class="statusDot warn" aria-hidden="true"></span>
+        <span class="chipLabel">Disk</span>
+        <strong id="diskChip">Unchecked</strong>
+        <span id="diskChipSub">recording folder</span>
+      </article>
+    </section>
+
+    <section class="viewPanel runView active" data-view-panel="run">
+      <div class="operationsGrid">
+        <section class="panel queuePanel runPlanPanel">
+          <div class="panelHeader">
+            <div class="panelTitleGroup">
+              <h2>Replay Queue</h2>
+              <span id="queueSummary" class="muted"></span>
+            </div>
+            <div class="panelActions">
+              <button id="clearQueue" class="textButton dangerText" type="button" hidden>Clear queue</button>
+            </div>
+          </div>
+          <div id="queueRows" class="queueList runPlanHost" aria-label="Replay queue"></div>
+        </section>
+
+        <aside class="panel controlsDrawer">
+          <div class="drawerHeader">
+            <h2>Controls</h2>
+          </div>
+          <div id="queueDetails" class="queueDetails selectedReplayDrawer" aria-live="polite"></div>
+          <div class="drawerControlGrid" aria-label="Configuration shortcuts">
+            <button class="controlShortcut wide" type="button" data-settings-target="gameSettings">
+              <strong>Game Presentation</strong>
+              <span>HUD, sabers, player and environment toggles.</span>
+            </button>
+          </div>
+          <div class="importStaging" aria-hidden="true">
+            <label class="fileDrop">
+              <input id="replayFiles" type="file" multiple accept=".bsor" tabindex="-1">
+              <strong>Drop .bsor files</strong>
+              <span id="fileSelection">No files selected</span>
+            </label>
+            <button id="uploadReplays" class="secondaryButton fullWidth" type="button" tabindex="-1">Import Replays</button>
+          </div>
+        </aside>
+      </div>
+
+      <div class="runBottomGrid">
+        <section class="panel instancesPanel">
+          <div class="panelHeader">
+            <div class="panelTitleGroup">
+              <h2>Managed Beat Saber Instances</h2>
+              <span id="lastUpdated" class="muted">Waiting for state</span>
+            </div>
+            <div class="instanceCountControl" aria-label="Enabled instance count">
+              <button id="decreaseActiveInstances" class="iconButton countButton" type="button" aria-label="Disable the highest enabled instance">-</button>
+              <span id="activeInstanceCount" class="instanceCountText">0/0 enabled</span>
+              <button id="increaseActiveInstances" class="iconButton countButton" type="button" aria-label="Enable the next managed instance">+</button>
+            </div>
+          </div>
+          <div id="instances" class="workersList instanceLanes"></div>
+        </section>
+
+        <section class="panel eventLogPanel">
+          <div class="panelHeader">
+            <div class="panelTitleGroup">
+              <h2>Attention / Event Log</h2>
+              <span class="muted">Maps, sync, recording lifecycle</span>
+            </div>
+          </div>
+          <div id="attentionLog" class="attentionLog"></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="viewPanel settingsView" data-view-panel="settings">
+      <div class="settingsPageHeader">
+        <div>
+          <h2>Settings</h2>
+          <span>Setup, recording, launch, game presentation, and run guards.</span>
+        </div>
+        <div class="panelActions">
+          <span id="settingsDirtyBadge" class="muted">Saved</span>
+          <button id="saveSettings" class="secondaryButton" type="button">Save Settings</button>
+        </div>
+      </div>
+      <section id="setupAssistant" class="panel setupAssistantPanel">
+        <div class="panelHeader">
+          <div class="panelTitleGroup">
+            <h2>Setup Assistant</h2>
+            <span id="setupAssistantSummary" class="muted">Choose a profile, save, then verify the local instance stack</span>
+          </div>
+          <div class="panelActions">
+            <button id="setupWizardAdvanced" class="secondaryButton" type="button" aria-controls="advancedSettingsDetails" aria-expanded="false">Advanced Settings</button>
+          </div>
+        </div>
+
+        <div class="setupWizardGrid">
+          <div class="setupWizardColumn">
+            <h3>Display</h3>
+            <div class="setupMonitorPicker">
+              <label class="setupMonitorSelect">Recording monitor
+                <select id="monitorIndex">
+                  <option value="">Detecting monitors...</option>
+                </select>
+              </label>
+              <span id="selectedMonitorSummary" class="setupMonitorSummary">Detecting monitors...</span>
+            </div>
+            <div class="setupFeedHeading">
+              <h3>Feed preset</h3>
+              <span>Recommended choices are based on the selected monitor.</span>
+            </div>
+            <div id="feedPresetList" class="setupProfileList feedPresetList" aria-label="Feed presets">
+            </div>
+          </div>
+
+          <div class="setupWizardColumn">
+            <h3>Instances</h3>
+            <div class="miniGrid setupWizardFields">
+              <label class="span2">Instances root <input id="beatSaberInstancesRoot" type="text"></label>
+              <input id="instanceCount" type="hidden">
+              <div class="setupInstanceManager span2" aria-label="Managed instances">
+                <div class="setupInstanceManagerHeader">
+                  <span>Managed instances</span>
+                  <strong id="setupInstanceSummary">0/0 created</strong>
+                </div>
+                <div id="setupInstanceRows" class="setupInstanceRows"></div>
+              </div>
+            </div>
+            <div class="setupWizardActions">
+              <button id="setupWizardAddInstance" class="secondaryButton" type="button" hidden>+ Add Instance</button>
+            </div>
+          </div>
+        </div>
+
+        <section id="advancedSettingsDetails" class="setupAdvancedPanel" hidden>
+          <div class="setupAdvancedHeader">
+            <div>
+              <h3>Advanced Settings</h3>
+              <span>Capture, audio, launch, and run guards.</span>
+            </div>
+          </div>
+          <div class="formGrid setupAdvancedGrid">
+          <div class="formGroup span2">
+            <h3>Run</h3>
+            <div class="miniGrid">
+              <label class="span2">FPS <input id="targetFps" type="number" min="1" max="240"></label>
+            </div>
+          </div>
+
+          <div class="formGroup span2">
+            <h3>Capture</h3>
+            <div class="miniGrid">
+              <label class="span2">Recording Resolution
+                <select id="resolutionPreset">
+                  <option value="1280x720">720p (1280 x 720)</option>
+                  <option value="1920x1080">1080p (1920 x 1080)</option>
+                  <option value="2560x1440">1440p (2560 x 1440)</option>
+                  <option value="3840x2160">4K (3840 x 2160)</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+              <label>Width <input id="captureWidth" type="number" min="320"></label>
+              <label>Height <input id="captureHeight" type="number" min="180"></label>
+              <label>Bitrate kbps <input id="videoBitrateKbps" type="number" min="500" max="200000" step="500"></label>
+              <label>Container
+                <select id="outputFormat">
+                  <option value="mkv">MKV</option>
+                  <option value="mp4">MP4</option>
+                </select>
+              </label>
+              <label>Encoder
+                <select id="encoder">
+                  <option value="h264_nvenc">NVENC H.264</option>
+                  <option value="hevc_nvenc">NVENC HEVC</option>
+                  <option value="libx264">CPU H.264</option>
+                </select>
+              </label>
+              <label>Quality
+                <select id="qualityMode">
+                  <option value="Performance">Performance</option>
+                  <option value="Balanced">Balanced</option>
+                  <option value="Quality">Quality</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div id="gameSettings" class="formGroup gameSettingsGroup setupGamePanel span4">
+            <div class="gameSettingsTop">
+              <div>
+                <h3>Game settings</h3>
+                <span class="gameSettingsMode">Replay display and player settings</span>
+              </div>
+              <span id="gamePresentationVersion" class="gameSettingsVersion">v1</span>
+            </div>
+            <div class="gameSettingsSurface" aria-label="Replay settings">
+              <div class="gameSettingsSection">
+                <span class="gameSettingsSectionTitle">Interface</span>
+                <div class="gameToggleGrid">
+                  <label class="gameToggle">
+                    <input id="noHud" type="checkbox">
+                    <span class="gameToggleText">Auto-hide UI</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                  <label class="gameToggle">
+                    <input id="showWatermark" type="checkbox">
+                    <span class="gameToggleText">Watermark</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="gameSettingsSection">
+                <span class="gameSettingsSectionTitle">Player</span>
+                <div class="gameToggleGrid">
+                  <label class="gameToggle">
+                    <input id="showHead" type="checkbox">
+                    <span class="gameToggleText">Head</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                  <label class="gameToggle">
+                    <input id="showLeftSaber" type="checkbox">
+                    <span class="gameToggleText">Left saber</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                  <label class="gameToggle">
+                    <input id="showRightSaber" type="checkbox">
+                    <span class="gameToggleText">Right saber</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                  <label class="gameToggle">
+                    <input id="ignoreModifiers" type="checkbox">
+                    <span class="gameToggleText">Ignore modifiers</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="gameSettingsSection">
+                <span class="gameSettingsSectionTitle">Environment</span>
+                <div class="gameToggleGrid">
+                  <label class="gameToggle">
+                    <input id="loadPlayerEnvironment" type="checkbox">
+                    <span class="gameToggleText">Player environment</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                  <label class="gameToggle">
+                    <input id="loadPlayerJumpDistance" type="checkbox">
+                    <span class="gameToggleCopy">
+                      <span class="gameToggleText">Use replay note jump distance</span>
+                      <span class="gameToggleHint">Loads the note spawn distance saved in the replay.</span>
+                    </span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                </div>
+              </div>
+
+            </div>
+
+            <div class="gameSettingsNotice" role="note" aria-label="Shared Beat Saber settings warning">
+              <strong>Shared Beat Saber user data</strong>
+              <span>The Player settings below are stored in Beat Saber's AppData profile and apply across ALL Beat Saber instances for this Windows user.</span>
+            </div>
+
+            <div class="gameSettingsSurface playerSettingsSurface" aria-label="Player settings">
+              <div class="gameSettingsSection">
+                <span class="gameSettingsSectionTitle">Audio</span>
+                <div class="gameControlStack">
+                  <label class="gameValueRow">
+                    <span>SFX volume</span>
+                    <output id="sfxVolumeValue">30%</output>
+                    <input id="sfxVolume" type="range" min="0" max="1" step="0.05" data-game-value="percent">
+                  </label>
+                  <label class="gameToggle">
+                    <input id="adaptiveSfx" type="checkbox">
+                    <span class="gameToggleText">Adaptive SFX</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="gameSettingsSection">
+                <span class="gameSettingsSectionTitle">HUD</span>
+                <div class="gameToggleGrid">
+                  <label class="gameToggle">
+                    <input id="noTextsAndHuds" type="checkbox">
+                    <span class="gameToggleText">No texts and HUDs</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                  <label class="gameToggle">
+                    <input id="advancedHud" type="checkbox">
+                    <span class="gameToggleText">Advanced HUD</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                  <label class="gameToggle">
+                    <input id="reduceDebris" type="checkbox">
+                    <span class="gameToggleText">Reduce debris</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="gameSettingsSection">
+                <div class="gameSectionHeading">
+                  <span class="gameSettingsSectionTitle">Note Jump Timing</span>
+                  <span class="gameSectionHint">Controls when notes spawn before they reach the player.</span>
+                </div>
+                <div class="gameControlStack">
+                  <label class="gameSelectRow">
+                    <span class="gameFieldCopy">
+                      <span class="gameFieldLabel">Duration mode</span>
+                      <span class="gameFieldHint">Dynamic uses Beat Saber timing; Static uses the fixed value below.</span>
+                    </span>
+                    <select id="noteJumpDurationType">
+                      <option value="Dynamic">Dynamic</option>
+                      <option value="Static">Static</option>
+                    </select>
+                  </label>
+                  <label id="noteJumpFixedDurationRow" class="gameValueRow">
+                    <span class="gameFieldCopy">
+                      <span class="gameFieldLabel">Static duration</span>
+                      <span class="gameFieldHint">Only active when Duration mode is Static.</span>
+                    </span>
+                    <output id="noteJumpFixedDurationValue">0.20s</output>
+                    <input id="noteJumpFixedDuration" type="range" min="0.1" max="1" step="0.05" data-game-value="seconds">
+                  </label>
+                  <label class="gameValueRow">
+                    <span class="gameFieldCopy">
+                      <span class="gameFieldLabel">Start beat offset</span>
+                      <span class="gameFieldHint">Negative spawns notes earlier; positive spawns them later.</span>
+                    </span>
+                    <output id="noteJumpStartBeatOffsetValue">0.0</output>
+                    <input id="noteJumpStartBeatOffset" type="range" min="-1" max="1" step="0.25" data-game-value="offset">
+                  </label>
+                </div>
+              </div>
+
+              <div class="gameSettingsSection">
+                <span class="gameSettingsSectionTitle">Effects</span>
+                <div class="gameControlStack">
+                  <label class="gameValueRow">
+                    <span>Saber trail</span>
+                    <output id="saberTrailIntensityValue">0%</output>
+                    <input id="saberTrailIntensity" type="range" min="0" max="1" step="0.05" data-game-value="percent">
+                  </label>
+                  <label class="gameSelectRow">
+                    <span>Arcs</span>
+                    <select id="arcVisibility">
+                      <option value="None">None</option>
+                      <option value="Low">Low</option>
+                      <option value="Standard">Standard</option>
+                      <option value="High">High</option>
+                    </select>
+                  </label>
+                  <label class="gameSelectRow">
+                    <span>Lights</span>
+                    <select id="environmentEffectsFilterDefaultPreset">
+                      <option value="AllEffects">All effects</option>
+                      <option value="StrobeFilter">Strobe filter</option>
+                      <option value="NoEffects">No effects</option>
+                    </select>
+                  </label>
+                  <label class="gameSelectRow">
+                    <span>Expert+ lights</span>
+                    <select id="environmentEffectsFilterExpertPlusPreset">
+                      <option value="AllEffects">All effects</option>
+                      <option value="StrobeFilter">Strobe filter</option>
+                      <option value="NoEffects">No effects</option>
+                    </select>
+                  </label>
+                  <label class="gameToggle">
+                    <input id="hideNoteSpawnEffect" type="checkbox">
+                    <span class="gameToggleText">Hide spawn effect</span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="formGroup span2">
+            <h3>Audio</h3>
+            <div class="miniGrid">
+              <label class="span2">Mode
+                <select id="audioMode">
+                  <option value="ProcessLoopback">Process loopback</option>
+                  <option value="None">None</option>
+                </select>
+              </label>
+              <label>Audio kbps <input id="audioBitrateKbps" type="number" min="64" max="1024" step="32"></label>
+              <label>Sample rate <input id="audioSampleRate" type="number" min="8000" max="192000" step="1000"></label>
+              <label>Level
+                <select id="audioLevelMode">
+                  <option value="Off">Off</option>
+                  <option value="Gain">Gain dB</option>
+                  <option value="Loudness">Loudness LUFS</option>
+                </select>
+              </label>
+              <label>Target <input id="audioTargetLevelDb" type="number" min="-70" max="-5" step="0.5"></label>
+            </div>
+          </div>
+
+          <div id="launchSettings" class="formGroup span2">
+            <h3>Launch</h3>
+            <div class="miniGrid">
+              <label class="span2">Preset
+                <select id="beatSaberLaunchPreset">
+                  <option value="4k-monitor-2x2">Up to 4 x 1080p</option>
+                  <option value="1440p-monitor-2x2">Up to 4 x 720p</option>
+                  <option value="single-4k">Single 4K</option>
+                  <option value="single-1440p">Single 1440p</option>
+                  <option value="single-1080p">Single 1080p</option>
+                  <option value="windowed-1080p">Windowed 1080p</option>
+                  <option value="windowed-720p">Windowed 720p</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+              <label class="span2">Launch args <input id="beatSaberLaunchArguments" type="text"></label>
+              <div class="displayScaleBlock span2">
+                <label class="checkboxLabel displayScaleToggle">
+                  <input id="manageDisplayScale" type="checkbox">
+                  <span>
+                    <strong>Temporarily change Windows display scale</strong>
+                    <small>Sets the selected monitor for recording. The original scale is detected before the first change and restored after the run.</small>
+                  </span>
+                </label>
+                <div id="displayScaleFields" class="displayScaleFields">
+                  <label>During recording % <input id="recordingDisplayScalePercent" type="number" min="100" max="500" step="25"></label>
+                  <input id="restoreDisplayScalePercent" type="hidden">
+                  <div class="displayScaleAutoRestore">
+                    <span>Restore scale</span>
+                    <strong id="restoreDisplayScaleSummary">Auto-detect before recording</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="formGroup span2 compactChecks">
+            <label class="checkboxLabel">
+              <input id="requireAllWorkersReady" type="checkbox">
+              <span>Require all workers</span>
+            </label>
+            <label class="checkboxLabel">
+              <input id="requireMatchingInstanceBaseline" type="checkbox">
+              <span>Require matching baseline</span>
+            </label>
+            <label class="checkboxLabel">
+              <input id="requireAudioForRun" type="checkbox">
+              <span>Require audio</span>
+            </label>
+            <label class="checkboxLabel">
+              <input id="hideTaskbarDuringRun" type="checkbox">
+              <span>Hide taskbar</span>
+            </label>
+          </div>
+          </div>
+        </section>
+      </section>
+    </section>
+
+    <section class="viewPanel diagnosticsView" data-view-panel="diagnostics">
+      <div class="settingsPageHeader diagnosticsPageHeader">
+        <div>
+          <h2>Diagnostics</h2>
+          <span>Live readiness, worker evidence, sync, baseline, and recent run events.</span>
+        </div>
+        <div class="panelActions">
+          <button class="textButton" type="button" data-settings-target="advancedSettingsDetails">Edit Settings</button>
+        </div>
+      </div>
+
+      <div class="diagnosticsGrid">
+        <section class="panel diagnosticReadinessPanel diagnosticsWide">
+          <div class="panelHeader">
+            <div class="panelTitleGroup">
+              <h2>Live Readiness</h2>
+              <span class="muted">Moved from the setup assistant and expanded with queue, disk, and sync checks</span>
+            </div>
+            <div class="panelActions">
+              <button id="setupWizardCheckBaseline" class="secondaryButton" type="button">Check Baseline</button>
+              <button id="setupWizardLaunchOnly" class="secondaryButton" type="button">Launch</button>
+              <button id="setupWizardVerify" class="primaryButton" type="button">Launch + Verify</button>
+            </div>
+          </div>
+          <div id="diagnosticsReadinessSummary" class="diagnosticHero"></div>
+          <div id="diagnosticsReadinessList" class="diagnosticChecklist"></div>
+        </section>
+
+        <section class="panel diagnosticRuntimePanel diagnosticsWide">
+          <div class="panelHeader">
+            <div class="panelTitleGroup">
+              <h2>Runtime Snapshot</h2>
+              <span class="muted">Current /api/state readback</span>
+            </div>
+          </div>
+          <div id="diagnosticsRuntimeGrid" class="diagnosticMetricGrid"></div>
+        </section>
+
+        <section class="panel diagnosticWorkersPanel diagnosticsWide">
+          <div class="panelHeader">
+            <div class="panelTitleGroup">
+              <h2>Workers and Hosts</h2>
+              <span class="muted">Heartbeat, game process, recorder host, audio, and assignment state</span>
+            </div>
+          </div>
+          <div id="diagnosticsWorkerList" class="diagnosticWorkerList"></div>
+        </section>
+
+        <section class="panel syncPanel">
+          <div class="panelHeader">
+            <div class="panelTitleGroup">
+              <h2>Replay Sync</h2>
+              <span class="muted">Automatic marker correction</span>
+            </div>
+          </div>
+          <div id="syncSummary" class="syncSummary"></div>
+        </section>
+
+        <section class="panel baselinePanel">
+          <div class="panelHeader">
+            <div class="panelTitleGroup">
+              <h2>Instance Baseline</h2>
+              <span class="muted">Compare configured instances against the baseline</span>
+            </div>
+            <button id="checkBaseline" class="textButton">Check</button>
+          </div>
+          <div id="baselineSummary" class="baselineSummary"></div>
+          <div id="baselineInstances" class="baselineList"></div>
+        </section>
+
+        <section class="panel diagnosticEventsPanel diagnosticsWide">
+          <div class="panelHeader">
+            <div class="panelTitleGroup">
+              <h2>Recent Evidence</h2>
+              <span class="muted">Errors, output completions, map issues, sync events, and instance failures</span>
+            </div>
+          </div>
+          <div id="diagnosticsEventLog" class="attentionLog diagnosticsEventLog"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <button id="unsavedSettingsPrompt" class="unsavedSettingsPrompt" type="button" hidden aria-live="polite">
+    <span>Settings not saved</span>
+    <strong>Click here to Save</strong>
+  </button>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js?v=diagnostics"></script>
+</body>
+</html>

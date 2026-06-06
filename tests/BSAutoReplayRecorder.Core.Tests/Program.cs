@@ -1,6 +1,5 @@
 using System.Text;
 using BSAutoReplayRecorder.Core;
-using BSAutoReplayRecorder.Core.Obs;
 using BSAutoReplayRecorder.Core.Replay;
 
 var tempDir = Path.Combine(Path.GetTempPath(), "bsarr-" + Guid.NewGuid().ToString("N"));
@@ -44,12 +43,6 @@ try
 
     AssertEqual("01 - Alpha Song [ExpertPlus]", plans[0].OutputBaseName, "sanitized output name");
     AssertEqual(97.5, Math.Round(plans[0].EstimatedRecordingLength.TotalSeconds, 2), "estimated recording length");
-
-    var startRequest = ObsRequestFactory.CreateRequest("StartRecord", "request-1");
-    AssertEqual("{\"op\":6,\"d\":{\"requestType\":\"StartRecord\",\"requestId\":\"request-1\"}}", startRequest, "OBS start request");
-
-    var auth = ObsAuthentication.CreateAuthentication("password", "salt", "challenge");
-    AssertEqual("zTM5ki6L2vVvBQiTG9ckH1Lh64AbnCf6XZ226UmnkIA=", auth, "OBS authentication hash");
 
     var referenceParser = new ReplayReferenceParser();
     var bsorReference = referenceParser.Parse(firstReplay);

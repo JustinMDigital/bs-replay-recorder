@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tmp\**;ControlPanelWorkspace\**;Recordings\**;BeatSaberInstances\**;SharedSongs\**;SharedContent\**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>
