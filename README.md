@@ -128,6 +128,8 @@ scripts\launcher\Stop-ReplayRecorder.ps1 -StopGames
 
 The dashboard `Quit` button uses the same stop-and-games path.
 
+If the control panel sees no recorder activity for 20 minutes and no run is active, it automatically uses that same stop-and-games path. Set `idleShutdownMinutes` in local `settings.json` to change the timeout, or `0` to disable it.
+
 ## Presets
 
 The `Settings` view recommends feed presets based on the selected recording monitor.
@@ -154,6 +156,9 @@ By default, runtime files live under:
 ControlPanelWorkspace/
   control-panel-state.json
   Queue/
+  Logs/
+    control-panel.out.log
+    recorder-host-5757.out.log
   Recordings/
   Instances/
   SharedSongs/

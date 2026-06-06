@@ -73,6 +73,7 @@ public sealed class ControlPanelStore
         Directory.CreateDirectory(_queueDirectory);
 
         _state = LoadState(settings);
+        _state.LastActivityUtc = DateTimeOffset.UtcNow;
         TaskbarVisibilityController.Restore();
         _taskbarHiddenForRun = false;
         EnsureInstancesNoLock();
@@ -583,6 +584,8 @@ public sealed class ControlPanelStore
     {
         lock (_sync)
         {
+            EnsureInstancesNoLock();
+            _state.Run.ForceStopCommandId++;
             RequestRunCancellationNoLock("Stopped by operator.", failQueued: false);
             TryFinalizeCanceledRunNoLock(DateTimeOffset.UtcNow);
             AddEventNoLock("Warn", "Run", "Run stop requested.");
@@ -591,17 +594,37 @@ public sealed class ControlPanelStore
         }
     }
 
-    public ControlPanelState ForceStopAllGames()
+    public bool TryRequestIdleShutdown(DateTimeOffset now, TimeSpan idleTimeout)
     {
+        if (idleTimeout <= TimeSpan.Zero)
+        {
+            return false;
+        }
+
         lock (_sync)
         {
             EnsureInstancesNoLock();
-            _state.Run.ForceStopCommandId++;
-            RequestRunCancellationNoLock("Force stopped by operator.", failQueued: false);
-            TryFinalizeCanceledRunNoLock(DateTimeOffset.UtcNow);
-            AddEventNoLock("Bad", "Instance", "Force stop requested for all instances.");
+            var changed = ExpireStaleWorkersNoLock(now);
+            changed |= RefreshLaunchProcessesNoLock();
+            changed |= NormalizeRunSummaryNoLock();
+            if (changed)
+            {
+                SaveNoLock();
+            }
+
+            if (IsActiveForIdleShutdownNoLock() ||
+                now - _state.LastActivityUtc < idleTimeout)
+            {
+                return false;
+            }
+
+            AddEventNoLock(
+                "Warn",
+                "Idle",
+                "No recorder activity for " + FormatIdleTimeout(idleTimeout) + "; stopping the recorder stack.",
+                nowOverride: now);
             SaveNoLock();
-            return Clone(_state);
+            return true;
         }
     }
 
@@ -1086,7 +1109,7 @@ public sealed class ControlPanelStore
             var workerName = NormalizeNullable(request.WorkerName);
             if (workerName != null)
             {
-                instance.Name = workerName;
+                instance.Name = NormalizeManagedInstanceName(workerName, instance.Index);
             }
 
             AddEventNoLock("Good", "Worker", instance.Name + " registered.", instanceIndex: instance.Index);
@@ -1218,7 +1241,12 @@ public sealed class ControlPanelStore
             instance.CurrentReplayId = replay.Id;
             instance.Status = "Assigned";
 
-            AddEventNoLock("Info", "Run", "Recording started: " + CreateReplayLabel(replay) + " on I-" + (instance.Index + 1), replay.Id, instance.Index);
+            AddEventNoLock(
+                "Info",
+                "Run",
+                "Recording started: " + CreateReplayLabel(replay) + " on " + CreateManagedInstanceName(instance.Index),
+                replay.Id,
+                instance.Index);
             SaveNoLock();
             return CreateAssignmentResponse(replay, instance);
         }
@@ -1859,10 +1887,7 @@ public sealed class ControlPanelStore
                 ResetInactiveInstanceIdentityNoLock(instance);
             }
 
-            if (string.IsNullOrWhiteSpace(instance.Name))
-            {
-                instance.Name = CreateManagedInstanceName(index);
-            }
+            instance.Name = NormalizeManagedInstanceName(instance.Name, index);
 
             if (string.IsNullOrWhiteSpace(instance.RecorderHostUrl))
             {
@@ -2634,7 +2659,35 @@ public sealed class ControlPanelStore
 
     private string CreateManagedInstanceName(int index)
     {
-        return _state.Settings.BeatSaberInstanceNamePrefix + (index + 1);
+        return "Instance " + (index + 1).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private string NormalizeManagedInstanceName(string? name, int index)
+    {
+        var normalized = NormalizeNullable(name);
+        if (normalized == null || IsGeneratedManagedInstanceName(normalized, index))
+        {
+            return CreateManagedInstanceName(index);
+        }
+
+        return normalized;
+    }
+
+    private bool IsGeneratedManagedInstanceName(string name, int index)
+    {
+        var displayIndex = (index + 1).ToString(CultureInfo.InvariantCulture);
+        var candidates = new[]
+        {
+            CreateManagedInstanceName(index),
+            "I-" + displayIndex,
+            "BSARR I-" + displayIndex,
+            _state.Settings.BeatSaberInstanceNamePrefix + displayIndex,
+            "BSARR " + _state.Settings.BeatSaberInstanceNamePrefix + displayIndex
+        };
+
+        return candidates
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
+            .Any(candidate => string.Equals(name, candidate, StringComparison.OrdinalIgnoreCase));
     }
 
     private void LaunchInstanceNoLock(WorkerInstanceRecord instance)
@@ -3912,13 +3965,16 @@ public sealed class ControlPanelStore
         string tag,
         string text,
         string? replayId = null,
-        int? instanceIndex = null)
+        int? instanceIndex = null,
+        DateTimeOffset? nowOverride = null)
     {
         _state.Events ??= new List<ControlPanelEventRecord>();
+        var now = nowOverride ?? DateTimeOffset.UtcNow;
+        _state.LastActivityUtc = now;
         _state.Events.Insert(0, new ControlPanelEventRecord
         {
             Id = Guid.NewGuid().ToString("N"),
-            CreatedAtUtc = DateTimeOffset.UtcNow,
+            CreatedAtUtc = now,
             Kind = NormalizeNullable(kind) ?? "Info",
             Tag = NormalizeNullable(tag) ?? "Event",
             Text = NormalizeNullable(text) ?? "Event recorded.",
@@ -3954,6 +4010,28 @@ public sealed class ControlPanelStore
         return (unitIndex == 0 ? display.ToString("0", CultureInfo.InvariantCulture) : display.ToString("0.0", CultureInfo.InvariantCulture)) +
                " " +
                units[unitIndex];
+    }
+
+    private bool IsActiveForIdleShutdownNoLock()
+    {
+        if (_state.Run.IsRunning || _state.Run.CancellationRequested)
+        {
+            return true;
+        }
+
+        return _state.Queue.Any(replay => IsActiveReplayStatus(replay.Status)) ||
+               _state.Instances.Any(instance =>
+                   !string.IsNullOrWhiteSpace(instance.ActiveAssignmentId) ||
+                   !string.IsNullOrWhiteSpace(instance.CurrentReplayId) ||
+                   IsRecordingStatus(instance.Status));
+    }
+
+    private static string FormatIdleTimeout(TimeSpan timeout)
+    {
+        var totalMinutes = Math.Max(1, (int)Math.Round(timeout.TotalMinutes));
+        return totalMinutes.ToString(CultureInfo.InvariantCulture) +
+               " minute" +
+               (totalMinutes == 1 ? "" : "s");
     }
 
     private void SaveNoLock()

@@ -177,7 +177,7 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
                 ["Enabled"] = true,
                 ["BaseUrl"] = settings.BindUrl.TrimEnd('/'),
                 ["WorkerId"] = workerId,
-                ["WorkerName"] = "BSARR I-" + displayIndex,
+                ["WorkerName"] = "Instance " + displayIndex,
                 ["PreferredInstanceIndex"] = instance.Index,
                 ["PollIntervalSeconds"] = 1,
                 ["HeartbeatIntervalSeconds"] = 2,

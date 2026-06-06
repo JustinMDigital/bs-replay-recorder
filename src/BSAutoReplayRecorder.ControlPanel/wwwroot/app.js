@@ -11,6 +11,7 @@ let setupAssistantHidden = readSetupAssistantHidden();
 let displayInfo = { displays: [] };
 let draggedQueueId = null;
 let pendingSetupEnabledInstanceCount = null;
+let pendingSetupInstanceCreation = null;
 let lastRunPlanPlayheadLeftPx = null;
 let runPlanPlayheadInstantTimeout = null;
 
@@ -30,6 +31,35 @@ const minManagedInstanceCount = 1;
 const maxManagedInstanceCount = 4;
 const visibleManagedInstanceSlots = maxManagedInstanceCount;
 const managedInstanceNamePrefix = 'I-';
+
+function formatInstanceName(index) {
+  const numericIndex = Number(index);
+  return Number.isFinite(numericIndex) ? `Instance ${numericIndex + 1}` : 'Instance';
+}
+
+function formatInstanceDisplayName(instance, fallbackIndex = null) {
+  const numericIndex = Number(instance?.index ?? fallbackIndex);
+  const fallback = formatInstanceName(numericIndex);
+  const name = String(instance?.name || '').trim();
+  if (!name) return fallback;
+
+  const displayIndex = Number.isFinite(numericIndex) ? numericIndex + 1 : null;
+  if (displayIndex != null) {
+    const legacyNames = [
+      `I-${displayIndex}`,
+      `BSARR I-${displayIndex}`,
+      `${managedInstanceNamePrefix}${displayIndex}`,
+      `BSARR ${managedInstanceNamePrefix}${displayIndex}`
+    ].map(value => value.toLowerCase());
+
+    if (legacyNames.includes(name.toLowerCase())) {
+      return fallback;
+    }
+  }
+
+  return name;
+}
+
 const launchPresets = {
   '4k-monitor-2x2': {
     instanceCount: 4,
@@ -308,7 +338,6 @@ function render() {
   updateActiveView();
   setHidden('startRun', runActive);
   setHidden('stopRun', !runActive);
-  setHidden('forceStopGames', !runActive);
 
   document.getElementById('runPill').textContent = state.run.status;
   document.getElementById('runPill').className = `statusPill ${statusClass(state.run.status)}`;
@@ -767,7 +796,7 @@ function renderWorkers() {
         <span class="instanceDot ${enabled && (instance.workerId || instance.gameProcessId) ? 'online' : 'idle'}" aria-hidden="true"></span>
         <span class="monitorIcon" aria-hidden="true"></span>
         <div>
-          <strong>${escapeHtml(instance.name || `BSARR I-${Number(instance.index) + 1}`)}</strong>
+          <strong>${escapeHtml(formatInstanceDisplayName(instance))}</strong>
           <span>${escapeHtml(!enabled ? 'Disabled for scheduling' : (instance.recorderHostUrl || (reservedSlot ? 'Managed slot reserved' : 'Recorder host pending')))}</span>
         </div>
       </div>
@@ -825,7 +854,7 @@ function buildManagedInstanceSlots() {
   for (let index = 0; index < count; index++) {
     slots.push(byIndex.get(index) || {
       index,
-      name: `BSARR I-${index + 1}`,
+      name: formatInstanceName(index),
       reservedSlot: true
     });
   }
@@ -1175,7 +1204,7 @@ function renderDiagnosticWorkers() {
         <div class="diagnosticWorkerIdentity">
           <span class="diagnosticStateDot" aria-hidden="true"></span>
           <div>
-            <strong>${escapeHtml(instance.name || `BSARR I-${Number(instance.index) + 1}`)}</strong>
+            <strong>${escapeHtml(formatInstanceDisplayName(instance))}</strong>
             <span>${escapeHtml(host)}</span>
           </div>
         </div>
@@ -1289,7 +1318,7 @@ function buildDerivedAttentionEvents() {
         kind: 'info',
         tag: 'Run',
         time: item.assignedAtUtc,
-        text: `Recording started: ${label} on I-${assignedInstanceText(item)}`
+        text: `Recording started: ${label} on ${assignedInstanceText(item)}`
       });
     }
     if (sameStatus(item.status, 'Completed')) {
@@ -1308,7 +1337,7 @@ function buildDerivedAttentionEvents() {
         kind: 'bad',
         tag: 'Instance',
         time: instance.gameLaunchedAtUtc,
-        text: `${instance.name}: ${instance.gameLaunchError || instance.audioRoutingError}`
+        text: `${formatInstanceDisplayName(instance)}: ${instance.gameLaunchError || instance.audioRoutingError}`
       });
     }
   }
@@ -1678,7 +1707,7 @@ function formatPercent(value) {
 function renderRunPlanLane(lane, visibleQueue, totalSeconds) {
   const index = lane.index;
   const instance = lane.instance;
-  const label = instance?.name || `BSARR I-${index + 1}`;
+  const label = formatInstanceDisplayName(instance, index);
   const enabled = !instance || isInstanceEnabled(instance);
   const subtitle = !enabled
     ? 'Disabled'
@@ -1692,9 +1721,13 @@ function renderRunPlanLane(lane, visibleQueue, totalSeconds) {
   return `
     <div class="runPlanLane ${enabled ? '' : 'disabledLane'}">
       <div class="laneLabel">
-        <span class="statusDot ${enabled && (instance?.workerId || instance?.gameProcessId) ? 'good' : 'warn'}" aria-hidden="true"></span>
-        <strong>${escapeHtml(label)}</strong>
-        <span>${escapeHtml(subtitle)}</span>
+        <div class="laneLabelText">
+          <div class="laneLabelNameRow">
+            <strong>${escapeHtml(label)}</strong>
+            <span class="statusDot ${enabled && (instance?.workerId || instance?.gameProcessId) ? 'good' : 'warn'}" aria-hidden="true"></span>
+          </div>
+          <span>${escapeHtml(subtitle)}</span>
+        </div>
       </div>
       <div class="laneTrack">
         <div class="laneLine" aria-hidden="true"></div>
@@ -1792,6 +1825,7 @@ function bindRunPlanDrag(board) {
     });
 
     card.addEventListener('drop', event => {
+      if (!draggedQueueId && isFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
       const sourceId = draggedQueueId || event.dataTransfer?.getData('text/plain') || '';
@@ -2011,7 +2045,7 @@ function renderQueuePathLine(item) {
 function assignedInstanceText(item) {
   return item.assignedInstance === null || item.assignedInstance === undefined
     ? '-'
-    : item.assignedInstance + 1;
+    : formatInstanceName(item.assignedInstance);
 }
 
 function canOpenRecording(item) {
@@ -2487,14 +2521,20 @@ function renderSetupInstanceList(settings, configuredCount, createdCount, missin
   }
 
   rows.innerHTML = '';
+  const creating = pendingSetupInstanceCreation;
   for (let index = 0; index < configuredCount; index++) {
     const instance = instances.find(item => Number(item.index) === index) || {
       index,
-      name: `BSARR I-${index + 1}`,
+      name: formatInstanceName(index),
       enabled: true,
       launchDirectoryReady: false
     };
     const created = Boolean(instance.launchDirectoryReady);
+    const isCreating = Boolean(
+      creating &&
+      !created &&
+      Number(index) >= Number(creating.startIndex) &&
+      Number(index) < Number(creating.targetCount));
     const storedEnabled = isInstanceEnabled(instance);
     const enabled = getEffectiveSetupInstanceEnabled(instance);
     const pendingEnabledChange = pendingSetupEnabledInstanceCount != null && enabled !== storedEnabled;
@@ -2507,32 +2547,32 @@ function renderSetupInstanceList(settings, configuredCount, createdCount, missin
       instance.workerId ||
       isActiveStatus(instance.status) ||
       sameStatus(instance.status, 'Recording'));
-    const statusLabel = created ? 'Created' : 'Missing';
+    const statusLabel = isCreating ? 'Creating' : (created ? 'Created' : 'Missing');
     const enabledLabel = created
       ? (pendingEnabledChange
         ? (enabled ? 'Will enable' : 'Will disable')
         : (enabled ? 'Enabled' : 'Disabled'))
-      : 'Not created';
+      : (isCreating ? 'Provisioning' : 'Not created');
     const locationLabel = created
       ? shortPath(instance.launchDirectory || settings.beatSaberInstancesRoot || '')
-      : 'Create this managed copy from Instance 1.';
+      : (isCreating ? 'Copying game files and repairing shared folders...' : 'Create this managed copy from Instance 1.');
     const row = document.createElement('div');
-    row.className = `setupInstanceRow ${created ? '' : 'isMissing'} ${enabled ? '' : 'isDisabled'}`;
+    row.className = `setupInstanceRow ${created ? '' : 'isMissing'} ${isCreating ? 'isCreating' : ''} ${enabled ? '' : 'isDisabled'}`;
     row.innerHTML = `
       <div class="setupInstanceIdentity">
-        <span class="instanceDot ${created && enabled ? 'online' : 'idle'}" aria-hidden="true"></span>
+        <span class="${isCreating ? 'setupSpinner' : `instanceDot ${created && enabled ? 'online' : 'idle'}`}" aria-hidden="true"></span>
         <div>
-          <strong>${escapeHtml(instance.name || `BSARR I-${index + 1}`)}</strong>
+          <strong>${escapeHtml(formatInstanceDisplayName(instance, index))}</strong>
           <span>${escapeHtml(locationLabel)}</span>
         </div>
       </div>
       <div class="setupInstanceBadges">
-        <span class="setupInstanceBadge ${created ? 'isCreated' : 'isMissing'}">${escapeHtml(statusLabel)}</span>
+        <span class="setupInstanceBadge ${isCreating ? 'isCreating' : (created ? 'isCreated' : 'isMissing')}">${escapeHtml(statusLabel)}</span>
         <span class="setupInstanceBadge ${enabled && created ? 'isEnabled' : ''}">${escapeHtml(enabledLabel)}</span>
       </div>
       <div class="setupInstanceActions">
-        ${created ? `<button class="textButton" type="button" data-setup-instance-enabled="${index}" data-enabled="${enabled ? 'false' : 'true'}"${disabledAttr(enabled && enabledCount <= 1)}>${enabled ? 'Disable' : 'Enable'}</button>` : `<button class="textButton" type="button" data-setup-instance-create="${index}">Create</button>`}
-        ${canRemove ? `<button class="textButton dangerText" type="button" data-setup-instance-remove="${index}"${disabledAttr(busy)}>Remove</button>` : ''}
+        ${created ? `<button class="textButton" type="button" data-setup-instance-enabled="${index}" data-enabled="${enabled ? 'false' : 'true'}"${disabledAttr(isCreating || pendingSetupInstanceCreation || (enabled && enabledCount <= 1))}>${enabled ? 'Disable' : 'Enable'}</button>` : `<button class="textButton setupCreatingButton" type="button" data-setup-instance-create="${index}"${disabledAttr(isCreating || pendingSetupInstanceCreation)}>${isCreating ? '<span class="setupSpinner tiny" aria-hidden="true"></span>Creating' : 'Create'}</button>`}
+        ${canRemove ? `<button class="textButton dangerText" type="button" data-setup-instance-remove="${index}"${disabledAttr(busy || pendingSetupInstanceCreation)}>Remove</button>` : ''}
       </div>
     `;
     rows.appendChild(row);
@@ -2541,9 +2581,12 @@ function renderSetupInstanceList(settings, configuredCount, createdCount, missin
   if (addButton) {
     const canAdd = configuredCount < maxManagedInstanceCount || missingCount > 0;
     addButton.hidden = !canAdd;
-    addButton.textContent = missingCount > 0
-      ? `Create ${missingCount} Missing Instance${missingCount === 1 ? '' : 's'}`
-      : '+ Add Instance';
+    addButton.disabled = Boolean(pendingSetupInstanceCreation);
+    addButton.innerHTML = pendingSetupInstanceCreation
+      ? '<span class="setupSpinner tiny" aria-hidden="true"></span>Creating Instance'
+      : escapeHtml(missingCount > 0
+        ? `Create ${missingCount} Missing Instance${missingCount === 1 ? '' : 's'}`
+        : '+ Add Instance');
   }
 }
 
@@ -2846,27 +2889,37 @@ async function runSetupWizardAddInstance() {
     throw new Error(`Managed instances are limited to ${maxManagedInstanceCount}.`);
   }
 
+  pendingSetupInstanceCreation = {
+    startIndex: missingCount > 0 ? createdCount : nextCount - 1,
+    targetCount: nextCount
+  };
   setValue('instanceCount', nextCount);
-  await persistSettings();
-  await postJson('/api/instances/provision', {
-    instanceCount: nextCount,
-    createMissingOnly: true,
-    overwriteExisting: false,
-    copyExistingSongs: false
-  });
-  showToast(state.instanceProvision?.summary || 'Managed instance created');
+  render();
+  try {
+    await persistSettings();
+    await postJson('/api/instances/provision', {
+      instanceCount: nextCount,
+      createMissingOnly: true,
+      overwriteExisting: false,
+      copyExistingSongs: false
+    });
+    showToast(state.instanceProvision?.summary || 'Managed instance created');
+  } finally {
+    pendingSetupInstanceCreation = null;
+    render();
+  }
 }
 
 async function setSetupInstanceEnabled(index, enabled) {
   pendingSetupEnabledInstanceCount = null;
   const instance = (state.instances || []).find(item => Number(item.index) === Number(index));
   await postJson(`/api/instances/${Number(index)}/enabled`, { enabled });
-  showToast(`${instance?.name || `BSARR I-${Number(index) + 1}`} ${enabled ? 'enabled' : 'disabled'}`);
+  showToast(`${formatInstanceDisplayName(instance, index)} ${enabled ? 'enabled' : 'disabled'}`);
 }
 
 async function removeSetupInstance(index) {
   const instance = (state.instances || []).find(item => Number(item.index) === Number(index));
-  const name = instance?.name || `BSARR I-${Number(index) + 1}`;
+  const name = formatInstanceDisplayName(instance, index);
   if (!window.confirm(`Remove ${name} from the managed recorder workspace? This deletes only that managed copy, not your real Beat Saber install.`)) {
     return;
   }
@@ -3146,7 +3199,9 @@ document.getElementById('queueSearchInput')?.addEventListener('input', event => 
 const replayFileInput = document.getElementById('replayFiles');
 const queueReplayFileInput = document.getElementById('queueReplayFiles');
 const replayDrop = document.querySelector('.fileDrop');
+const queueDrop = document.querySelector('.queuePanel');
 let replayDragDepth = 0;
+let queueDragDepth = 0;
 
 replayFileInput.addEventListener('change', event => {
   selectReplayFiles(event.target.files);
@@ -3240,6 +3295,58 @@ function bindQueueImportDropTarget(target) {
   });
 }
 
+function isFileTransfer(dataTransfer) {
+  if (!dataTransfer) return false;
+  const types = Array.from(dataTransfer.types || []);
+  if (types.includes('Files')) return true;
+  return Array.from(dataTransfer.items || []).some(item => item.kind === 'file');
+}
+
+function bindPersistentQueueImportDropTarget(target) {
+  if (!target) return;
+
+  target.addEventListener('dragenter', event => {
+    if (!isFileTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    queueDragDepth++;
+    target.classList.add('queueFileDragOver');
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  });
+
+  target.addEventListener('dragover', event => {
+    if (!isFileTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    target.classList.add('queueFileDragOver');
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  });
+
+  target.addEventListener('dragleave', event => {
+    if (!isFileTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    queueDragDepth = Math.max(0, queueDragDepth - 1);
+    if (queueDragDepth === 0) target.classList.remove('queueFileDragOver');
+  });
+
+  target.addEventListener('drop', event => {
+    if (!isFileTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    queueDragDepth = 0;
+    target.classList.remove('queueFileDragOver');
+    if (!selectReplayFiles(event.dataTransfer?.files)) {
+      showToast('Drop .bsor files');
+      return;
+    }
+
+    runAction(importSelectedReplays);
+  });
+}
+
+bindPersistentQueueImportDropTarget(queueDrop);
+
 document.getElementById('addReplays').addEventListener('click', openQueueReplayPicker);
 
 document.getElementById('uploadReplays').addEventListener('click', () => runAction(importSelectedReplays));
@@ -3303,11 +3410,6 @@ document.getElementById('launchGames').addEventListener('click', () => runAction
 document.getElementById('decreaseActiveInstances')?.addEventListener('click', () => changeActiveInstanceCount(-1));
 document.getElementById('increaseActiveInstances')?.addEventListener('click', () => changeActiveInstanceCount(1));
 
-document.getElementById('forceStopGames').addEventListener('click', () => runAction(async () => {
-  await postJson('/api/instances/force-stop');
-  showToast('Force stop requested');
-}));
-
 document.getElementById('checkBaseline').addEventListener('click', () => runAction(async () => {
   await postJson('/api/instances/baseline/check');
   showToast(`Baseline ${state.instanceBaseline?.status || 'checked'}`);
@@ -3329,8 +3431,26 @@ document.getElementById('quitApp').addEventListener('click', () => runAction(asy
   }
 
   await postJson('/api/quit');
-  showToast('Quit requested');
+  showToast('Quit requested; closing this tab');
+  closeTabAfterQuitRequest();
 }));
+
+function closeTabAfterQuitRequest() {
+  window.setTimeout(() => {
+    try {
+      const currentWindow = window.open('', '_self');
+      (currentWindow || window).close();
+    } catch {
+      window.close();
+    }
+
+    window.setTimeout(() => {
+      if (!document.hidden) {
+        showToast('Quit requested. Your browser blocked tab close.');
+      }
+    }, 500);
+  }, 75);
+}
 
 async function runAction(action) {
   try {
@@ -3352,7 +3472,7 @@ async function launchInstance(index) {
 async function quitInstance(index) {
   await runAction(async () => {
     const instance = state.instances.find(item => item.index === index);
-    const name = instance?.name || `BSARR I-${Number(index) + 1}`;
+    const name = formatInstanceDisplayName(instance, index);
     await postJson(`/api/instances/${index}/quit`);
     showToast(`${name} quit requested`);
   });
@@ -3365,7 +3485,7 @@ async function changeActiveInstanceCount(delta) {
 
     const enabled = delta > 0;
     await postJson(`/api/instances/${Number(target.index)}/enabled`, { enabled });
-    showToast(`${target.name || `BSARR I-${Number(target.index) + 1}`} ${enabled ? 'enabled' : 'disabled'}`);
+    showToast(`${formatInstanceDisplayName(target)} ${enabled ? 'enabled' : 'disabled'}`);
   });
 }
 

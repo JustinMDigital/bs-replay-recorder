@@ -129,6 +129,35 @@ $WorkspacePaths = @(
     (Join-Path $RepoRoot "ControlPanelWorkspace")
 ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
+function Get-StateRestoreDisplayScalePercent {
+    foreach ($workspacePath in $WorkspacePaths) {
+        $statePath = Join-Path $workspacePath "control-panel-state.json"
+        if (-not (Test-Path -LiteralPath $statePath)) {
+            continue
+        }
+
+        try {
+            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+            $scale = $state.settings.restoreDisplayScalePercent
+            $parsed = 0
+            if ($null -ne $scale -and [int]::TryParse(([string]$scale).Trim(), [ref]$parsed) -and
+                $parsed -ge 100 -and $parsed -le 500) {
+                return $parsed
+            }
+        }
+        catch {
+            Write-Step "Could not read display scale restore value from ${statePath}: $($_.Exception.Message)"
+        }
+    }
+
+    return $null
+}
+
+$StateRestoreDisplayScalePercent = Get-StateRestoreDisplayScalePercent
+if ($null -ne $StateRestoreDisplayScalePercent) {
+    $RestoreDisplayScalePercent = $StateRestoreDisplayScalePercent
+}
+
 function Test-ManagedProcess {
     param([int]$ProcessId)
 

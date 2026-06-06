@@ -24,8 +24,10 @@ try
     RunWorkerProgressContractCheck(Path.Combine(tempRoot, "worker-progress"));
     RunLaunchPlanCheck(Path.Combine(tempRoot, "launch-plan"));
     RunDisplayLabelFormattingCheck();
+    RunInstanceDisplayNameNormalizationCheck(Path.Combine(tempRoot, "instance-display-name"));
     RunDefaultLaunchArgumentsCheck(Path.Combine(tempRoot, "default-launch-args"));
-    RunForceStopCheck(Path.Combine(tempRoot, "force-stop"));
+    RunStopBroadcastCheck(Path.Combine(tempRoot, "stop-broadcast"));
+    RunIdleShutdownCheck(Path.Combine(tempRoot, "idle-shutdown"));
     RunRecordingOutputDirectoryCheck(Path.Combine(tempRoot, "recording-output"));
     RunLocalSettingsFileCheck(Path.Combine(tempRoot, "local-settings-file"));
     RunLaunchPresetNormalizationCheck();
@@ -443,7 +445,7 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
     AssertEqual("Linked", songImportState.SongFolders.Status, "song import repairs song folder links");
 }
 
-static void RunForceStopCheck(string workspace)
+static void RunStopBroadcastCheck(string workspace)
 {
     var store = CreateStore(workspace, instanceCount: 2);
     using var files = CreateReplayFiles(2);
@@ -463,11 +465,11 @@ static void RunForceStopCheck(string workspace)
 
     store.StartRun();
     var assignment = store.GetAssignment(first.WorkerId);
-    AssertEqual(true, assignment.HasAssignment, "force stop active assignment exists");
+    AssertEqual(true, assignment.HasAssignment, "stop active assignment exists");
 
-    var stopped = store.ForceStopAllGames();
-    AssertEqual("Stopping", stopped.Run.Status, "force stop run status");
-    AssertEqual(1, stopped.Run.ForceStopCommandId, "force stop command id");
+    var stopped = store.StopRun();
+    AssertEqual("Stopping", stopped.Run.Status, "stop run status");
+    AssertEqual(1, stopped.Run.ForceStopCommandId, "stop command id");
 
     var activeHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
     {
@@ -475,23 +477,58 @@ static void RunForceStopCheck(string workspace)
         Status = "Recording",
         CurrentReplayId = assignment.ReplayId
     });
-    AssertEqual(true, activeHeartbeat.ShouldCancelAssignment, "force stop cancels active assignment");
-    AssertEqual(true, activeHeartbeat.ShouldOpenPauseMenu, "force stop opens active worker pause menu");
+    AssertEqual(true, activeHeartbeat.ShouldCancelAssignment, "stop cancels active assignment");
+    AssertEqual(true, activeHeartbeat.ShouldOpenPauseMenu, "stop exits active worker replay");
 
     var idleHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
     {
         WorkerId = second.WorkerId,
         Status = "Online"
     });
-    AssertEqual(false, idleHeartbeat.ShouldCancelAssignment, "force stop does not cancel idle worker");
-    AssertEqual(true, idleHeartbeat.ShouldOpenPauseMenu, "force stop opens idle worker pause menu");
+    AssertEqual(false, idleHeartbeat.ShouldCancelAssignment, "stop does not cancel idle worker");
+    AssertEqual(true, idleHeartbeat.ShouldOpenPauseMenu, "stop exits idle worker replay");
 
     var repeatedHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
     {
         WorkerId = second.WorkerId,
         Status = "Online"
     });
-    AssertEqual(false, repeatedHeartbeat.ShouldOpenPauseMenu, "force stop command is delivered once");
+    AssertEqual(false, repeatedHeartbeat.ShouldOpenPauseMenu, "stop command is delivered once");
+}
+
+static void RunIdleShutdownCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 1);
+    var idleTimeout = TimeSpan.FromMinutes(20);
+    var startedAt = store.Snapshot().LastActivityUtc;
+
+    AssertEqual(
+        false,
+        store.TryRequestIdleShutdown(startedAt.Add(idleTimeout).AddSeconds(-1), idleTimeout),
+        "idle shutdown waits for full timeout");
+    AssertEqual(
+        true,
+        store.TryRequestIdleShutdown(startedAt.Add(idleTimeout), idleTimeout),
+        "idle shutdown trips after timeout");
+
+    using var files = CreateReplayFiles(1);
+    var activeStore = CreateStore(Path.Combine(workspace, "active-run"), instanceCount: 1);
+    activeStore.ImportFiles(files.Collection);
+    var worker = activeStore.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "active-worker",
+        WorkerName = "Active Worker",
+        PreferredInstanceIndex = 0
+    });
+    activeStore.StartRun();
+    var assignment = activeStore.GetAssignment(worker.WorkerId);
+    AssertEqual(true, assignment.HasAssignment, "idle shutdown active assignment exists");
+    var activeStartedAt = activeStore.Snapshot().LastActivityUtc;
+
+    AssertEqual(
+        false,
+        activeStore.TryRequestIdleShutdown(activeStartedAt.AddHours(2), idleTimeout),
+        "idle shutdown skips active run");
 }
 
 static void RunInstanceBaselineCheck(string workspace)
@@ -607,13 +644,45 @@ static void RunWorkerPluginSettingsIdentityCheck()
 
         AssertEqual(true, workerIds.Add(parsed.ControlPanelWorker.WorkerId), "worker id is unique " + index);
         AssertEqual("managed-worker-" + index.ToString("00"), parsed.ControlPanelWorker.WorkerId, "worker id " + index);
-        AssertEqual("BSARR I-" + (index + 1), parsed.ControlPanelWorker.WorkerName, "worker name " + index);
+        AssertEqual("Instance " + (index + 1), parsed.ControlPanelWorker.WorkerName, "worker name " + index);
         AssertEqual(index, parsed.ControlPanelWorker.PreferredInstanceIndex, "preferred instance index " + index);
         AssertEqual("http://127.0.0.1:" + (5757 + index), parsed.RecorderHost.BaseUrl, "recorder host port " + index);
         AssertEqual(300d, parsed.RecorderHost.TimeoutSeconds, "recorder host timeout " + index);
         AssertEqual(5.0, parsed.DelayBetweenRecordingsSeconds, "delay between recordings " + index);
         AssertEqual(index, parsed.WindowPlacement.InstanceIndex, "window placement index " + index);
     }
+}
+
+static void RunInstanceDisplayNameNormalizationCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 2);
+
+    store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "legacy-bsarr-1",
+        WorkerName = "BSARR I-1",
+        PreferredInstanceIndex = 0
+    });
+    store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "legacy-short-2",
+        WorkerName = "I-2",
+        PreferredInstanceIndex = 1
+    });
+
+    var normalized = store.Snapshot();
+    AssertEqual("Instance 1", normalized.Instances[0].Name, "legacy BSARR display name normalizes");
+    AssertEqual("Instance 2", normalized.Instances[1].Name, "legacy short display name normalizes");
+
+    store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "legacy-bsarr-1",
+        WorkerName = "Custom Worker",
+        PreferredInstanceIndex = 0
+    });
+
+    var custom = store.Snapshot();
+    AssertEqual("Custom Worker", custom.Instances[0].Name, "custom worker name is preserved");
 }
 
 static void RunSongFolderLinksCheck(string workspace)
@@ -2215,7 +2284,7 @@ internal sealed class FakeWorkerPluginInstaller : IWorkerPluginInstaller
                   "ControlPanelWorker": {
                     "Enabled": true,
                     "BaseUrl": "{{settings.BindUrl}}",
-                    "WorkerName": "BSARR I-{{instance.Index + 1}}",
+                    "WorkerName": "Instance {{instance.Index + 1}}",
                     "PreferredInstanceIndex": {{instance.Index}}
                   },
                   "WindowPlacement": {

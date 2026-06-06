@@ -1428,7 +1428,7 @@ function New-PluginSettings {
             Enabled = $true
             BaseUrl = $ControlPanelUrl.TrimEnd("/")
             WorkerId = $WorkerId
-            WorkerName = "BSARR I-$displayIndex"
+            WorkerName = "Instance $displayIndex"
             PreferredInstanceIndex = $Index
             PollIntervalSeconds = 1.0
             HeartbeatIntervalSeconds = 2.0

@@ -114,9 +114,7 @@ If the `Start run` button fails, the message usually points to one of these read
 
 ## Stop And Quit
 
-Use `Stop` to stop the current run and leave the stack open.
-
-Use `Force stop` to ask launched Beat Saber workers to exit.
+Use `Stop` to stop the current run, ask launched Beat Saber workers to exit the current replay, and leave the stack open.
 
 Use `Quit` to stop the run, stop the recorder stack, and close tracked Beat Saber workers. This is the same cleanup path as:
 

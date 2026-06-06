@@ -141,6 +141,7 @@ else {
     $env:BSARR_CONTROL_PANEL_URL.TrimEnd("/")
 }
 $PidFile = Join-Path $Workspace "started-processes.json"
+$LogDirectory = Join-Path $Workspace "Logs"
 
 function Assert-Command {
     param([string]$Name)
@@ -194,7 +195,7 @@ function Wait-ForHttpEndpoint {
         Start-Sleep -Milliseconds 500
     }
 
-    Write-Step "$Name did not answer within $TimeoutSeconds seconds. Check its log files in ControlPanelWorkspace."
+    Write-Step "$Name did not answer within $TimeoutSeconds seconds. Check its log files in $LogDirectory."
     return $false
 }
 
@@ -548,6 +549,8 @@ function Start-DotNetService {
 }
 
 try {
+    New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null
+
     if (Test-HttpEndpoint "$ControlPanelUrl/api/state") {
         Write-Step "Control panel is already running."
         if (-not $NoBrowser) {
@@ -555,6 +558,7 @@ try {
         }
 
         Write-Step "Dashboard: $ControlPanelUrl"
+        Write-Step "Logs: $LogDirectory"
         exit 0
     }
 
@@ -620,8 +624,8 @@ try {
         $started += Start-DotNetService `
             -Name "recorder host $port" `
             -Arguments @("run", "--no-build", "--project", $RecorderHostProject, "--", "serve", "--config", $configPath) `
-            -OutLog (Join-Path $Workspace "recorder-host-$port.out.log") `
-            -ErrLog (Join-Path $Workspace "recorder-host-$port.err.log")
+            -OutLog (Join-Path $LogDirectory "recorder-host-$port.out.log") `
+            -ErrLog (Join-Path $LogDirectory "recorder-host-$port.err.log")
     }
 
     if (Test-HttpEndpoint "$ControlPanelUrl/api/state") {
@@ -631,8 +635,8 @@ try {
         $started += Start-DotNetService `
             -Name "control panel" `
             -Arguments @("run", "--no-build", "--project", $ControlPanelProject) `
-            -OutLog (Join-Path $Workspace "control-panel.out.log") `
-            -ErrLog (Join-Path $Workspace "control-panel.err.log") `
+            -OutLog (Join-Path $LogDirectory "control-panel.out.log") `
+            -ErrLog (Join-Path $LogDirectory "control-panel.err.log") `
             -WorkingDirectory $ControlPanelProjectDir
     }
 
@@ -654,7 +658,7 @@ try {
     }
 
     Write-Step "Dashboard: $ControlPanelUrl"
-    Write-Step "Logs: $Workspace"
+    Write-Step "Logs: $LogDirectory"
 }
 catch {
     Write-Host ""

@@ -4,6 +4,8 @@ namespace BSAutoReplayRecorder.ControlPanel;
 
 public sealed class ControlPanelState
 {
+    public DateTimeOffset LastActivityUtc { get; set; } = DateTimeOffset.UtcNow;
+
     public ControlPanelSettings Settings { get; set; } = new ControlPanelSettings();
 
     public List<ReplayQueueRecord> Queue { get; set; } = new List<ReplayQueueRecord>();

@@ -468,15 +468,33 @@ button,
 
 .laneLabel {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-content: center;
-  gap: 3px 7px;
+  align-items: center;
   border-right: 1px solid var(--border);
   padding: 0 13px;
   min-width: 0;
 }
 
-.laneLabel strong {
+.laneLabelText {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.laneLabelNameRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.laneLabelNameRow .statusDot {
+  grid-area: auto;
+  flex: 0 0 auto;
+}
+
+.laneLabelText strong {
   min-width: 0;
   color: var(--text);
   font-size: 13px;
@@ -485,8 +503,7 @@ button,
   white-space: nowrap;
 }
 
-.laneLabel > span:last-child {
-  grid-column: 2;
+.laneLabelText > span {
   color: var(--muted);
   font-size: 11px;
 }
@@ -1851,6 +1868,11 @@ body.queueLoaded #addReplays {
   border-left-color: var(--amber);
 }
 
+.setupInstanceRow.isCreating {
+  border-left-color: var(--blue-strong);
+  background: rgba(76, 154, 255, 0.07);
+}
+
 .setupInstanceRow.isDisabled {
   opacity: 0.68;
 }
@@ -1923,8 +1945,49 @@ body.queueLoaded #addReplays {
   color: #ffd27a;
 }
 
+.setupInstanceBadge.isCreating {
+  border-color: rgba(76, 154, 255, 0.45);
+  background: rgba(76, 154, 255, 0.11);
+  color: #aecdff;
+}
+
 .setupInstanceActions .textButton {
   min-width: 58px;
+}
+
+.setupCreatingButton,
+.secondaryButton:disabled {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.setupSpinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(174, 205, 255, 0.28);
+  border-top-color: #aecdff;
+  border-radius: 50%;
+  animation: setupSpin 0.8s linear infinite;
+}
+
+.setupSpinner.tiny {
+  width: 11px;
+  height: 11px;
+  border-width: 2px;
+}
+
+@keyframes setupSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setupSpinner {
+    animation: none;
+  }
 }
 
 .diagnosticsGrid {
@@ -2211,8 +2274,32 @@ body.queueLoaded #addReplays {
 }
 
 .queuePanel {
+  position: relative;
   padding: 0;
   overflow: hidden;
+}
+
+.queuePanel.queueFileDragOver {
+  border-color: var(--blue-strong);
+  box-shadow: inset 0 0 0 1px rgba(53, 181, 255, 0.28), 0 14px 42px rgba(0, 0, 0, 0.16);
+}
+
+.queuePanel.queueFileDragOver::after {
+  content: "Drop .bsor replays to add them to the queue";
+  position: absolute;
+  inset: 52px 12px 12px;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(53, 181, 255, 0.7);
+  border-radius: 5px;
+  background:
+    linear-gradient(180deg, rgba(18, 48, 72, 0.88), rgba(9, 29, 45, 0.94)),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 22px);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+  pointer-events: none;
 }
 
 .panelHeader {

@@ -68,7 +68,7 @@ The installer writes this file for each worker. A typical worker section looks l
   "ControlPanelWorker": {
     "Enabled": true,
     "BaseUrl": "http://127.0.0.1:5770",
-    "WorkerName": "BSARR I-1",
+    "WorkerName": "Instance 1",
     "PreferredInstanceIndex": 0,
     "PollIntervalSeconds": 1,
     "HeartbeatIntervalSeconds": 2

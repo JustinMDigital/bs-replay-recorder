@@ -23,6 +23,8 @@ builder.Services.AddSingleton<IRecordingAudioVerifier, FfprobeRecordingAudioVeri
 builder.Services.AddSingleton<IBeatSaverMapDownloader>(_ => new BeatSaverMapDownloader(new HttpClient()));
 builder.Services.AddSingleton<IDisplayInfoProvider, WindowsDisplayInfoProvider>();
 builder.Services.AddSingleton<ControlPanelStore>();
+builder.Services.AddSingleton<IStackShutdownLauncher, StopScriptShutdownLauncher>();
+builder.Services.AddHostedService<IdleShutdownHostedService>();
 
 var app = builder.Build();
 app.UseDefaultFiles();
@@ -88,11 +90,11 @@ app.MapGet("/api/queue/{id}/cover", (string id, ControlPanelStore store) =>
 app.MapPost("/api/run/start", (ControlPanelStore store) =>
     ExecuteApi(() => store.StartRun()));
 app.MapPost("/api/run/stop", (ControlPanelStore store) => Results.Ok(store.StopRun()));
-app.MapPost("/api/quit", (ControlPanelStore store) =>
+app.MapPost("/api/quit", (ControlPanelStore store, IStackShutdownLauncher shutdownLauncher) =>
     ExecuteApi(() =>
     {
         store.StopRun();
-        StartStopScript(stopGames: true);
+        shutdownLauncher.StartStopScript(stopGames: true);
         return new { status = "Quit requested" };
     }));
 app.MapPost("/api/instances/launch", (ControlPanelStore store) =>
@@ -105,8 +107,6 @@ app.MapPost("/api/instances/{index:int}/enabled", (int index, InstanceEnabledReq
     ExecuteApi(() => store.SetInstanceEnabled(index, request.Enabled)));
 app.MapPost("/api/instances/{index:int}/remove", (int index, ControlPanelStore store) =>
     ExecuteApi(() => store.RemoveManagedInstance(index)));
-app.MapPost("/api/instances/force-stop", (ControlPanelStore store) =>
-    ExecuteApi(() => store.ForceStopAllGames()));
 app.MapPost("/api/instances/provision", (InstanceProvisionRequest request, ControlPanelStore store) =>
     ExecuteApi(() => store.ProvisionManagedInstances(request)));
 app.MapPost("/api/instances/baseline/check", (ControlPanelStore store) =>
@@ -211,56 +211,4 @@ static string OpenRecordedFileInExplorer(string path)
     }
 
     return fullPath;
-}
-
-static void StartStopScript(bool stopGames)
-{
-    var scriptPath = ResolveStopScriptPath()
-                     ?? throw new InvalidOperationException("Stop script was not found. Expected scripts\\launcher\\Stop-ReplayRecorder.ps1 under the repo root.");
-    var startInfo = new ProcessStartInfo
-    {
-        FileName = "powershell.exe",
-        UseShellExecute = false,
-        CreateNoWindow = true
-    };
-    startInfo.ArgumentList.Add("-NoProfile");
-    startInfo.ArgumentList.Add("-ExecutionPolicy");
-    startInfo.ArgumentList.Add("Bypass");
-    startInfo.ArgumentList.Add("-File");
-    startInfo.ArgumentList.Add(scriptPath);
-    if (stopGames)
-    {
-        startInfo.ArgumentList.Add("-StopGames");
-    }
-
-    Process.Start(startInfo);
-}
-
-static string? ResolveStopScriptPath()
-{
-    var directory = new DirectoryInfo(Directory.GetCurrentDirectory());
-    while (directory != null)
-    {
-        var candidate = Path.Combine(directory.FullName, "scripts", "launcher", "Stop-ReplayRecorder.ps1");
-        if (File.Exists(candidate))
-        {
-            return candidate;
-        }
-
-        directory = directory.Parent;
-    }
-
-    directory = new DirectoryInfo(AppContext.BaseDirectory);
-    while (directory != null)
-    {
-        var candidate = Path.Combine(directory.FullName, "scripts", "launcher", "Stop-ReplayRecorder.ps1");
-        if (File.Exists(candidate))
-        {
-            return candidate;
-        }
-
-        directory = directory.Parent;
-    }
-
-    return null;
 }
