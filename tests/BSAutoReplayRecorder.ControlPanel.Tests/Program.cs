@@ -652,6 +652,18 @@ static void RunSongFolderLinksCheck(string workspace)
     AssertEqual(true, IsReparsePoint(firstSabers), "first CustomSabers is a junction");
     AssertEqual(true, Directory.EnumerateDirectories(Path.Combine(instancesRoot, "Test I-1", "Beat Saber_Data"), "CustomLevels.local-*").Any(), "local CustomLevels backup exists");
     AssertEqual(true, Directory.EnumerateDirectories(Path.Combine(instancesRoot, "Test I-2", "Beat Saber_Data"), "CustomWIPLevels.local-*").Any(), "local CustomWIPLevels backup exists");
+
+    var settingsRepairInstancesRoot = Path.Combine(workspace, "SettingsRepairInstances");
+    CreateFakeBeatSaberInstance(settingsRepairInstancesRoot, "Auto I-1", 0);
+    CreateFakeBeatSaberInstance(settingsRepairInstancesRoot, "Auto I-2", 1);
+    var settingsRepairStore = CreateStore(
+        Path.Combine(workspace, "settings-repair-workspace"),
+        settingsRepairInstancesRoot,
+        "Auto I-",
+        instanceCount: 2);
+    var settingsRepairRequest = CreateSettingsUpdateRequest(settingsRepairStore.Snapshot().Settings);
+    var settingsRepairState = settingsRepairStore.UpdateSettings(settingsRepairRequest);
+    AssertEqual("Linked", settingsRepairState.SongFolders.Status, "settings save repairs song folder links");
 }
 
 static void RunRecordingOutputDirectoryCheck(string workspace)

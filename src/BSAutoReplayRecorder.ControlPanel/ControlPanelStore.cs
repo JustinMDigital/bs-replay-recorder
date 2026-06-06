@@ -184,7 +184,15 @@ public sealed class ControlPanelStore
             EnsureInstancesNoLock();
             SynchronizeMaxConcurrentRecordingsNoLock();
             _state.InstanceBaseline = new InstanceBaselineReport();
-            _state.SongFolders = ScanSongFolderLinksNoLock();
+            if (GetCreatedManagedInstancesNoLock().Count == GetConfiguredInstancesNoLock().Count)
+            {
+                RepairSongFolderLinksNoLock();
+            }
+            else
+            {
+                _state.SongFolders = ScanSongFolderLinksNoLock();
+            }
+
             RefreshInstanceProvisionCountsNoLock();
             RefreshDiskSpaceNoLock();
             AddEventNoLock("Info", "Settings", "Settings saved.");
@@ -3266,7 +3274,6 @@ public sealed class ControlPanelStore
             instance.Status = string.IsNullOrWhiteSpace(instance.WorkerId) ? "Idle" : "Online";
         }
 
-        RestoreDisplayScaleNoLock();
         RestoreTaskbarVisibilityNoLock();
     }
 
@@ -3292,7 +3299,6 @@ public sealed class ControlPanelStore
             instance.Status = string.IsNullOrWhiteSpace(instance.WorkerId) ? "Idle" : "Online";
         }
 
-        RestoreDisplayScaleNoLock();
         RestoreTaskbarVisibilityNoLock();
     }
 

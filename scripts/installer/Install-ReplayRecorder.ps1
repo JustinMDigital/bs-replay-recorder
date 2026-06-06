@@ -1899,10 +1899,8 @@ try {
 
     if (-not $SkipSharedFolderRepair) {
         Write-Section "Shared folders"
-        if (Confirm-Step -Prompt "Repair shared song/content folder links now? Existing local folders are backed up first." -DefaultYes) {
-            Invoke-ControlPanelPost -Path "/api/song-folders/repair"
-            Write-Step "Shared folder repair requested."
-        }
+        Invoke-ControlPanelPost -Path "/api/song-folders/repair"
+        Write-Step "Shared folder links repaired."
     }
 
     Write-Section "Final checks"

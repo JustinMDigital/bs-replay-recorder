@@ -51,7 +51,6 @@ During install, you may be asked for:
 - the display scaling helper. If `tools\SetDpi\SetDpi.exe` is missing, the installer can download `SetDpi.exe` from the latest `imniko/SetDPI` GitHub release; if that fails, you can paste a local path or keep display scaling disabled.
 - whether to create missing managed copies. Say yes for a new install.
 - whether to import existing `CustomLevels` and `CustomWIPLevels`. The recommended answer is no unless you intentionally want to copy those songs into the recorder's shared-song layout.
-- whether to repair shared song/content folder links. Say yes unless you are deliberately managing those folders yourself.
 
 The installer will:
 
@@ -62,7 +61,7 @@ The installer will:
 - deploy the plugin into each managed Beat Saber worker;
 - write `ControlPanelWorkspace\control-panel-state.json`;
 - start recorder hosts and the browser control panel;
-- run shared-folder and baseline checks.
+- repair shared song/content folder links automatically, then run baseline checks.
 
 ## Local Settings
 
