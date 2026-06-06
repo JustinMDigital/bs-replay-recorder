@@ -1141,6 +1141,8 @@ function Test-ProvisionTransientPath {
         "BSWC Recording Files",
         "Logs",
         "UserData/BeatLeader/Replays",
+        "UserData/LocalLeaderboard/Replays",
+        "UserData/ScoreSaber/Replays",
         "UserData/BSWorldCupReplayRecorder/Recordings",
         "UserData/BSAutoReplayRecorder/Recordings"
     )) {

@@ -191,6 +191,8 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/BSWorldCupReplayRecorder/Recordings/old-legacy.mkv", "legacy recording");
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/BSAutoReplayRecorder/Recordings/old-managed.mkv", "managed recording");
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/BeatLeader/Replays/long-replay-history-file.bsor", "old replay");
+    WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/LocalLeaderboard/Replays/long-local-replay-history-file.bsor", "old local replay");
+    WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/ScoreSaber/Replays/long-scoresaber-replay-history-file.dat", "old scoresaber replay");
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "Logs/output.log", "log");
     var sourceDirectory = Path.Combine(sourceRoot, "Beat Saber");
     var instancesRoot = Path.Combine(workspace, "ManagedInstances");
@@ -231,6 +233,8 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
         AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "BSWorldCupReplayRecorder", "Recordings", "old-legacy.mkv")), "provision skipped legacy recorder output " + index);
         AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "BSAutoReplayRecorder", "Recordings", "old-managed.mkv")), "provision skipped managed recorder output " + index);
         AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "BeatLeader", "Replays", "long-replay-history-file.bsor")), "provision skipped BeatLeader replay history " + index);
+        AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "LocalLeaderboard", "Replays", "long-local-replay-history-file.bsor")), "provision skipped LocalLeaderboard replay history " + index);
+        AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "ScoreSaber", "Replays", "long-scoresaber-replay-history-file.dat")), "provision skipped ScoreSaber replay history " + index);
         AssertEqual(false, File.Exists(Path.Combine(directory, "Logs", "output.log")), "provision skipped logs " + index);
     }
 
