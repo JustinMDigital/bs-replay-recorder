@@ -38,6 +38,7 @@ try
     RunProcessLoopbackAudioGuardCheck(Path.Combine(tempRoot, "process-loopback-audio-guard"));
     RunLaunchValidationCheck(Path.Combine(tempRoot, "launch-validation"));
     RunWorkerPluginSettingsIdentityCheck();
+    RunDuplicateManagedWorkerIdRegistrationCheck(Path.Combine(tempRoot, "duplicate-managed-worker-id"));
     RunManagedInstanceProvisioningCheck(Path.Combine(tempRoot, "managed-instance-provisioning"));
     RunInstanceBaselineCheck(Path.Combine(tempRoot, "instance-baseline"));
     RunSongFolderLinksCheck(Path.Combine(tempRoot, "song-folder-links"));
@@ -650,6 +651,33 @@ static void RunWorkerPluginSettingsIdentityCheck()
         AssertEqual(300d, parsed.RecorderHost.TimeoutSeconds, "recorder host timeout " + index);
         AssertEqual(5.0, parsed.DelayBetweenRecordingsSeconds, "delay between recordings " + index);
         AssertEqual(index, parsed.WindowPlacement.InstanceIndex, "window placement index " + index);
+    }
+}
+
+static void RunDuplicateManagedWorkerIdRegistrationCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 3);
+    var workerIds = new List<string>();
+
+    for (var index = 0; index < 3; index++)
+    {
+        var response = store.RegisterWorker(new WorkerRegisterRequest
+        {
+            WorkerId = "managed-worker-02",
+            WorkerName = "Instance " + (index + 1),
+            PreferredInstanceIndex = index
+        });
+
+        workerIds.Add(response.WorkerId);
+        AssertEqual(index, response.InstanceIndex, "duplicate managed worker id registers preferred slot " + index);
+        AssertEqual("managed-worker-" + index.ToString("00"), response.WorkerId, "duplicate managed worker id normalizes " + index);
+    }
+
+    var snapshot = store.Snapshot();
+    AssertEqual(3, workerIds.Distinct(StringComparer.OrdinalIgnoreCase).Count(), "duplicate managed worker ids are repaired");
+    for (var index = 0; index < 3; index++)
+    {
+        AssertEqual("managed-worker-" + index.ToString("00"), snapshot.Instances[index].WorkerId, "normalized snapshot worker id " + index);
     }
 }
 

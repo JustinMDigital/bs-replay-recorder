@@ -1080,6 +1080,7 @@ public sealed class ControlPanelStore
             var now = DateTimeOffset.UtcNow;
             ExpireStaleWorkersNoLock(now);
             var requestedWorkerId = NormalizeNullable(request.WorkerId);
+            requestedWorkerId = NormalizeRequestedManagedWorkerIdNoLock(request, requestedWorkerId, now);
             var instance = FindRegistrationSlotNoLock(request, requestedWorkerId, now);
             var assignedWorkerId = requestedWorkerId ?? CreateWorkerId();
             var replacingWorker = !string.Equals(instance.WorkerId, assignedWorkerId, StringComparison.OrdinalIgnoreCase);
@@ -3078,6 +3079,42 @@ public sealed class ControlPanelStore
         throw new InvalidOperationException("No worker slots are available. Increase the instance count or stop an existing worker.");
     }
 
+    private string? NormalizeRequestedManagedWorkerIdNoLock(
+        WorkerRegisterRequest request,
+        string? requestedWorkerId,
+        DateTimeOffset now)
+    {
+        if (requestedWorkerId == null ||
+            !request.PreferredInstanceIndex.HasValue ||
+            !IsManagedWorkerId(requestedWorkerId))
+        {
+            return requestedWorkerId;
+        }
+
+        var expectedWorkerId = CreateManagedWorkerId(request.PreferredInstanceIndex.Value);
+        if (string.Equals(requestedWorkerId, expectedWorkerId, StringComparison.OrdinalIgnoreCase))
+        {
+            return requestedWorkerId;
+        }
+
+        var preferred = _state.Instances.FirstOrDefault(instance => instance.Index == request.PreferredInstanceIndex.Value);
+        if (preferred == null || !CanClaimWorkerSlot(preferred, expectedWorkerId, now))
+        {
+            return requestedWorkerId;
+        }
+
+        var expectedWorkerIdInUse = _state.Instances.Any(instance =>
+            instance.Index != preferred.Index &&
+            !IsWorkerStale(instance, now) &&
+            string.Equals(instance.WorkerId, expectedWorkerId, StringComparison.OrdinalIgnoreCase));
+        if (expectedWorkerIdInUse)
+        {
+            return null;
+        }
+
+        return expectedWorkerId;
+    }
+
     private WorkerInstanceRecord FindWorkerNoLock(string workerId)
     {
         var normalizedWorkerId = NormalizeNullable(workerId);
@@ -3471,6 +3508,7 @@ public sealed class ControlPanelStore
 
         _detectedRestoreDisplayScalePercent = scalePercent.Value;
         _state.Settings.RestoreDisplayScalePercent = scalePercent.Value;
+        SaveNoLock();
     }
 
     private int? ReadDisplayScaleNoLock(bool throwOnFailure)
@@ -4313,6 +4351,16 @@ public sealed class ControlPanelStore
     private static string CreateWorkerId()
     {
         return "worker-" + Guid.NewGuid().ToString("N").Substring(0, 12);
+    }
+
+    private static string CreateManagedWorkerId(int index)
+    {
+        return "managed-worker-" + index.ToString("00", CultureInfo.InvariantCulture);
+    }
+
+    private static bool IsManagedWorkerId(string workerId)
+    {
+        return workerId.StartsWith("managed-worker-", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ResetInactiveInstanceIdentityNoLock(WorkerInstanceRecord instance)

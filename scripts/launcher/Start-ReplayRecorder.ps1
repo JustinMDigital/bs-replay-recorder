@@ -142,6 +142,7 @@ else {
 }
 $PidFile = Join-Path $Workspace "started-processes.json"
 $LogDirectory = Join-Path $Workspace "Logs"
+$BrowserProfileDirectory = Join-Path $Workspace "ControlPanelBrowserProfile"
 
 function Assert-Command {
     param([string]$Name)
@@ -197,6 +198,92 @@ function Wait-ForHttpEndpoint {
 
     Write-Step "$Name did not answer within $TimeoutSeconds seconds. Check its log files in $LogDirectory."
     return $false
+}
+
+function Resolve-ControlPanelBrowserPath {
+    if (-not [string]::IsNullOrWhiteSpace($env:BSARR_BROWSER_PATH)) {
+        if (Test-Path -LiteralPath $env:BSARR_BROWSER_PATH -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $env:BSARR_BROWSER_PATH).Path
+        }
+
+        Write-Step "BSARR_BROWSER_PATH points to a missing file, so using the default browser fallback: $env:BSARR_BROWSER_PATH"
+        return $null
+    }
+
+    foreach ($name in @("msedge.exe", "chrome.exe")) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($command) {
+            return $command.Source
+        }
+    }
+
+    $candidates = @(
+        (Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"),
+        (Join-Path $env:ProgramFiles "Microsoft\Edge\Application\msedge.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Google\Chrome\Application\chrome.exe"),
+        (Join-Path $env:ProgramFiles "Google\Chrome\Application\chrome.exe"),
+        (Join-Path $env:LOCALAPPDATA "Google\Chrome\Application\chrome.exe")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    return $null
+}
+
+function Start-ControlPanelBrowser {
+    $browserPath = Resolve-ControlPanelBrowserPath
+    if ([string]::IsNullOrWhiteSpace($browserPath)) {
+        Write-Step "No supported tracked browser was found, so opening the dashboard with the Windows default browser."
+        Start-Process $ControlPanelUrl
+        return $null
+    }
+
+    New-Item -ItemType Directory -Path $BrowserProfileDirectory -Force | Out-Null
+    $process = Start-Process `
+        -FilePath $browserPath `
+        -ArgumentList @(
+            "--app=$ControlPanelUrl",
+            "--user-data-dir=$BrowserProfileDirectory",
+            "--no-first-run",
+            "--new-window"
+        ) `
+        -PassThru
+
+    Write-Step "Started dashboard browser, pid $($process.Id)"
+    return [pscustomobject]@{
+        name = "control panel browser"
+        kind = "controlPanelBrowser"
+        pid = $process.Id
+        startedAt = (Get-Date).ToString("o")
+        browserPath = $browserPath
+        browserProfileDirectory = $BrowserProfileDirectory
+        url = $ControlPanelUrl
+    }
+}
+
+function Add-StartedProcessRecords {
+    param([object[]]$Records)
+
+    if ($null -eq $Records -or $Records.Count -eq 0) {
+        return
+    }
+
+    $recordsToWrite = @()
+    if (Test-Path -LiteralPath $PidFile) {
+        try {
+            $recordsToWrite += @(Get-Content -LiteralPath $PidFile -Raw | ConvertFrom-Json)
+        }
+        catch {
+            Write-Step "Replacing unreadable process tracking file: $PidFile"
+        }
+    }
+
+    $recordsToWrite += @($Records)
+    $recordsToWrite | ConvertTo-Json -Depth 6 | Set-Content -Path $PidFile -Encoding UTF8
 }
 
 function Assert-InstalledStateReady {
@@ -554,7 +641,10 @@ try {
     if (Test-HttpEndpoint "$ControlPanelUrl/api/state") {
         Write-Step "Control panel is already running."
         if (-not $NoBrowser) {
-            Start-Process $ControlPanelUrl
+            $browserRecord = Start-ControlPanelBrowser
+            if ($browserRecord) {
+                Add-StartedProcessRecords -Records @($browserRecord)
+            }
         }
 
         Write-Step "Dashboard: $ControlPanelUrl"
@@ -641,7 +731,7 @@ try {
     }
 
     if ($started.Count -gt 0) {
-        $started | ConvertTo-Json -Depth 4 | Set-Content -Path $PidFile -Encoding UTF8
+        Add-StartedProcessRecords -Records $started
     }
 
     foreach ($instance in $instances) {
@@ -654,7 +744,10 @@ try {
     Wait-ForHttpEndpoint -Name "Control panel" -Url "$ControlPanelUrl/api/state" -TimeoutSeconds 30 | Out-Null
 
     if (-not $NoBrowser) {
-        Start-Process $ControlPanelUrl
+        $browserRecord = Start-ControlPanelBrowser
+        if ($browserRecord) {
+            Add-StartedProcessRecords -Records @($browserRecord)
+        }
     }
 
     Write-Step "Dashboard: $ControlPanelUrl"

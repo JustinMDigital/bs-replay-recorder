@@ -1364,20 +1364,10 @@ function Remove-IfExists {
     }
 }
 
-function Get-ExistingWorkerId {
-    param([string]$SettingsPath)
+function Get-ManagedWorkerId {
+    param([int]$Index)
 
-    if (-not (Test-Path -LiteralPath $SettingsPath)) {
-        return ""
-    }
-
-    try {
-        $settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
-        return [string]$settings.ControlPanelWorker.WorkerId
-    }
-    catch {
-        return ""
-    }
+    return "managed-worker-{0:00}" -f $Index
 }
 
 function New-PluginSettings {
@@ -1477,8 +1467,8 @@ function Deploy-Plugin {
     $settingsDirectory = Join-Path $InstanceDirectory "UserData\BSAutoReplayRecorder"
     $settingsPath = Join-Path $settingsDirectory "settings.json"
     New-Item -ItemType Directory -Path $settingsDirectory -Force | Out-Null
-    $workerId = Get-ExistingWorkerId -SettingsPath $settingsPath
     Backup-File -Path $settingsPath
+    $workerId = Get-ManagedWorkerId -Index $Index
     New-PluginSettings -Index $Index -PresetSettings $PresetSettings -WorkerId $workerId |
         ConvertTo-Json -Depth 12 |
         Set-Content -Path $settingsPath -Encoding UTF8

@@ -1,16 +1,26 @@
 param(
     [switch]$SkipDisplayScaleRestore,
-    [switch]$StopGames
+    [switch]$StopGames,
+    [string]$LogPath
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $SettingsPath = Join-Path $RepoRoot "settings.json"
+$script:StopLogPath = $null
 
 function Write-Step {
     param([string]$Message)
-    Write-Host "[bs-replay-recorder] $Message"
+    $line = "[bs-replay-recorder] $Message"
+    Write-Host $line
+    if (-not [string]::IsNullOrWhiteSpace($script:StopLogPath)) {
+        try {
+            Add-Content -LiteralPath $script:StopLogPath -Value $line
+        }
+        catch {
+        }
+    }
 }
 
 function Read-LocalSettingsFile {
@@ -110,9 +120,20 @@ $SettingsWorkspace = if ([string]::IsNullOrWhiteSpace($SettingsWorkspaceValue)) 
 else {
     Resolve-RepoRelativePath $SettingsWorkspaceValue
 }
+$ControlPanelUrlValue = Get-LocalSettingString -Settings $LocalSettings -Names @("controlPanelUrl", "bindUrl")
+$ControlPanelUrl = if ([string]::IsNullOrWhiteSpace($ControlPanelUrlValue)) {
+    "http://127.0.0.1:5770"
+}
+else {
+    $ControlPanelUrlValue.TrimEnd("/")
+}
 $RestoreDisplayScalePercent = Get-LocalSettingInt -Settings $LocalSettings -Names @("restoreDisplayScalePercent")
 if ($null -eq $RestoreDisplayScalePercent -or $RestoreDisplayScalePercent -lt 100 -or $RestoreDisplayScalePercent -gt 500) {
     $RestoreDisplayScalePercent = 150
+}
+$DisplayScaleScreenIndex = Get-LocalSettingInt -Settings $LocalSettings -Names @("monitorIndex", "recordingMonitorIndex")
+if ($null -eq $DisplayScaleScreenIndex -or $DisplayScaleScreenIndex -lt 0 -or $DisplayScaleScreenIndex -gt 15) {
+    $DisplayScaleScreenIndex = 1
 }
 
 $ControlPanelProjectDir = Join-Path $RepoRoot "src\BSAutoReplayRecorder.ControlPanel"
@@ -128,8 +149,22 @@ $WorkspacePaths = @(
     (Join-Path $ControlPanelProjectDir "ControlPanelWorkspace"),
     (Join-Path $RepoRoot "ControlPanelWorkspace")
 ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+$BrowserProfilePaths = @($WorkspacePaths | ForEach-Object { Join-Path $_ "ControlPanelBrowserProfile" })
 
-function Get-StateRestoreDisplayScalePercent {
+if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
+    $script:StopLogPath = Resolve-RepoRelativePath $LogPath
+}
+elseif ($WorkspacePaths.Count -gt 0) {
+    $logDirectory = Join-Path @($WorkspacePaths)[0] "Logs"
+    $script:StopLogPath = Join-Path $logDirectory ("stop-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
+}
+
+if (-not [string]::IsNullOrWhiteSpace($script:StopLogPath)) {
+    New-Item -ItemType Directory -Path (Split-Path -Parent $script:StopLogPath) -Force | Out-Null
+    Write-Step "Stop log: $script:StopLogPath"
+}
+
+function Get-StateDisplayScaleSettings {
     foreach ($workspacePath in $WorkspacePaths) {
         $statePath = Join-Path $workspacePath "control-panel-state.json"
         if (-not (Test-Path -LiteralPath $statePath)) {
@@ -140,9 +175,18 @@ function Get-StateRestoreDisplayScalePercent {
             $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
             $scale = $state.settings.restoreDisplayScalePercent
             $parsed = 0
+            $monitorIndex = $state.settings.monitorIndex
+            $parsedMonitorIndex = 0
+            $validMonitorIndex = $null -ne $monitorIndex -and
+                [int]::TryParse(([string]$monitorIndex).Trim(), [ref]$parsedMonitorIndex) -and
+                $parsedMonitorIndex -ge 0 -and
+                $parsedMonitorIndex -le 15
             if ($null -ne $scale -and [int]::TryParse(([string]$scale).Trim(), [ref]$parsed) -and
                 $parsed -ge 100 -and $parsed -le 500) {
-                return $parsed
+                return [pscustomobject]@{
+                    RestoreDisplayScalePercent = $parsed
+                    DisplayScaleScreenIndex = if ($validMonitorIndex) { $parsedMonitorIndex } else { $null }
+                }
             }
         }
         catch {
@@ -153,9 +197,12 @@ function Get-StateRestoreDisplayScalePercent {
     return $null
 }
 
-$StateRestoreDisplayScalePercent = Get-StateRestoreDisplayScalePercent
-if ($null -ne $StateRestoreDisplayScalePercent) {
-    $RestoreDisplayScalePercent = $StateRestoreDisplayScalePercent
+$StateDisplayScaleSettings = Get-StateDisplayScaleSettings
+if ($null -ne $StateDisplayScaleSettings) {
+    $RestoreDisplayScalePercent = $StateDisplayScaleSettings.RestoreDisplayScalePercent
+    if ($null -ne $StateDisplayScaleSettings.DisplayScaleScreenIndex) {
+        $DisplayScaleScreenIndex = $StateDisplayScaleSettings.DisplayScaleScreenIndex
+    }
 }
 
 function Test-ManagedProcess {
@@ -171,6 +218,76 @@ function Test-ManagedProcess {
     }
     catch {
         return $false
+    }
+}
+
+function Test-TextContainsAny {
+    param(
+        [string]$Text,
+        [string[]]$Needles
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $false
+    }
+
+    foreach ($needle in @($Needles)) {
+        if (-not [string]::IsNullOrWhiteSpace($needle) -and
+            $Text.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-ControlPanelBrowserProcess {
+    param([int]$ProcessId)
+
+    try {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId"
+        if (-not $process) {
+            return $false
+        }
+
+        if ($process.Name -notmatch "^(msedge|chrome)(\.exe)?$") {
+            return $false
+        }
+
+        return (Test-TextContainsAny -Text ([string]$process.CommandLine) -Needles $BrowserProfilePaths) -or
+            (Test-TextContainsAny -Text ([string]$process.CommandLine) -Needles @("--app=$ControlPanelUrl"))
+    }
+    catch {
+        return $false
+    }
+}
+
+function Stop-ControlPanelBrowserProcess {
+    param([int]$ProcessId)
+
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $process) {
+        Write-Step "control panel browser is not running."
+        return $false
+    }
+
+    if (-not (Test-ControlPanelBrowserProcess $ProcessId)) {
+        Write-Step "Skipping pid $ProcessId because it no longer looks like the tracked dashboard browser."
+        return $false
+    }
+
+    Stop-Process -Id $ProcessId -Force
+    Write-Step "Closed dashboard browser, pid $ProcessId."
+    return $true
+}
+
+function Get-OrphanControlPanelBrowserProcesses {
+    Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -match "^(msedge|chrome)(\.exe)?$" -and
+        (
+            (Test-TextContainsAny -Text ([string]$_.CommandLine) -Needles $BrowserProfilePaths) -or
+            (Test-TextContainsAny -Text ([string]$_.CommandLine) -Needles @("--app=$ControlPanelUrl"))
+        )
     }
 }
 
@@ -264,6 +381,15 @@ try {
             $processId = [int]$record.pid
             $seenProcessIds += $processId
             $name = [string]$record.name
+            $kind = [string]$record.kind
+            if ([string]::Equals($kind, "controlPanelBrowser", [StringComparison]::OrdinalIgnoreCase) -or
+                [string]::Equals($name, "control panel browser", [StringComparison]::OrdinalIgnoreCase)) {
+                if (Stop-ControlPanelBrowserProcess $processId) {
+                    $stoppedAny = $true
+                }
+                continue
+            }
+
             $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
             if (-not $process) {
                 Write-Step "$name is not running."
@@ -289,6 +415,12 @@ try {
         Write-Step "Stopped orphaned recorder process $($process.ProcessId)."
     }
 
+    foreach ($process in @(Get-OrphanControlPanelBrowserProcesses)) {
+        Stop-Process -Id $process.ProcessId -Force
+        $stoppedAny = $true
+        Write-Step "Closed orphaned dashboard browser process $($process.ProcessId)."
+    }
+
     if (-not $stoppedAny) {
         Write-Step "No started recorder processes were found."
     }
@@ -297,8 +429,8 @@ try {
         $scaleScript = Join-Path $RepoRoot "scripts\display\Set-RecordingDisplayScale.ps1"
         if (Test-Path -LiteralPath $scaleScript) {
             try {
-                & $scaleScript -ScreenIndex 1 -ScalePercent $RestoreDisplayScalePercent | Out-Null
-                Write-Step "Restored recording display scale to $RestoreDisplayScalePercent%."
+                & $scaleScript -ScreenIndex $DisplayScaleScreenIndex -ScalePercent $RestoreDisplayScalePercent | Out-Null
+                Write-Step "Restored recording display scale on screen $DisplayScaleScreenIndex to $RestoreDisplayScalePercent%."
             }
             catch {
                 Write-Step "Could not restore recording display scale: $($_.Exception.Message)"

@@ -151,8 +151,8 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             },
             cancellationToken).ConfigureAwait(false);
 
-        if (string.IsNullOrWhiteSpace(workerSettings.WorkerId) &&
-            !string.IsNullOrWhiteSpace(response.WorkerId))
+        if (!string.IsNullOrWhiteSpace(response.WorkerId) &&
+            !string.Equals(NormalizeNullable(workerSettings.WorkerId), response.WorkerId, StringComparison.OrdinalIgnoreCase))
         {
             workerSettings.WorkerId = response.WorkerId;
             _persistWorkerId?.Invoke(response.WorkerId);
