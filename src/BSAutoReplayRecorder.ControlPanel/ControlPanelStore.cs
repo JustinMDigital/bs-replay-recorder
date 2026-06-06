@@ -865,11 +865,14 @@ public sealed class ControlPanelStore
             }
 
             LaunchInstanceNoLock(instance);
-            AddEventNoLock(
-                string.Equals(instance.GameLaunchStatus, "Failed", StringComparison.OrdinalIgnoreCase) ? "Bad" : "Info",
-                "Launch",
-                "Launch " + instance.GameLaunchStatus.ToLowerInvariant() + ": " + instance.Name,
-                instanceIndex: instance.Index);
+            if (!string.Equals(instance.GameLaunchStatus, "Failed", StringComparison.OrdinalIgnoreCase))
+            {
+                AddEventNoLock(
+                    "Info",
+                    "Launch",
+                    "Launch " + instance.GameLaunchStatus.ToLowerInvariant() + ": " + instance.Name,
+                    instanceIndex: instance.Index);
+            }
             SaveNoLock();
             return Clone(_state);
         }
@@ -2641,7 +2644,7 @@ public sealed class ControlPanelStore
         }
         catch (Exception ex)
         {
-            SetLaunchFailureNoLock(instance, ex.Message);
+            SetLaunchFailureNoLock(instance, ex.Message, ex.ToString());
         }
         finally
         {
@@ -2649,11 +2652,16 @@ public sealed class ControlPanelStore
         }
     }
 
-    private static void SetLaunchFailureNoLock(WorkerInstanceRecord instance, string message)
+    private void SetLaunchFailureNoLock(WorkerInstanceRecord instance, string message, string? eventText = null)
     {
         instance.GameProcessId = null;
         instance.GameLaunchStatus = "Failed";
         instance.GameLaunchError = message;
+        AddEventNoLock(
+            "Bad",
+            "Launch",
+            instance.Name + ": " + (NormalizeNullable(eventText) ?? message),
+            instanceIndex: instance.Index);
     }
 
     private bool QuitInstanceProcessNoLock(WorkerInstanceRecord instance)
@@ -3364,11 +3372,7 @@ public sealed class ControlPanelStore
         var toolPath = ResolveSetDpiToolPath();
         if (toolPath == null)
         {
-            if (throwOnFailure)
-            {
-                throw new InvalidOperationException("Display scaling helper was not found. Expected tools\\SetDpi\\SetDpi.exe.");
-            }
-
+            DisableDisplayScaleNoLock(CreateMissingSetDpiMessage());
             return null;
         }
 
@@ -3436,11 +3440,7 @@ public sealed class ControlPanelStore
         var toolPath = ResolveSetDpiToolPath();
         if (toolPath == null)
         {
-            if (throwOnFailure)
-            {
-                throw new InvalidOperationException("Display scaling helper was not found. Expected tools\\SetDpi\\SetDpi.exe.");
-            }
-
+            DisableDisplayScaleNoLock(CreateMissingSetDpiMessage());
             return;
         }
 
@@ -3519,6 +3519,28 @@ public sealed class ControlPanelStore
         }
 
         return null;
+    }
+
+    private void DisableDisplayScaleNoLock(string reason)
+    {
+        if (!_state.Settings.ManageDisplayScale)
+        {
+            return;
+        }
+
+        _state.Settings.ManageDisplayScale = false;
+        AddEventNoLock("Warn", "Display", "Display scaling disabled: " + reason);
+    }
+
+    private static string CreateMissingSetDpiMessage()
+    {
+        var configuredPath = NormalizeNullable(Environment.GetEnvironmentVariable("BSARR_SETDPI_PATH"));
+        if (configuredPath != null)
+        {
+            return "BSARR_SETDPI_PATH points to a missing file: " + configuredPath;
+        }
+
+        return "Display scaling helper was not found. Expected tools\\SetDpi\\SetDpi.exe or BSARR_SETDPI_PATH.";
     }
 
     private void ResetRunNoLock(string status)

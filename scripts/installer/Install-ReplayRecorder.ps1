@@ -947,6 +947,42 @@ function Set-PresetInstanceCount {
     }
 }
 
+function Resolve-SetDpiToolPath {
+    if (-not [string]::IsNullOrWhiteSpace($env:BSARR_SETDPI_PATH)) {
+        if (Test-Path -LiteralPath $env:BSARR_SETDPI_PATH -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $env:BSARR_SETDPI_PATH).Path
+        }
+
+        return ""
+    }
+
+    $candidate = Join-Path $RepoRoot "tools\SetDpi\SetDpi.exe"
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $candidate).Path
+    }
+
+    return ""
+}
+
+function Disable-DisplayScaleIfHelperMissing {
+    param([object]$PresetSettings)
+
+    if (-not [bool]$PresetSettings.ManageDisplayScale) {
+        return ""
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace((Resolve-SetDpiToolPath))) {
+        return ""
+    }
+
+    $PresetSettings.ManageDisplayScale = $false
+    if (-not [string]::IsNullOrWhiteSpace($env:BSARR_SETDPI_PATH)) {
+        return "Display scaling disabled because BSARR_SETDPI_PATH points to a missing file: $env:BSARR_SETDPI_PATH"
+    }
+
+    return "Display scaling disabled because tools\SetDpi\SetDpi.exe was not found. Set BSARR_SETDPI_PATH to enable automatic display scaling."
+}
+
 function Get-PresetSettings {
     param([string]$PresetId)
 
@@ -1362,7 +1398,10 @@ function Deploy-Plugin {
 }
 
 function New-ControlPanelState {
-    param([object]$PresetSettings)
+    param(
+        [object]$PresetSettings,
+        [string]$DisplayScaleNotice = ""
+    )
 
     $workspaceFullPath = [IO.Path]::GetFullPath($Workspace)
     $recordingRoot = Join-Path $workspaceFullPath "Recordings"
@@ -1446,6 +1485,19 @@ function New-ControlPanelState {
             restoreDisplayScalePercent = [int]$PresetSettings.RestoreDisplayScalePercent
             hideTaskbarDuringRun = [bool]$PresetSettings.HideTaskbarDuringRun
         }
+        events = @(
+            if (-not [string]::IsNullOrWhiteSpace($DisplayScaleNotice)) {
+                [ordered]@{
+                    id = [Guid]::NewGuid().ToString("N")
+                    createdAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+                    kind = "Warn"
+                    tag = "Display"
+                    text = $DisplayScaleNotice
+                    replayId = $null
+                    instanceIndex = $null
+                }
+            }
+        )
         queue = @()
         instances = $instances
         instanceProvision = [ordered]@{
@@ -1601,6 +1653,10 @@ try {
     Apply-PresetSettingsOverrides -PresetSettings $presetSettings
     $selectedInstanceCount = Resolve-InstanceCount -PresetSettings $presetSettings
     Set-PresetInstanceCount -PresetSettings $presetSettings -SelectedInstanceCount $selectedInstanceCount
+    $displayScaleNotice = Disable-DisplayScaleIfHelperMissing -PresetSettings $presetSettings
+    if (-not [string]::IsNullOrWhiteSpace($displayScaleNotice)) {
+        Write-Step $displayScaleNotice
+    }
 
     Write-Step "Preset: $Preset"
     Write-Step "Instance count: $selectedInstanceCount"
@@ -1701,7 +1757,7 @@ try {
     Write-Section "Control panel state"
     New-Item -ItemType Directory -Path $Workspace -Force | Out-Null
     Backup-File -Path $StatePath
-    New-ControlPanelState -PresetSettings $presetSettings |
+    New-ControlPanelState -PresetSettings $presetSettings -DisplayScaleNotice $displayScaleNotice |
         ConvertTo-Json -Depth 20 |
         Set-Content -Path $StatePath -Encoding UTF8
     Write-Step "Wrote $StatePath"

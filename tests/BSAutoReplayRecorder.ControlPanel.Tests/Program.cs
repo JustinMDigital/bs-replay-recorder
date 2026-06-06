@@ -1437,6 +1437,19 @@ static void RunDiskSpaceAndEventLogCheck(string workspace)
     store.ImportFiles(files.Collection);
     snapshot = store.Snapshot();
     AssertEqual(true, snapshot.Events.Any(item => item.Tag == "Import"), "import event recorded");
+
+    var launchFailure = typeof(ControlPanelStore).GetMethod(
+                            "SetLaunchFailureNoLock",
+                            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                        ?? throw new MissingMethodException(typeof(ControlPanelStore).FullName, "SetLaunchFailureNoLock");
+    var fullError = "Launch failed line 1" + Environment.NewLine + "Launch failed line 2";
+    launchFailure.Invoke(
+        store,
+        new object?[] { snapshot.Instances[0], "Launch failed line 1", fullError });
+    snapshot = store.Snapshot();
+    var launchEvent = snapshot.Events.First(item => item.Tag == "Launch");
+    AssertContains("Launch failed line 1", launchEvent.Text, "full launch event first line");
+    AssertContains("Launch failed line 2", launchEvent.Text, "full launch event second line");
 }
 
 static void RunQueueCoverArtCheck(string workspace)
