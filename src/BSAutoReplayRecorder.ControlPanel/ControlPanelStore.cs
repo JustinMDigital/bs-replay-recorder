@@ -1417,6 +1417,7 @@ public sealed class ControlPanelStore
         var state = JsonSerializer.Deserialize<ControlPanelState>(json, JsonOptions.Default)
                     ?? new ControlPanelState();
         state.Settings ??= settings;
+        state.Settings.LagSpikeStartupGraceSeconds = settings.LagSpikeStartupGraceSeconds;
         state.Settings.Normalize();
         state.Queue ??= new List<ReplayQueueRecord>();
         state.Instances ??= new List<WorkerInstanceRecord>();
@@ -3731,6 +3732,7 @@ public sealed class ControlPanelStore
             AudioLevelMode = _state.Settings.AudioLevelMode,
             AudioTargetLevelDb = _state.Settings.AudioTargetLevelDb,
             DelayBetweenRecordingsSeconds = _state.Settings.DelayBetweenRecordingsSeconds,
+            LagSpikeStartupGraceSeconds = _state.Settings.LagSpikeStartupGraceSeconds,
             GamePresentationSettingsVersion = _state.Settings.GamePresentationSettingsVersion,
             GamePresentation = CloneGamePresentationSettings(_state.Settings.GamePresentation),
             Progress = CreateRunProgressNoLock()
@@ -3760,6 +3762,7 @@ public sealed class ControlPanelStore
             AudioLevelMode = _state.Settings.AudioLevelMode,
             AudioTargetLevelDb = _state.Settings.AudioTargetLevelDb,
             DelayBetweenRecordingsSeconds = _state.Settings.DelayBetweenRecordingsSeconds,
+            LagSpikeStartupGraceSeconds = _state.Settings.LagSpikeStartupGraceSeconds,
             GamePresentationSettingsVersion = _state.Settings.GamePresentationSettingsVersion,
             GamePresentation = CloneGamePresentationSettings(_state.Settings.GamePresentation),
             Progress = CreateRunProgressNoLock()

@@ -648,6 +648,13 @@
     <span>Settings not saved</span>
     <strong>Click here to Save</strong>
   </button>
+  <div id="shutdownModal" class="shutdownModal" role="alertdialog" aria-modal="true" aria-labelledby="shutdownModalTitle" tabindex="-1" hidden>
+    <div class="shutdownModalPanel">
+      <span class="shutdownModalKicker">Replay Recorder is off</span>
+      <h2 id="shutdownModalTitle">Recorder stack has been shut down.</h2>
+      <p>Close this browser tab when you are ready. To start recording again, run <strong>start.bat</strong>.</p>
+    </div>
+  </div>
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="/app.js?v=diagnostics"></script>
 </body>

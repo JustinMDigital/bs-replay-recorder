@@ -7,6 +7,7 @@
   "maxConcurrentRecordings": 3,
   "beatSaberInstanceNamePrefix": "I-",
   "delayBetweenRecordingsSeconds": 5,
+  "lagSpikeStartupGraceSeconds": 5,
   "idleShutdownMinutes": 20,
   "recorderHostBasePort": 5757,
   "sourceBeatSaberPath": "",

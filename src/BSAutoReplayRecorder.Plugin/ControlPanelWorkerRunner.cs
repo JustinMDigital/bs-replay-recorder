@@ -423,6 +423,11 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             clone.DelayBetweenRecordingsSeconds = Math.Min(30, assignment.DelayBetweenRecordingsSeconds);
         }
 
+        if (assignment.LagSpikeStartupGraceSeconds.HasValue)
+        {
+            clone.LagSpikeStartupGraceSeconds = Math.Min(30, Math.Max(0, assignment.LagSpikeStartupGraceSeconds.Value));
+        }
+
         return clone;
     }
 

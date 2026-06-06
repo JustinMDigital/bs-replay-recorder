@@ -113,6 +113,8 @@ internal sealed class ControlPanelWorkerAssignmentResponse
 
     public double DelayBetweenRecordingsSeconds { get; set; }
 
+    public double? LagSpikeStartupGraceSeconds { get; set; }
+
     public int GamePresentationSettingsVersion { get; set; }
 
     public GamePresentationSettings GamePresentation { get; set; } = new GamePresentationSettings();

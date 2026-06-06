@@ -143,7 +143,7 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
             ["LagSpikeDetectionEnabled"] = true,
             ["LagSpikeThresholdMilliseconds"] = 250,
             ["LagSpikeConsecutiveFrameCount"] = 1,
-            ["LagSpikeStartupGraceSeconds"] = 3,
+            ["LagSpikeStartupGraceSeconds"] = settings.LagSpikeStartupGraceSeconds,
             ["DelayBetweenRecordingsSeconds"] = settings.DelayBetweenRecordingsSeconds,
             ["StartRecordingRetryCount"] = 5,
             ["StartRecordingRetryDelaySeconds"] = 2,

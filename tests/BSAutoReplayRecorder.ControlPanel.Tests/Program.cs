@@ -619,7 +619,8 @@ static void RunWorkerPluginSettingsIdentityCheck()
     {
         BindUrl = "http://127.0.0.1:5770",
         InstanceCount = 3,
-        MonitorIndex = 1
+        MonitorIndex = 1,
+        LagSpikeStartupGraceSeconds = 5
     };
     settings.Normalize();
 
@@ -649,6 +650,7 @@ static void RunWorkerPluginSettingsIdentityCheck()
         AssertEqual(index, parsed.ControlPanelWorker.PreferredInstanceIndex, "preferred instance index " + index);
         AssertEqual("http://127.0.0.1:" + (5757 + index), parsed.RecorderHost.BaseUrl, "recorder host port " + index);
         AssertEqual(300d, parsed.RecorderHost.TimeoutSeconds, "recorder host timeout " + index);
+        AssertEqual(5.0, parsed.LagSpikeStartupGraceSeconds, "lag spike startup grace " + index);
         AssertEqual(5.0, parsed.DelayBetweenRecordingsSeconds, "delay between recordings " + index);
         AssertEqual(index, parsed.WindowPlacement.InstanceIndex, "window placement index " + index);
     }

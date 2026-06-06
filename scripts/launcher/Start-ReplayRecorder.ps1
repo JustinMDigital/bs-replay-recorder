@@ -235,34 +235,9 @@ function Resolve-ControlPanelBrowserPath {
 }
 
 function Start-ControlPanelBrowser {
-    $browserPath = Resolve-ControlPanelBrowserPath
-    if ([string]::IsNullOrWhiteSpace($browserPath)) {
-        Write-Step "No supported tracked browser was found, so opening the dashboard with the Windows default browser."
-        Start-Process $ControlPanelUrl
-        return $null
-    }
-
-    New-Item -ItemType Directory -Path $BrowserProfileDirectory -Force | Out-Null
-    $process = Start-Process `
-        -FilePath $browserPath `
-        -ArgumentList @(
-            "--app=$ControlPanelUrl",
-            "--user-data-dir=$BrowserProfileDirectory",
-            "--no-first-run",
-            "--new-window"
-        ) `
-        -PassThru
-
-    Write-Step "Started dashboard browser, pid $($process.Id)"
-    return [pscustomobject]@{
-        name = "control panel browser"
-        kind = "controlPanelBrowser"
-        pid = $process.Id
-        startedAt = (Get-Date).ToString("o")
-        browserPath = $browserPath
-        browserProfileDirectory = $BrowserProfileDirectory
-        url = $ControlPanelUrl
-    }
+    Start-Process $ControlPanelUrl
+    Write-Step "Opened dashboard in your browser."
+    return $null
 }
 
 function Add-StartedProcessRecords {

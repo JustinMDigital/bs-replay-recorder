@@ -14,6 +14,7 @@ let pendingSetupEnabledInstanceCount = null;
 let pendingSetupInstanceCreation = null;
 let lastRunPlanPlayheadLeftPx = null;
 let runPlanPlayheadInstantTimeout = null;
+let shutdownModalVisible = false;
 
 const runPlanTimingDefaults = Object.freeze({
   startLeadInSeconds: 3,
@@ -3431,31 +3432,14 @@ document.getElementById('quitApp').addEventListener('click', () => runAction(asy
   }
 
   await postJson('/api/quit');
-  showToast('Quit requested; closing this tab');
-  closeTabAfterQuitRequest();
+  showShutdownModal();
 }));
-
-function closeTabAfterQuitRequest() {
-  window.setTimeout(() => {
-    try {
-      const currentWindow = window.open('', '_self');
-      (currentWindow || window).close();
-    } catch {
-      window.close();
-    }
-
-    window.setTimeout(() => {
-      if (!document.hidden) {
-        showToast('Quit requested. Your browser blocked tab close.');
-      }
-    }, 500);
-  }, 75);
-}
 
 async function runAction(action) {
   try {
     await action();
   } catch (error) {
+    if (shutdownModalVisible) return;
     showToast(readableError(error));
   }
 }
@@ -3672,11 +3656,27 @@ function readableError(error) {
 }
 
 function showToast(message) {
+  if (shutdownModalVisible) return;
   const toast = document.getElementById('toast');
   toast.textContent = message;
   toast.classList.add('visible');
   clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => toast.classList.remove('visible'), 3500);
+}
+
+function showShutdownModal() {
+  shutdownModalVisible = true;
+  document.title = 'Replay Recorder Off';
+  document.body.classList.add('shutdownLocked');
+  const toast = document.getElementById('toast');
+  toast?.classList.remove('visible');
+  clearTimeout(toastTimeout);
+
+  const modal = document.getElementById('shutdownModal');
+  if (modal) {
+    modal.hidden = false;
+    modal.focus?.();
+  }
 }
 
 function escapeHtml(value) {
@@ -3699,6 +3699,7 @@ loadDisplayInfo().catch(() => {
 });
 
 setInterval(() => {
+  if (shutdownModalVisible) return;
   if (settingsDirty) return;
   if (editingQueueId) return;
   const activeElement = document.activeElement;

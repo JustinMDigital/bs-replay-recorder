@@ -106,6 +106,8 @@ public sealed class ControlPanelSettings
 
     public double DelayBetweenRecordingsSeconds { get; set; } = 5;
 
+    public double LagSpikeStartupGraceSeconds { get; set; } = 3;
+
     public double IdleShutdownMinutes { get; set; } = 20;
 
     public int GamePresentationSettingsVersion { get; set; } = 1;
@@ -181,6 +183,7 @@ public sealed class ControlPanelSettings
         RecordingDisplayScalePercent = NormalizeScalePercent(RecordingDisplayScalePercent, 100);
         RestoreDisplayScalePercent = NormalizeScalePercent(RestoreDisplayScalePercent, 150);
         DelayBetweenRecordingsSeconds = NormalizeDelayBetweenRecordingsSeconds(DelayBetweenRecordingsSeconds);
+        LagSpikeStartupGraceSeconds = NormalizeLagSpikeStartupGraceSeconds(LagSpikeStartupGraceSeconds);
         IdleShutdownMinutes = NormalizeIdleShutdownMinutes(IdleShutdownMinutes);
         BeatSaberLaunchPreset = NormalizeLaunchPreset();
         if (GamePresentation == null)
@@ -397,6 +400,26 @@ public sealed class ControlPanelSettings
         if (double.IsNaN(value) || double.IsInfinity(value))
         {
             return 5;
+        }
+
+        if (value < 0)
+        {
+            return 0;
+        }
+
+        if (value > 30)
+        {
+            return 30;
+        }
+
+        return Math.Round(value, 2);
+    }
+
+    private static double NormalizeLagSpikeStartupGraceSeconds(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return 3;
         }
 
         if (value < 0)

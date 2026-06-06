@@ -378,6 +378,29 @@ function Get-LocalSettingInt {
     return $null
 }
 
+function Get-LocalSettingDouble {
+    param(
+        [object]$Settings,
+        [string[]]$Names
+    )
+
+    $value = Get-LocalSettingValue -Settings $Settings -Names $Names
+    if ($null -eq $value) {
+        return $null
+    }
+
+    $parsed = 0.0
+    if ([double]::TryParse(
+            ([string]$value).Trim(),
+            [Globalization.NumberStyles]::Float,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref]$parsed)) {
+        return $parsed
+    }
+
+    return $null
+}
+
 function Get-LocalSettingBool {
     param(
         [object]$Settings,
@@ -525,6 +548,15 @@ function Apply-PresetSettingsOverrides {
         $value = Get-LocalSettingString -Settings $LocalSettings -Names $mapping.Names
         if ($null -ne $value) {
             $PresetSettings.($mapping.Property) = $value
+        }
+    }
+
+    foreach ($mapping in @(
+        @{ Property = "LagSpikeStartupGraceSeconds"; Names = @("lagSpikeStartupGraceSeconds") }
+    )) {
+        $value = Get-LocalSettingDouble -Settings $LocalSettings -Names $mapping.Names
+        if ($null -ne $value) {
+            $PresetSettings.($mapping.Property) = [Math]::Min(30.0, [Math]::Max(0.0, [double]$value))
         }
     }
 
@@ -1370,6 +1402,18 @@ function Get-ManagedWorkerId {
     return "managed-worker-{0:00}" -f $Index
 }
 
+function Resolve-LagSpikeStartupGraceSeconds {
+    param([object]$PresetSettings)
+
+    if ($null -ne $PresetSettings -and
+        $PresetSettings.PSObject.Properties.Name -contains "LagSpikeStartupGraceSeconds" -and
+        $null -ne $PresetSettings.LagSpikeStartupGraceSeconds) {
+        return [Math]::Min(30.0, [Math]::Max(0.0, [double]$PresetSettings.LagSpikeStartupGraceSeconds))
+    }
+
+    return 3.0
+}
+
 function New-PluginSettings {
     param(
         [int]$Index,
@@ -1381,6 +1425,7 @@ function New-PluginSettings {
     $recorderHostPort = $RecorderHostBasePort + $Index
     $columns = if ($PresetSettings.InstanceCount -eq 1) { 1 } else { 2 }
     $rows = if ($PresetSettings.InstanceCount -eq 1) { 1 } else { 2 }
+    $lagSpikeStartupGraceSeconds = Resolve-LagSpikeStartupGraceSeconds -PresetSettings $PresetSettings
 
     return [ordered]@{
         RequirePreflightReplayValidation = $true
@@ -1389,7 +1434,7 @@ function New-PluginSettings {
         LagSpikeDetectionEnabled = $true
         LagSpikeThresholdMilliseconds = 250.0
         LagSpikeConsecutiveFrameCount = 1
-        LagSpikeStartupGraceSeconds = 3.0
+        LagSpikeStartupGraceSeconds = $lagSpikeStartupGraceSeconds
         StartRecordingRetryCount = 5
         StartRecordingRetryDelaySeconds = 2.0
         RecorderHost = [ordered]@{
@@ -1481,6 +1526,7 @@ function New-ControlPanelState {
     )
 
     $workspaceFullPath = [IO.Path]::GetFullPath($Workspace)
+    $lagSpikeStartupGraceSeconds = Resolve-LagSpikeStartupGraceSeconds -PresetSettings $PresetSettings
     $recordingRoot = Join-Path $workspaceFullPath "Recordings"
     $provisionSourceDirectory = ""
     if (-not [string]::IsNullOrWhiteSpace($SourceBeatSaberPath)) {
@@ -1561,6 +1607,7 @@ function New-ControlPanelState {
             recordingDisplayScalePercent = [int]$PresetSettings.RecordingDisplayScalePercent
             restoreDisplayScalePercent = [int]$PresetSettings.RestoreDisplayScalePercent
             hideTaskbarDuringRun = [bool]$PresetSettings.HideTaskbarDuringRun
+            lagSpikeStartupGraceSeconds = $lagSpikeStartupGraceSeconds
         }
         events = @(
             if (-not [string]::IsNullOrWhiteSpace($DisplayScaleNotice)) {
@@ -1700,6 +1747,18 @@ function Wait-BeforeExit {
     Read-Host "Press Enter to close"
 }
 
+function Invoke-StartRecorderStack {
+    $startArgs = @()
+    if ($NoBrowser) {
+        $startArgs += "-NoBrowser"
+    }
+
+    & $StartScript @startArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Recorder stack failed to start."
+    }
+}
+
 try {
     $runningControlPanelUrl = $ControlPanelUrl.TrimEnd("/")
     if (-not $Force -and (Test-HttpEndpoint "$runningControlPanelUrl/api/state")) {
@@ -1716,8 +1775,8 @@ try {
 
     if (-not $Force -and (Test-InstalledStateReady)) {
         Write-Step "Replay recorder already appears to be installed."
-        Write-Step "Run start.bat to open the control panel, or re-run install.bat with -Force to reinstall."
-        Wait-BeforeExit
+        Write-Step "Starting the existing install."
+        Invoke-StartRecorderStack
         exit 0
     }
 
@@ -1877,15 +1936,7 @@ try {
     }
 
     Write-Section "Start recorder stack"
-    $startArgs = @()
-    if ($NoBrowser) {
-        $startArgs += "-NoBrowser"
-    }
-
-    & $StartScript @startArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Recorder stack failed to start."
-    }
+    Invoke-StartRecorderStack
 
     if (-not $SkipSharedFolderRepair) {
         Write-Section "Shared folders"
