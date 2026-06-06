@@ -5,7 +5,7 @@
 
 
 ## Record batches of Beat Saber `.bsor` replays from a local browser control panel.
-### Tested with 1.40.6, Plugin built for 1.44.0, 1.40.8, 1.39.1
+### Tested with 1.40.6, Plugin built for 1.40.8, 1.39.1
 
 This project runs one or more managed Beat Saber worker copies, plays each replay through BeatLeader, records the game window with FFmpeg, captures that Beat Saber process's audio, sync-corrects the result, and writes finished video files to a local recordings folder.
 
@@ -22,6 +22,7 @@ The recorder does not use OBS, obs-websocket, VB-CABLE, or BSManager as runtime 
 
 ## What You Need
 
+- BeatLeader
 - Windows.
 - PowerShell.
 - .NET SDK 10.

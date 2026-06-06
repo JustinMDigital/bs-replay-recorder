@@ -288,6 +288,42 @@ function Assert-ValidPathArgument {
     }
 }
 
+function Test-SwitchLikeArgument {
+    param([string]$Value)
+
+    return -not [string]::IsNullOrWhiteSpace($Value) -and $Value.TrimStart().StartsWith("-")
+}
+
+function Resolve-StartFfmpegPath {
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($env:BSARR_FFMPEG_PATH)) {
+        [void]$candidates.Add([string]$env:BSARR_FFMPEG_PATH)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($FfmpegPath)) {
+        [void]$candidates.Add([string]$FfmpegPath)
+    }
+
+    $settingsFfmpegPath = Get-LocalSettingString -Settings $LocalSettings -Names @("ffmpegPath")
+    if (-not [string]::IsNullOrWhiteSpace($settingsFfmpegPath)) {
+        [void]$candidates.Add((Resolve-RepoRelativePath $settingsFfmpegPath))
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-SwitchLikeArgument -Value $candidate) {
+            Write-Step "Ignoring invalid FFmpeg path value during start handoff: $candidate"
+            continue
+        }
+
+        $resolved = Resolve-ExecutableCandidate -Candidate $candidate
+        if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+            return $resolved
+        }
+    }
+
+    return ""
+}
+
 function Select-BeatSaberSourcePath {
     param([string]$DefaultPath)
 
@@ -1682,12 +1718,7 @@ try {
         $startArgs += "-NoBrowser"
     }
 
-    $startFfmpegPath = if (-not [string]::IsNullOrWhiteSpace($env:BSARR_FFMPEG_PATH)) {
-        [string]$env:BSARR_FFMPEG_PATH
-    }
-    else {
-        [string]$FfmpegPath
-    }
+    $startFfmpegPath = Resolve-StartFfmpegPath
     Assert-ValidPathArgument -ParameterName "FfmpegPath" -Value $startFfmpegPath
     if (-not [string]::IsNullOrWhiteSpace($startFfmpegPath)) {
         $startArgs += "-FfmpegPath"
