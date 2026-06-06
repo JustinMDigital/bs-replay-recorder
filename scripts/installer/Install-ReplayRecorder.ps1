@@ -5,7 +5,7 @@ param(
     [int]$InstanceCount = 0,
     [string]$InstancesRoot = "",
     [string]$Workspace = "",
-    [string]$InstanceNamePrefix = "BSARR I-",
+    [string]$InstanceNamePrefix = "I-",
     [string]$ControlPanelUrl = "http://127.0.0.1:5770",
     [int]$RecorderHostBasePort = 5757,
     [string]$FfmpegPath,
@@ -273,6 +273,21 @@ function Save-LocalFfmpegPath {
     $script:FfmpegPath = $fullPath
 }
 
+function Assert-ValidPathArgument {
+    param(
+        [string]$ParameterName,
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return
+    }
+
+    if ($Value.TrimStart().StartsWith("-")) {
+        throw "Missing value after -$ParameterName. Pass -$ParameterName `"C:\path\to\ffmpeg.exe`" or set ffmpegPath in settings.json."
+    }
+}
+
 function Select-BeatSaberSourcePath {
     param([string]$DefaultPath)
 
@@ -492,7 +507,7 @@ if ([string]::IsNullOrWhiteSpace($Workspace)) {
 }
 $Workspace = [IO.Path]::GetFullPath($Workspace)
 if ([string]::IsNullOrWhiteSpace($InstancesRoot)) {
-    $InstancesRoot = Join-Path $Workspace "BeatSaberInstances"
+    $InstancesRoot = Join-Path $Workspace "Instances"
 }
 $InstancesRoot = [IO.Path]::GetFullPath($InstancesRoot)
 $StatePath = Join-Path $Workspace "control-panel-state.json"
@@ -1053,6 +1068,7 @@ function Test-ProvisionTransientPath {
     foreach ($transientPath in @(
         "BSWC Recording Files",
         "Logs",
+        "UserData/BeatLeader/Replays",
         "UserData/BSWorldCupReplayRecorder/Recordings",
         "UserData/BSAutoReplayRecorder/Recordings"
     )) {
@@ -1450,7 +1466,96 @@ function Invoke-ControlPanelPost {
     Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json" -Body "{}" -TimeoutSec 30 | Out-Null
 }
 
+function Test-HttpEndpoint {
+    param([string]$Url)
+
+    try {
+        Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2 | Out-Null
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-InstalledStateReady {
+    if (-not (Test-Path -LiteralPath $SettingsPath)) {
+        return $false
+    }
+
+    if (-not (Test-Path -LiteralPath $StatePath)) {
+        return $false
+    }
+
+    try {
+        $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
+    }
+    catch {
+        return $false
+    }
+
+    if ($null -eq $state.settings -or $null -eq $state.instances) {
+        return $false
+    }
+
+    $provisionStatus = [string]$state.instanceProvision.status
+    if (-not [string]::Equals($provisionStatus, "Ready", [StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    $instanceCount = 0
+    if ($state.settings.instanceCount) {
+        $instanceCount = [Math]::Min([Math]::Max([int]$state.settings.instanceCount, 1), 4)
+    }
+    else {
+        $instanceCount = @($state.instances).Count
+    }
+
+    $instances = @($state.instances | Select-Object -First $instanceCount)
+    if ($instances.Count -eq 0) {
+        return $false
+    }
+
+    foreach ($instance in $instances) {
+        $launchDirectory = [string]$instance.launchDirectory
+        if ([string]::IsNullOrWhiteSpace($launchDirectory)) {
+            return $false
+        }
+
+        $beatSaberExe = Join-Path $launchDirectory "Beat Saber.exe"
+        if (-not (Test-Path -LiteralPath $beatSaberExe -PathType Leaf)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Wait-BeforeExit {
+    Read-Host "Press Enter to close"
+}
+
 try {
+    $runningControlPanelUrl = $ControlPanelUrl.TrimEnd("/")
+    if (-not $Force -and (Test-HttpEndpoint "$runningControlPanelUrl/api/state")) {
+        Write-Step "Control panel is already running."
+        if (-not $NoBrowser) {
+            Start-Process $runningControlPanelUrl
+        }
+
+        Write-Step "Dashboard: $runningControlPanelUrl"
+        Write-Step "Re-run install.bat with -Force if you need to reinstall while the stack is running."
+        Wait-BeforeExit
+        exit 0
+    }
+
+    if (-not $Force -and (Test-InstalledStateReady)) {
+        Write-Step "Replay recorder already appears to be installed."
+        Write-Step "Run start.bat to open the control panel, or re-run install.bat with -Force to reinstall."
+        Wait-BeforeExit
+        exit 0
+    }
+
     Write-Section "Prerequisites"
     Assert-Command "dotnet"
     Assert-Command "powershell.exe"
@@ -1576,9 +1681,17 @@ try {
     if ($NoBrowser) {
         $startArgs += "-NoBrowser"
     }
-    if (-not [string]::IsNullOrWhiteSpace($FfmpegPath)) {
+
+    $startFfmpegPath = if (-not [string]::IsNullOrWhiteSpace($env:BSARR_FFMPEG_PATH)) {
+        [string]$env:BSARR_FFMPEG_PATH
+    }
+    else {
+        [string]$FfmpegPath
+    }
+    Assert-ValidPathArgument -ParameterName "FfmpegPath" -Value $startFfmpegPath
+    if (-not [string]::IsNullOrWhiteSpace($startFfmpegPath)) {
         $startArgs += "-FfmpegPath"
-        $startArgs += $FfmpegPath
+        $startArgs += $startFfmpegPath
     }
 
     & $StartScript @startArgs

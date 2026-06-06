@@ -35,6 +35,7 @@ public sealed class ControlPanelStore
     {
         "BSWC Recording Files",
         "Logs",
+        "UserData/BeatLeader/Replays",
         "UserData/BSWorldCupReplayRecorder/Recordings",
         "UserData/BSAutoReplayRecorder/Recordings"
     };

@@ -90,7 +90,7 @@ public sealed class ControlPanelSettings
 
     public string BeatSaberInstancesRoot { get; set; } = "";
 
-    public string BeatSaberInstanceNamePrefix { get; set; } = "BSARR I-";
+    public string BeatSaberInstanceNamePrefix { get; set; } = "I-";
 
     public string BeatSaberLaunchPreset { get; set; } = DefaultBeatSaberLaunchPreset;
 
@@ -173,7 +173,7 @@ public sealed class ControlPanelSettings
 
         BeatSaberInstancesRoot = NormalizePathOrDefault(
             BeatSaberInstancesRoot,
-            Path.Combine(Path.GetFullPath(WorkspaceDirectory), "BeatSaberInstances"));
+            Path.Combine(Path.GetFullPath(WorkspaceDirectory), "Instances"));
         BeatSaberInstanceNamePrefix = BeatSaberInstanceNamePrefix?.Trim() ?? "";
         BeatSaberLaunchArguments = BeatSaberLaunchArguments?.Trim() ?? "";
         RecordingDisplayScalePercent = NormalizeScalePercent(RecordingDisplayScalePercent, 100);

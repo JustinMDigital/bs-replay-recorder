@@ -88,6 +88,21 @@ function Resolve-RepoRelativePath {
     return [IO.Path]::GetFullPath((Join-Path $RepoRoot $trimmed))
 }
 
+function Assert-ValidPathArgument {
+    param(
+        [string]$ParameterName,
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return
+    }
+
+    if ($Value.TrimStart().StartsWith("-")) {
+        throw "Missing value after -$ParameterName. Pass -$ParameterName `"C:\path\to\ffmpeg.exe`" or set ffmpegPath in settings.json."
+    }
+}
+
 $LocalSettings = Read-LocalSettingsFile
 if (-not $LauncherBoundParameters.ContainsKey("FfmpegPath")) {
     $settingsFfmpegPath = Get-LocalSettingString -Settings $LocalSettings -Names @("ffmpegPath")
@@ -95,6 +110,7 @@ if (-not $LauncherBoundParameters.ContainsKey("FfmpegPath")) {
         $FfmpegPath = Resolve-RepoRelativePath $settingsFfmpegPath
     }
 }
+Assert-ValidPathArgument -ParameterName "FfmpegPath" -Value $FfmpegPath
 
 $ControlPanelProject = Join-Path $RepoRoot "src\BSAutoReplayRecorder.ControlPanel\BSAutoReplayRecorder.ControlPanel.csproj"
 $RecorderHostProject = Join-Path $RepoRoot "src\BSAutoReplayRecorder.RecorderHost\BSAutoReplayRecorder.RecorderHost.csproj"

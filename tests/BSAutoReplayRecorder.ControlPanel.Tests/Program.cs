@@ -190,6 +190,7 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "Beat Saber_Data/CustomWIPLevels.local-20260604185400/backup-wip.txt", "backup wip");
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/BSWorldCupReplayRecorder/Recordings/old-legacy.mkv", "legacy recording");
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/BSAutoReplayRecorder/Recordings/old-managed.mkv", "managed recording");
+    WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/BeatLeader/Replays/long-replay-history-file.bsor", "old replay");
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "Logs/output.log", "log");
     var sourceDirectory = Path.Combine(sourceRoot, "Beat Saber");
     var instancesRoot = Path.Combine(workspace, "ManagedInstances");
@@ -229,6 +230,7 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
         AssertEqual(false, File.Exists(Path.Combine(directory, "Beat Saber_Data", "CustomWIPLevels.local-20260604185400", "backup-wip.txt")), "provision skipped CustomWIPLevels local backup " + index);
         AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "BSWorldCupReplayRecorder", "Recordings", "old-legacy.mkv")), "provision skipped legacy recorder output " + index);
         AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "BSAutoReplayRecorder", "Recordings", "old-managed.mkv")), "provision skipped managed recorder output " + index);
+        AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "BeatLeader", "Replays", "long-replay-history-file.bsor")), "provision skipped BeatLeader replay history " + index);
         AssertEqual(false, File.Exists(Path.Combine(directory, "Logs", "output.log")), "provision skipped logs " + index);
     }
 
@@ -526,7 +528,7 @@ static void RunDefaultLaunchArgumentsCheck(string workspace)
         snapshot.Settings.RecordingOutputDirectory,
         "default recording folder");
     AssertEqual(
-        Path.Combine(Path.GetFullPath(workspace), "BeatSaberInstances"),
+        Path.Combine(Path.GetFullPath(workspace), "Instances"),
         snapshot.Settings.BeatSaberInstancesRoot,
         "default managed instance root");
     AssertEqual(

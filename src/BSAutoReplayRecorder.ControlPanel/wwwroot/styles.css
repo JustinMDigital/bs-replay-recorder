@@ -1271,36 +1271,23 @@ summary {
   min-width: 0;
 }
 
-.menuButton {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  min-height: 32px;
-  border-color: transparent;
-  background: transparent;
-  padding: 0;
-  color: #93a0af;
-  font-size: 21px;
-  line-height: 1;
-  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
-}
-
-.menuButton:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
-  color: #d6e0ec;
-}
-
 .brandMark {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
+  display: block;
+  width: 34px;
+  height: 34px;
   flex: 0 0 auto;
-  color: var(--blue-strong);
-  font-size: 21px;
-  line-height: 1;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  object-fit: contain;
+  transform: none;
+  box-shadow: none;
+  filter: drop-shadow(0 0 14px rgba(35, 136, 255, 0.22));
+}
+
+.appHeader.commandBar .brandMark {
+  width: 42px;
+  height: 42px;
 }
 
 .titleBlock {
@@ -1424,10 +1411,14 @@ h3 {
 }
 
 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 34px;
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 0 13px;
+  line-height: 1;
   color: var(--text);
   font-size: 12px;
   font-weight: 700;
@@ -1659,7 +1650,7 @@ body.queueLoaded .runRail {
 }
 
 body.queueLoaded #addReplays {
-  display: inline-block;
+  display: inline-flex;
 }
 
 .setupView,
@@ -3938,7 +3929,6 @@ textarea {
     gap: 10px;
   }
 
-  .menuButton,
   .brandMark {
     display: none;
   }

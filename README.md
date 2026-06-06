@@ -1,6 +1,11 @@
 # Beat Saber Auto Replay Recorder
 
-Record batches of Beat Saber `.bsor` replays from a local browser control panel.
+<img src="https://i.imgur.com/Cp0L5BX.png" alt="Beat Saber Auto Replay Recorder logo" width="150">
+
+
+
+## Record batches of Beat Saber `.bsor` replays from a local browser control panel.
+### Tested with 1.40.6, Plugin built for 1.44.0, 1.40.8, 1.39.1
 
 This project runs one or more managed Beat Saber worker copies, plays each replay through BeatLeader, records the game window with FFmpeg, captures that Beat Saber process's audio, sync-corrects the result, and writes finished video files to a local recordings folder.
 
@@ -50,7 +55,7 @@ The installer will:
 
 - create or update `settings.json`;
 - resolve FFmpeg/ffprobe and save `ffmpegPath` when it discovers or installs a usable FFmpeg;
-- create managed Beat Saber folders under `ControlPanelWorkspace\BeatSaberInstances`;
+- create managed Beat Saber folders under `ControlPanelWorkspace\Instances`;
 - build the control panel, recorder host, ProcessLoopback helper, and worker plugin;
 - deploy the plugin into each managed Beat Saber worker;
 - write `ControlPanelWorkspace\control-panel-state.json`;
@@ -66,6 +71,8 @@ Edit `settings.json` when you want defaults to stick between launches. Common va
   "preset": "4k-monitor-2x2",
   "bindUrl": "http://127.0.0.1:5770",
   "workspaceDirectory": "ControlPanelWorkspace",
+  "beatSaberInstancesRoot": "ControlPanelWorkspace/Instances",
+  "beatSaberInstanceNamePrefix": "I-",
   "instanceCount": 3,
   "maxConcurrentRecordings": 3,
   "sourceBeatSaberPath": "",
@@ -147,7 +154,7 @@ ControlPanelWorkspace/
   control-panel-state.json
   Queue/
   Recordings/
-  BeatSaberInstances/
+  Instances/
   SharedSongs/
   SharedContent/
   recorder-host-5757.settings.json
