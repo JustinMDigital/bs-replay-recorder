@@ -291,7 +291,11 @@ function Assert-ValidPathArgument {
 function Test-SwitchLikeArgument {
     param([string]$Value)
 
-    return -not [string]::IsNullOrWhiteSpace($Value) -and $Value.TrimStart().StartsWith("-")
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    return $Value.TrimStart().StartsWith("-")
 }
 
 function Resolve-StartFfmpegPath {
@@ -964,7 +968,76 @@ function Resolve-SetDpiToolPath {
     return ""
 }
 
-function Disable-DisplayScaleIfHelperMissing {
+function Install-SetDpiHelperFromGitHub {
+    $targetPath = Join-Path $RepoRoot "tools\SetDpi\SetDpi.exe"
+    $temporaryPath = Join-Path ([IO.Path]::GetTempPath()) ("bsarr-SetDpi-" + [Guid]::NewGuid().ToString("N") + ".exe")
+
+    try {
+        Write-Step "Downloading SetDpi.exe from imniko/SetDPI latest GitHub release..."
+        $release = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/imniko/SetDPI/releases/latest" `
+            -Headers @{ "User-Agent" = "bs-replay-recorder-installer" } `
+            -TimeoutSec 30
+        $asset = @($release.assets | Where-Object { [string]::Equals($_.name, "SetDpi.exe", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1)
+        if ($asset.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$asset[0].browser_download_url)) {
+            Write-Step "The latest SetDPI release did not include SetDpi.exe."
+            return ""
+        }
+
+        Invoke-WebRequest `
+            -Uri ([string]$asset[0].browser_download_url) `
+            -OutFile $temporaryPath `
+            -UseBasicParsing `
+            -TimeoutSec 60
+
+        if (-not (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
+            Write-Step "SetDpi.exe download did not create a file."
+            return ""
+        }
+
+        New-Item -ItemType Directory -Path (Split-Path -Parent $targetPath) -Force | Out-Null
+        Copy-Item -LiteralPath $temporaryPath -Destination $targetPath -Force
+        Write-Step "Installed display scaling helper: $targetPath"
+        return $targetPath
+    }
+    catch {
+        Write-Step "Could not download SetDpi.exe automatically: $($_.Exception.Message)"
+        return ""
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Install-SetDpiHelperFromPath {
+    while ($true) {
+        $answer = Read-Host "Paste the full path to SetDpi.exe, or press Enter to disable display scaling"
+        if ([string]::IsNullOrWhiteSpace($answer)) {
+            return ""
+        }
+
+        $sourcePath = Resolve-RepoRelativePath $answer
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            Write-Step "SetDpi.exe was not found at: $sourcePath"
+            continue
+        }
+
+        if (-not [string]::Equals([IO.Path]::GetFileName($sourcePath), "SetDpi.exe", [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Step "Choose the SetDpi.exe file."
+            continue
+        }
+
+        $targetPath = Join-Path $RepoRoot "tools\SetDpi\SetDpi.exe"
+        New-Item -ItemType Directory -Path (Split-Path -Parent $targetPath) -Force | Out-Null
+        Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+        Write-Step "Installed display scaling helper: $targetPath"
+        return $targetPath
+    }
+}
+
+function Install-SetDpiHelperIfWanted {
     param([object]$PresetSettings)
 
     if (-not [bool]$PresetSettings.ManageDisplayScale) {
@@ -973,6 +1046,18 @@ function Disable-DisplayScaleIfHelperMissing {
 
     if (-not [string]::IsNullOrWhiteSpace((Resolve-SetDpiToolPath))) {
         return ""
+    }
+
+    if (-not $Force -and (Confirm-Step -Prompt "Display scaling helper SetDpi.exe was not found. Download and install it now? If no, display scaling is disabled." -DefaultYes)) {
+        $installedPath = Install-SetDpiHelperFromGitHub
+        if ([string]::IsNullOrWhiteSpace($installedPath)) {
+            Write-Step "Automatic SetDpi.exe download failed. You can paste a local SetDpi.exe path instead."
+            $installedPath = Install-SetDpiHelperFromPath
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($installedPath)) {
+            return ""
+        }
     }
 
     $PresetSettings.ManageDisplayScale = $false
@@ -1655,7 +1740,7 @@ try {
     Apply-PresetSettingsOverrides -PresetSettings $presetSettings
     $selectedInstanceCount = Resolve-InstanceCount -PresetSettings $presetSettings
     Set-PresetInstanceCount -PresetSettings $presetSettings -SelectedInstanceCount $selectedInstanceCount
-    $displayScaleNotice = Disable-DisplayScaleIfHelperMissing -PresetSettings $presetSettings
+    $displayScaleNotice = Install-SetDpiHelperIfWanted -PresetSettings $presetSettings
     if (-not [string]::IsNullOrWhiteSpace($displayScaleNotice)) {
         Write-Step $displayScaleNotice
     }
@@ -1688,20 +1773,49 @@ try {
             throw "Instance 1 is missing and no source Beat Saber install was detected. Re-run with -SourceBeatSaberPath `"C:\Path\To\Beat Saber`" or create the baseline folder first."
         }
 
-        if (-not $CopyInstances) {
-            $CopyInstances = Confirm-Step -Prompt "Create missing Beat Saber instance copies now? This can take a while." -DefaultYes
-        }
-
-        if (-not $CopyInstances) {
-            throw "Install cannot continue until the instance folders exist."
-        }
-
         if ($baselineMissing -and -not $CopyExistingSongsSelected -and -not $Force) {
             $CopyExistingSongsSelected = Confirm-Step -Prompt "Import existing CustomLevels and CustomWIPLevels from the source Beat Saber folder? Recommended: no."
         }
 
         if ($baselineMissing) {
+            Write-Step "Creating required baseline instance at $baselineDirectory."
             Copy-BeatSaberInstance -Source $resolvedSource -Target $baselineDirectory -CopySongs:$CopyExistingSongsSelected
+        }
+
+        $extraMissingDirectories = @($missingDirectories | Where-Object {
+            -not [string]::Equals([IO.Path]::GetFullPath($_), [IO.Path]::GetFullPath($baselineDirectory), [StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($extraMissingDirectories.Count -gt 0 -and -not $CopyInstances) {
+            $CopyInstances = Confirm-Step -Prompt "Create extra Beat Saber instance copies now? If no, install will continue with one instance." -DefaultYes
+        }
+
+        if ($CopyInstances) {
+            foreach ($target in $extraMissingDirectories) {
+                Copy-BeatSaberInstance -Source $baselineDirectory -Target $target
+            }
+        }
+        elseif ($extraMissingDirectories.Count -gt 0) {
+            Write-Step "Continuing with the required baseline instance only."
+        }
+
+        $readyInstanceDirectories = @()
+        foreach ($target in $instanceDirectories) {
+            if (Test-Path (Join-Path $target "Beat Saber.exe")) {
+                $readyInstanceDirectories += $target
+            }
+        }
+
+        if ($readyInstanceDirectories.Count -lt 1) {
+            throw "Install could not create the required baseline instance."
+        }
+
+        if ($readyInstanceDirectories.Count -lt $presetSettings.InstanceCount) {
+            Set-PresetInstanceCount -PresetSettings $presetSettings -SelectedInstanceCount $readyInstanceDirectories.Count
+            $instanceDirectories = @()
+            for ($index = 0; $index -lt $presetSettings.InstanceCount; $index++) {
+                $instanceDirectories += Get-InstanceDirectory -Index $index
+            }
+            Write-Step "Adjusted install state to $($presetSettings.InstanceCount) ready instance(s)."
         }
 
         foreach ($target in $missingDirectories) {
@@ -1709,7 +1823,9 @@ try {
                 continue
             }
 
-            Copy-BeatSaberInstance -Source $baselineDirectory -Target $target
+            if (-not (Test-Path (Join-Path $target "Beat Saber.exe"))) {
+                Write-Step "Instance not created: $target"
+            }
         }
     }
 
@@ -1774,13 +1890,6 @@ try {
     $startArgs = @()
     if ($NoBrowser) {
         $startArgs += "-NoBrowser"
-    }
-
-    $startFfmpegPath = Resolve-StartFfmpegPath
-    Assert-ValidPathArgument -ParameterName "FfmpegPath" -Value $startFfmpegPath
-    if (-not [string]::IsNullOrWhiteSpace($startFfmpegPath)) {
-        $startArgs += "-FfmpegPath"
-        $startArgs += $startFfmpegPath
     }
 
     & $StartScript @startArgs

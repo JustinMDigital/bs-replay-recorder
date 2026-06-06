@@ -330,6 +330,40 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
 
     AssertEqual(false, File.Exists(Path.Combine(upgradeInstancesRoot, "Managed I-2", "Beat Saber_Data", "CustomLevels", "source-song.txt")), "expanded missing instance skips CustomLevels");
 
+    var renamedPrefixInstancesRoot = Path.Combine(workspace, "RenamedPrefixInstances");
+    var renamedPrefixPluginInstaller = new FakeWorkerPluginInstaller();
+    var renamedPrefixStore = CreateStore(
+        Path.Combine(workspace, "renamed-prefix-workspace"),
+        renamedPrefixInstancesRoot,
+        "I-",
+        instanceCount: 1,
+        maxConcurrentRecordings: 1,
+        workerPluginInstaller: renamedPrefixPluginInstaller);
+    var renamedPrefixInitialState = renamedPrefixStore.ProvisionManagedInstances(new InstanceProvisionRequest
+    {
+        SourceBeatSaberPath = sourceDirectory,
+        InstanceCount = 1
+    });
+    AssertEqual(true, renamedPrefixInitialState.Instances[0].LaunchDirectoryReady, "renamed prefix baseline starts ready");
+
+    var renamedPrefixRequest = CreateSettingsUpdateRequest(renamedPrefixInitialState.Settings);
+    renamedPrefixRequest.InstanceCount = 3;
+    renamedPrefixRequest.MaxConcurrentRecordings = 3;
+    renamedPrefixRequest.BeatSaberInstanceNamePrefix = "BSARR I-";
+    var renamedPrefixPendingState = renamedPrefixStore.UpdateSettings(renamedPrefixRequest);
+    AssertEqual(true, renamedPrefixPendingState.Instances[0].LaunchDirectoryReady, "renamed prefix keeps old baseline ready");
+    AssertEqual(Path.GetFullPath(Path.Combine(renamedPrefixInstancesRoot, "I-1")), renamedPrefixPendingState.Instances[0].LaunchDirectory, "renamed prefix baseline directory adopted");
+
+    var renamedPrefixExpandedState = renamedPrefixStore.ProvisionManagedInstances(new InstanceProvisionRequest
+    {
+        InstanceCount = 3,
+        CreateMissingOnly = true
+    });
+    AssertEqual(3, renamedPrefixExpandedState.InstanceProvision.CreatedInstanceCount, "renamed prefix expansion created count");
+    AssertEqual(true, File.Exists(Path.Combine(renamedPrefixInstancesRoot, "I-1", "Beat Saber.exe")), "renamed prefix keeps old baseline folder");
+    AssertEqual(true, File.Exists(Path.Combine(renamedPrefixInstancesRoot, "BSARR I-2", "Beat Saber.exe")), "renamed prefix creates second with new prefix");
+    AssertEqual(true, File.Exists(Path.Combine(renamedPrefixInstancesRoot, "BSARR I-3", "Beat Saber.exe")), "renamed prefix creates third with new prefix");
+
     AssertThrows<InvalidOperationException>(
         () => upgradeStore.RemoveManagedInstance(0),
         "remove refuses non-last instance");

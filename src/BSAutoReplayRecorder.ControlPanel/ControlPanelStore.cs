@@ -1862,7 +1862,7 @@ public sealed class ControlPanelStore
             }
 
             instance.OutputDirectory = outputDirectory;
-            instance.LaunchDirectory = CreateLaunchDirectory(index);
+            instance.LaunchDirectory = ResolveManagedLaunchDirectory(instance, index);
             instance.LaunchDirectoryReady = IsManagedInstanceReady(instance);
             instance.LaunchArguments = _state.Settings.BeatSaberLaunchArguments;
             instances.Add(instance);
@@ -1914,8 +1914,13 @@ public sealed class ControlPanelStore
 
     private static bool IsManagedInstanceReady(WorkerInstanceRecord instance)
     {
-        return !string.IsNullOrWhiteSpace(instance.LaunchDirectory) &&
-               File.Exists(Path.Combine(instance.LaunchDirectory, BeatSaberExecutableName));
+        return IsManagedInstanceReady(instance.LaunchDirectory);
+    }
+
+    private static bool IsManagedInstanceReady(string? launchDirectory)
+    {
+        return !string.IsNullOrWhiteSpace(launchDirectory) &&
+               File.Exists(Path.Combine(launchDirectory, BeatSaberExecutableName));
     }
 
     private bool SynchronizeMaxConcurrentRecordingsNoLock()
@@ -2572,6 +2577,51 @@ public sealed class ControlPanelStore
         return Path.Combine(
             _state.Settings.BeatSaberInstancesRoot,
             _state.Settings.BeatSaberInstanceNamePrefix + (index + 1));
+    }
+
+    private string ResolveManagedLaunchDirectory(WorkerInstanceRecord instance, int index)
+    {
+        var targetRootDirectory = Path.GetFullPath(_state.Settings.BeatSaberInstancesRoot);
+        var desiredDirectory = Path.GetFullPath(CreateLaunchDirectory(index));
+        if (IsManagedInstanceReady(desiredDirectory))
+        {
+            return desiredDirectory;
+        }
+
+        var existingDirectory = NormalizeNullable(instance.LaunchDirectory);
+        if (existingDirectory != null)
+        {
+            existingDirectory = Path.GetFullPath(existingDirectory);
+            if (IsPathInsideDirectory(existingDirectory, targetRootDirectory) &&
+                IsManagedInstanceReady(existingDirectory))
+            {
+                return existingDirectory;
+            }
+        }
+
+        var legacyDirectory = Path.Combine(targetRootDirectory, "I-" + (index + 1));
+        if (IsManagedInstanceReady(legacyDirectory))
+        {
+            return legacyDirectory;
+        }
+
+        if (!Directory.Exists(targetRootDirectory))
+        {
+            return desiredDirectory;
+        }
+
+        var suffix = (index + 1).ToString(CultureInfo.InvariantCulture);
+        foreach (var candidate in Directory.EnumerateDirectories(targetRootDirectory).OrderBy(path => path))
+        {
+            var name = Path.GetFileName(candidate.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) &&
+                IsManagedInstanceReady(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return desiredDirectory;
     }
 
     private string CreateManagedInstanceName(int index)

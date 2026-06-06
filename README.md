@@ -48,6 +48,7 @@ During install, you may be asked for:
 - FFmpeg. Press Enter to retry detection, accept the WinGet install prompt, or paste a path to `ffmpeg.exe`. The selected FFmpeg install must also include `ffprobe.exe`, normally in the same folder.
 - the Beat Saber source folder. Press Enter to use the detected Steam install, or paste another folder that contains `Beat Saber.exe`.
 - the number of managed Beat Saber workers to create. The default is 3. Choose 1 for the simplest first test, or 2-4 for parallel recording.
+- the display scaling helper. If `tools\SetDpi\SetDpi.exe` is missing, the installer can download `SetDpi.exe` from the latest `imniko/SetDPI` GitHub release; if that fails, you can paste a local path or keep display scaling disabled.
 - whether to create missing managed copies. Say yes for a new install.
 - whether to import existing `CustomLevels` and `CustomWIPLevels`. The recommended answer is no unless you intentionally want to copy those songs into the recorder's shared-song layout.
 - whether to repair shared song/content folder links. Say yes unless you are deliberately managing those folders yourself.

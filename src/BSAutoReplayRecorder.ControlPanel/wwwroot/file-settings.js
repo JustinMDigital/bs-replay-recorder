@@ -2,7 +2,7 @@ let state = null;
 let toastTimeout = null;
 let settingsDirty = false;
 let isRendering = false;
-const managedInstanceNamePrefix = 'BSARR I-';
+const managedInstanceNamePrefix = 'I-';
 
 async function loadState() {
   const response = await fetch('/api/state');

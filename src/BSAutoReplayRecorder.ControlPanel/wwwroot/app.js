@@ -29,7 +29,7 @@ const windowed4kLaunchArguments = '-screen-fullscreen 0 -screen-width 3840 -scre
 const minManagedInstanceCount = 1;
 const maxManagedInstanceCount = 4;
 const visibleManagedInstanceSlots = maxManagedInstanceCount;
-const managedInstanceNamePrefix = 'BSARR I-';
+const managedInstanceNamePrefix = 'I-';
 const launchPresets = {
   '4k-monitor-2x2': {
     instanceCount: 4,
