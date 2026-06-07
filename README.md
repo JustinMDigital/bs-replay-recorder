@@ -7,6 +7,10 @@
 ## Record batches of BeatLeader and ScoreSaber replays from a local browser control panel.
 ### Tested with 1.40.6, Plugin built for 1.40.8, 1.39.1
 
+
+<img src="https://i.imgur.com/5s6LgI6.jpeg" alt="Control Panel" width="500"> <img src="https://i.imgur.com/8fZzt8g.jpeg" alt="Gameplay" width="500">
+
+
 This project runs one or more managed Beat Saber worker copies, plays each replay through BeatLeader or ScoreSaber, records the game window with FFmpeg, captures that Beat Saber process's audio, sync-corrects the result, and writes finished video files to a local recordings folder.
 
 The normal user flow is:
