@@ -46,7 +46,7 @@ From the repo root:
 install.bat
 ```
 
-The installer creates a local `settings.json` from `settings.example.json` if one does not already exist. That local file is ignored by git and is where machine-specific values live.
+The installer creates a local `settings.json` from `settings.example.json` if one does not already exist.
 
 During install, you may be asked for:
 
