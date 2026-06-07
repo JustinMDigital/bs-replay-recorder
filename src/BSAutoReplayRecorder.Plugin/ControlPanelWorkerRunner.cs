@@ -1,30 +1,36 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using BeatLeader.Replayer;
+using UnityEngine;
 using BSAutoReplayRecorder.Core;
+using BSAutoReplayRecorder.Core.Playback;
 using BSAutoReplayRecorder.Core.Replay;
 using BSAutoReplayRecorder.Core.Utility;
-using IPA.Logging;
 using IPA.Utilities.Async;
 using Newtonsoft.Json;
+using Logger = IPA.Logging.Logger;
 
 namespace BSAutoReplayRecorder.Plugin;
 
 public sealed class ControlPanelWorkerRunner : IDisposable
 {
+    private const double MaximumIdleShutdownMinutes = 7 * 24 * 60;
     private readonly BatchRecorderSettings _settings;
     private readonly Logger _logger;
     private readonly Action<string>? _persistWorkerId;
     private readonly Action<string>? _statusChanged;
     private CancellationTokenSource? _cancellation;
     private Task? _task;
+    private Task? _idleShutdownTask;
     private bool _disposed;
     private int _appliedGamePresentationSettingsVersion;
     private string _gamePresentationSyncStatus = "Pending";
     private string? _gamePresentationSyncError;
+    private long _lastControlPanelContactUtcTicks;
+    private int _idleShutdownRequested;
 
     public ControlPanelWorkerRunner(
         BatchRecorderSettings settings,
@@ -36,6 +42,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _persistWorkerId = persistWorkerId;
         _statusChanged = statusChanged;
+        _lastControlPanelContactUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
     }
 
     public void Start(CancellationToken shutdownToken)
@@ -47,6 +54,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
 
         _cancellation = CancellationTokenSource.CreateLinkedTokenSource(shutdownToken);
         _task = Task.Run(() => RunUntilCanceledAsync(_cancellation.Token), _cancellation.Token);
+        _idleShutdownTask = Task.Run(() => RunIdleShutdownAsync(_cancellation.Token), _cancellation.Token);
     }
 
     public void Dispose()
@@ -59,31 +67,43 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         _disposed = true;
         _cancellation?.Cancel();
         _cancellation?.Dispose();
+        _idleShutdownTask = null;
     }
 
     private async Task RunUntilCanceledAsync(CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        var idleShutdownTask = _idleShutdownTask;
+        try
         {
-            try
+            while (!cancellationToken.IsCancellationRequested)
             {
-                await RunConnectedLoopAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await RunConnectedLoopAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("Control panel worker disconnected: " + ex.Message);
+                    SetStatus("Control panel disconnected");
+                    RecordingStatusOverlay.SetStatusPanelVisible(true);
+                    RecordingStatusOverlay.ShowToast(
+                        "Control panel disconnected",
+                        ex.Message,
+                        TimeSpan.FromSeconds(8),
+                        isError: true);
+                    await DelayIgnoringCancellationAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+                }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        }
+        finally
+        {
+            if (idleShutdownTask != null)
             {
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn("Control panel worker disconnected: " + ex.Message);
-                SetStatus("Control panel disconnected");
-                RecordingStatusOverlay.SetStatusPanelVisible(true);
-                RecordingStatusOverlay.ShowToast(
-                    "Control panel disconnected",
-                    ex.Message,
-                    TimeSpan.FromSeconds(8),
-                    isError: true);
-                await DelayIgnoringCancellationAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+                await ObserveTaskAsync(idleShutdownTask).ConfigureAwait(false);
             }
         }
     }
@@ -115,6 +135,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
                     await HandleHeartbeatResponseAsync(heartbeat, cancellationToken).ConfigureAwait(false);
                     ShowConnectedStatus(registration.InstanceIndex, heartbeat.Progress);
                     nextHeartbeat = now + _settings.ControlPanelWorker.HeartbeatInterval;
+                    RecordControlPanelContact();
                 }
 
                 var assignment = await client.GetAssignmentAsync(workerId, cancellationToken).ConfigureAwait(false);
@@ -160,6 +181,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
 
         _logger.Info("Control panel worker registered as " + response.WorkerId +
                      " on instance " + (response.InstanceIndex + 1) + ".");
+        RecordControlPanelContact();
         return response;
     }
 
@@ -177,6 +199,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         SetStatus("Recording assignment");
         RecordingStatusOverlay.Clear();
         RecordingStatusOverlay.SetStatusPanelVisible(false);
+        RecordControlPanelContact();
 
         await client.ReportAsync(
             new ControlPanelWorkerReportRequest
@@ -204,6 +227,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
                 var result = await ExecuteAssignmentAsync(assignment, assignmentCancellation.Token).ConfigureAwait(false);
                 heartbeatCancellation.Cancel();
                 await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
+                RecordControlPanelContact();
 
                 await client.ReportAsync(
                     new ControlPanelWorkerReportRequest
@@ -213,6 +237,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
                         Status = result.Succeeded ? "Completed" : "Failed",
                         OutputPath = result.OutputPath,
                         Error = result.Error,
+                        Warning = result.Warning,
                         SyncStatus = result.SyncStatus,
                         SyncCorrectionMilliseconds = result.SyncCorrectionMilliseconds,
                         TrimStartSeconds = result.TrimStartSeconds,
@@ -242,12 +267,14 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             {
                 heartbeatCancellation.Cancel();
                 await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
+                RecordControlPanelContact();
                 throw;
             }
             catch (OperationCanceledException) when (assignmentCancellation.IsCancellationRequested)
             {
                 heartbeatCancellation.Cancel();
                 await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
+                RecordControlPanelContact();
 
                 var reason = "Assignment canceled by control panel.";
                 _logger.Warn(reason);
@@ -272,6 +299,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             {
                 heartbeatCancellation.Cancel();
                 await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
+                RecordControlPanelContact();
 
                 _logger.Error("Control panel assignment failed: " + ex);
                 await client.ReportAsync(
@@ -327,6 +355,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         ControlPanelWorkerHeartbeatResponse response,
         CancellationToken cancellationToken)
     {
+        RecordControlPanelContact();
         await ApplyGamePresentationSettingsAsync(
             response.GamePresentationSettingsVersion,
             response.GamePresentation,
@@ -358,8 +387,15 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             throw new FileNotFoundException("Assigned replay file was not found.", replayPath);
         }
 
-        var replayInfo = new BsorInfoReader().Read(replayPath);
-        var item = new ReplayQueueItem(1, replayPath, replayInfo);
+        var replayInfo = CreateReplayInfo(assignment, replayPath);
+        var item = new ReplayQueueItem(
+            1,
+            replayPath,
+            replayInfo,
+            assignment.Provider == ReplayProvider.Unknown ? ResolveProviderFromPath(replayPath) : assignment.Provider,
+            assignment.ReferenceKind == ReplayReferenceKind.Unknown ? ResolveReferenceKindFromPath(replayPath) : assignment.ReferenceKind,
+            NormalizeNullable(assignment.SourceUrl),
+            NormalizeNullable(assignment.ScoreId));
         var outputBaseName = NormalizeNullable(assignment.OutputBaseName) ??
                              FileNameSanitizer.SanitizeBaseName(
                                  "control-panel - " + replayInfo.SongName + " [" + replayInfo.Difficulty + "]");
@@ -372,15 +408,104 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         var assignmentSettings = CreateAssignmentSettings(assignment);
 
         using (var recordingBackend = RecorderBackendFactory.Create(assignmentSettings, _logger))
+        using (var scoreSubmissionDisabler = ResolveAssignmentBoolValue(
+                   assignment.DisableScoreSubmissions,
+                   assignmentSettings.DisableScoreSubmissions)
+                   ? ScoreSubmissionDisabler.Install(_logger)
+                   : null)
         {
             var runner = new BatchRecordingRunner(
                 assignmentSettings,
-                new BeatLeaderReplayPlaybackDriver(_logger),
+                CreatePlaybackDrivers(assignmentSettings.SuppressScoreSaberReplayUi),
                 recordingBackend,
                 _logger);
 
             return await runner.RunSingleAsync(plan, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static BsorInfo CreateReplayInfo(ControlPanelWorkerAssignmentResponse assignment, string replayPath)
+    {
+        var provider = assignment.Provider == ReplayProvider.Unknown
+            ? ResolveProviderFromPath(replayPath)
+            : assignment.Provider;
+
+        BsorInfo info;
+        if (provider == ReplayProvider.ScoreSaber2)
+        {
+            info = new ScoreSaberReplayInfoReader().Read(replayPath);
+        }
+        else
+        {
+            info = new BsorInfoReader().Read(replayPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(assignment.SongName))
+        {
+            info.SongName = assignment.SongName!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(assignment.Mapper))
+        {
+            info.Mapper = assignment.Mapper!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(assignment.PlayerName))
+        {
+            info.PlayerName = assignment.PlayerName!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(assignment.Difficulty))
+        {
+            info.Difficulty = assignment.Difficulty!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(assignment.Mode))
+        {
+            info.Mode = assignment.Mode!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(assignment.LevelHash))
+        {
+            info.LevelHash = assignment.LevelHash!;
+        }
+
+        if (assignment.EstimatedSeconds > 0)
+        {
+            info.LastFrameTime = (float)assignment.EstimatedSeconds;
+            info.StartTime = 0;
+            info.Speed = 1;
+        }
+
+        return info;
+    }
+
+    private static bool ResolveAssignmentBoolValue(bool? assignmentValue, bool defaultValue)
+    {
+        return assignmentValue ?? defaultValue;
+    }
+
+    private IReadOnlyList<IReplayPlaybackDriver> CreatePlaybackDrivers(bool suppressScoreSaberReplayUi)
+    {
+        return new IReplayPlaybackDriver[]
+        {
+            new BeatLeaderReplayPlaybackDriver(_logger),
+            new ScoreSaberReplayPlaybackDriver(_logger, suppressScoreSaberReplayUi)
+        };
+    }
+
+    private static ReplayProvider ResolveProviderFromPath(string replayPath)
+    {
+        return string.Equals(Path.GetExtension(replayPath), ".dat", StringComparison.OrdinalIgnoreCase)
+            ? ReplayProvider.ScoreSaber2
+            : ReplayProvider.BeatLeader;
+    }
+
+    private static ReplayReferenceKind ResolveReferenceKindFromPath(string replayPath)
+    {
+        return string.Equals(Path.GetExtension(replayPath), ".dat", StringComparison.OrdinalIgnoreCase)
+            ? ReplayReferenceKind.LocalScoreSaberDatFile
+            : ReplayReferenceKind.LocalBsorFile;
     }
 
     private BatchRecorderSettings CreateAssignmentSettings(ControlPanelWorkerAssignmentResponse assignment)
@@ -423,12 +548,107 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             clone.DelayBetweenRecordingsSeconds = Math.Min(30, assignment.DelayBetweenRecordingsSeconds);
         }
 
+        clone.DisableScoreSubmissions = true;
+        clone.SuppressScoreSaberReplayUi = true;
+
         if (assignment.LagSpikeStartupGraceSeconds.HasValue)
         {
             clone.LagSpikeStartupGraceSeconds = Math.Min(30, Math.Max(0, assignment.LagSpikeStartupGraceSeconds.Value));
         }
 
         return clone;
+    }
+
+    private async Task RunIdleShutdownAsync(CancellationToken cancellationToken)
+    {
+        var timeout = GetIdleShutdownTimeout();
+        if (timeout <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var elapsed = DateTimeOffset.UtcNow - GetLastControlPanelContact();
+            if (elapsed >= timeout)
+            {
+                await RequestGameShutdownAfterIdleAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var delay = timeout - elapsed;
+            await DelayIgnoringCancellationAsync(delay, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task RequestGameShutdownAfterIdleAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.CompareExchange(ref _idleShutdownRequested, 1, 0) != 0)
+        {
+            return;
+        }
+
+        var timeout = GetIdleShutdownTimeout();
+        _logger.Warn(
+            "No control panel heartbeat for " + FormatTimeout(timeout) + "; shutting down game worker.");
+        SetStatus("Control panel offline; shutting down");
+        RecordingStatusOverlay.ShowToast(
+            "Control panel offline",
+            "No control panel heartbeat for " + FormatTimeout(timeout) + ". Closing game.",
+            TimeSpan.FromSeconds(12),
+            isError: true);
+
+        await UnityMainThreadTaskScheduler.Factory.StartNew(
+            () =>
+            {
+                if (cancellationToken.IsCancellationRequested || _disposed)
+                {
+                    return;
+                }
+
+                RequestLeaveActiveReplay();
+                Application.Quit();
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private void RequestLeaveActiveReplay()
+    {
+        try
+        {
+            ActiveReplayTerminator.RequestLeaveActiveReplay(_logger);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to request active replay exit during idle shutdown: " + ex);
+        }
+    }
+
+    private DateTimeOffset GetLastControlPanelContact()
+    {
+        return new DateTimeOffset(Interlocked.Read(ref _lastControlPanelContactUtcTicks), TimeSpan.Zero);
+    }
+
+    private void RecordControlPanelContact()
+    {
+        Interlocked.Exchange(ref _lastControlPanelContactUtcTicks, DateTimeOffset.UtcNow.UtcTicks);
+    }
+
+    private TimeSpan GetIdleShutdownTimeout()
+    {
+        var value = _settings.ControlPanelWorker.IdleShutdownMinutes;
+        if (double.IsNaN(value) || double.IsInfinity(value) || value <= 0)
+        {
+            return TimeSpan.Zero;
+        }
+
+        return TimeSpan.FromMinutes(Math.Min(value, MaximumIdleShutdownMinutes));
+    }
+
+    private static string FormatTimeout(TimeSpan timeout)
+    {
+        var minutes = (int)timeout.TotalMinutes;
+        return minutes + " minute" + (minutes == 1 ? "" : "s");
     }
 
     private void SetStatus(string status)

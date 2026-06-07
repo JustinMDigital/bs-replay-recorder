@@ -20,7 +20,7 @@ public sealed class RecorderHostSettings
 
     public bool OverwriteExisting { get; set; }
 
-    public double StopTimeoutSeconds { get; set; } = 10;
+    public double StopTimeoutSeconds { get; set; } = 30;
 
     public int StartupProbeMilliseconds { get; set; } = 500;
 
@@ -127,7 +127,7 @@ public sealed class RecorderHostSettings
 
         if (StopTimeoutSeconds <= 0)
         {
-            StopTimeoutSeconds = 10;
+            StopTimeoutSeconds = 30;
         }
 
         if (StartupProbeMilliseconds < 0)

@@ -529,7 +529,7 @@ function Ensure-RecorderHostConfig {
         outputDirectory = $OutputDirectory
         outputExtension = ".$outputFormat"
         overwriteExisting = $false
-        stopTimeoutSeconds = 10
+        stopTimeoutSeconds = 30
         startupProbeMilliseconds = 500
         defaultWindowTitle = "Beat Saber"
         defaultTargetFps = [int]$CaptureDefaults.targetFps
@@ -553,6 +553,7 @@ function Ensure-RecorderHostConfig {
             $existing.bindUrl = "http://127.0.0.1:$Port"
             $existing.ffmpegPath = $ResolvedFfmpegPath
             $existing | Add-Member -NotePropertyName "processLoopbackCapturePath" -NotePropertyValue $processLoopbackCapturePath -Force
+            $existing | Add-Member -NotePropertyName "stopTimeoutSeconds" -NotePropertyValue 30 -Force
             $existing.outputDirectory = $OutputDirectory
             $existing | Add-Member -NotePropertyName "outputExtension" -NotePropertyValue ".$outputFormat" -Force
             $existing | Add-Member -NotePropertyName "defaultTargetFps" -NotePropertyValue ([int]$CaptureDefaults.targetFps) -Force

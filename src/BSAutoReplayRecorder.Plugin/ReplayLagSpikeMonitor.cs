@@ -43,12 +43,12 @@ internal sealed class ReplayLagSpikeMonitor : IDisposable
         _behaviour?.StartMonitoring();
     }
 
-    public async Task WaitForLagSpikeAsync(CancellationToken cancellationToken)
+    public async Task<LagSpikeDetectedException?> WaitForLagSpikeAsync(CancellationToken cancellationToken)
     {
         if (_behaviour == null)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-            return;
+            return null;
         }
 
         var spikeTask = _behaviour.SpikeDetectedTask;
@@ -56,10 +56,18 @@ internal sealed class ReplayLagSpikeMonitor : IDisposable
         var completed = await Task.WhenAny(spikeTask, cancellationTask).ConfigureAwait(false);
         if (completed == spikeTask)
         {
-            throw await spikeTask.ConfigureAwait(false);
+            try
+            {
+                return await spikeTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        return null;
     }
 
     public void ThrowIfLagSpikeDetected()

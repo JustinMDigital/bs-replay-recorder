@@ -21,6 +21,7 @@ builder.WebHost.UseUrls(settings.BindUrl);
 builder.Services.AddSingleton(settings);
 builder.Services.AddSingleton<IRecordingAudioVerifier, FfprobeRecordingAudioVerifier>();
 builder.Services.AddSingleton<IBeatSaverMapDownloader>(_ => new BeatSaverMapDownloader(new HttpClient()));
+builder.Services.AddSingleton<IScoreSaberReplayDownloader>(_ => new ScoreSaberReplayDownloader(new HttpClient()));
 builder.Services.AddSingleton<IDisplayInfoProvider, WindowsDisplayInfoProvider>();
 builder.Services.AddSingleton<ControlPanelStore>();
 builder.Services.AddSingleton<IStackShutdownLauncher, StopScriptShutdownLauncher>();
@@ -48,6 +49,11 @@ app.MapPost("/api/replays/import", async (HttpRequest request, ControlPanelStore
 
     var form = await request.ReadFormAsync().ConfigureAwait(false);
     var imported = store.ImportFiles(form.Files);
+    return Results.Ok(new { count = imported.Count, state = store.Snapshot() });
+});
+app.MapPost("/api/replays/import-references", async (ReplayReferenceImportRequest request, ControlPanelStore store, CancellationToken cancellationToken) =>
+{
+    var imported = await store.ImportReferencesAsync(request, cancellationToken).ConfigureAwait(false);
     return Results.Ok(new { count = imported.Count, state = store.Snapshot() });
 });
 

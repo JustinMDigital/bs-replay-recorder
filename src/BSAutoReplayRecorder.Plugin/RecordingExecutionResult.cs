@@ -6,6 +6,7 @@ public sealed class RecordingExecutionResult
         bool succeeded,
         string? outputPath,
         string? error,
+        string? warning,
         string? syncStatus = null,
         double? syncCorrectionMilliseconds = null,
         double? trimStartSeconds = null,
@@ -14,6 +15,7 @@ public sealed class RecordingExecutionResult
         Succeeded = succeeded;
         OutputPath = outputPath;
         Error = error;
+        Warning = warning;
         SyncStatus = syncStatus;
         SyncCorrectionMilliseconds = syncCorrectionMilliseconds;
         TrimStartSeconds = trimStartSeconds;
@@ -25,6 +27,8 @@ public sealed class RecordingExecutionResult
     public string? OutputPath { get; }
 
     public string? Error { get; }
+
+    public string? Warning { get; }
 
     public string? SyncStatus { get; }
 

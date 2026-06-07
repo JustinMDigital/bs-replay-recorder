@@ -35,6 +35,16 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
                replayReference.LocalPath != null;
     }
 
+    public IReplayPlaybackWait CreateStartWait()
+    {
+        return new ReplayStartWait();
+    }
+
+    public IReplayPlaybackWait CreateFinishWait()
+    {
+        return new ReplayFinishWait();
+    }
+
     public async Task<ReplayPlaybackSession> StartReplayAsync(
         ReplayQueueItem queueItem,
         ReplayReference replayReference,
@@ -223,5 +233,71 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
         }
 
         return loader;
+    }
+
+    private sealed class ReplayStartWait : IReplayPlaybackWait
+    {
+        private readonly TaskCompletionSource<DateTimeOffset> _completion = new TaskCompletionSource<DateTimeOffset>();
+
+        public ReplayStartWait()
+        {
+            ReplayerLauncher.ReplayWasStartedEvent += HandleReplayStarted;
+        }
+
+        public async Task<DateTimeOffset?> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            var timeoutTask = Task.Delay(timeout, cancellationToken);
+            var completed = await Task.WhenAny(_completion.Task, timeoutTask).ConfigureAwait(false);
+            if (completed == _completion.Task)
+            {
+                return await _completion.Task.ConfigureAwait(false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return null;
+        }
+
+        public void Dispose()
+        {
+            ReplayerLauncher.ReplayWasStartedEvent -= HandleReplayStarted;
+        }
+
+        private void HandleReplayStarted(ReplayLaunchData launchData)
+        {
+            _completion.TrySetResult(DateTimeOffset.UtcNow);
+        }
+    }
+
+    private sealed class ReplayFinishWait : IReplayPlaybackWait
+    {
+        private readonly TaskCompletionSource<DateTimeOffset> _completion = new TaskCompletionSource<DateTimeOffset>();
+
+        public ReplayFinishWait()
+        {
+            ReplayerLauncher.ReplayWasFinishedEvent += HandleReplayFinished;
+        }
+
+        public async Task<DateTimeOffset?> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            var timeoutTask = Task.Delay(timeout, cancellationToken);
+            var completed = await Task.WhenAny(_completion.Task, timeoutTask).ConfigureAwait(false);
+            if (completed == _completion.Task)
+            {
+                return await _completion.Task.ConfigureAwait(false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new TimeoutException("Timed out waiting for BeatLeader replay to finish.");
+        }
+
+        public void Dispose()
+        {
+            ReplayerLauncher.ReplayWasFinishedEvent -= HandleReplayFinished;
+        }
+
+        private void HandleReplayFinished(ReplayLaunchData launchData)
+        {
+            _completion.TrySetResult(DateTimeOffset.UtcNow);
+        }
     }
 }

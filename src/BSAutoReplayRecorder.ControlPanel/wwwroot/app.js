@@ -28,6 +28,7 @@ const defaultLaunchArguments = '-screen-fullscreen 0 -screen-width 1920 -screen-
 const windowed720pLaunchArguments = '-screen-fullscreen 0 -screen-width 1280 -screen-height 720 --no-yeet fpfc --verbose';
 const windowed1440pLaunchArguments = '-screen-fullscreen 0 -screen-width 2560 -screen-height 1440 --no-yeet fpfc --verbose';
 const windowed4kLaunchArguments = '-screen-fullscreen 0 -screen-width 3840 -screen-height 2160 --no-yeet fpfc --verbose';
+const windowed5kLaunchArguments = '-screen-fullscreen 0 -screen-width 5120 -screen-height 2880 --no-yeet fpfc --verbose';
 const minManagedInstanceCount = 1;
 const maxManagedInstanceCount = 4;
 const visibleManagedInstanceSlots = maxManagedInstanceCount;
@@ -62,6 +63,38 @@ function formatInstanceDisplayName(instance, fallbackIndex = null) {
 }
 
 const launchPresets = {
+  '5k-monitor-2x2': {
+    instanceCount: 3,
+    maxConcurrentRecordings: 3,
+    targetFps: 60,
+    captureWidth: 2560,
+    captureHeight: 1440,
+    videoBitrateKbps: 18000,
+    outputFormat: 'mkv',
+    encoder: 'h264_nvenc',
+    qualityMode: 'Performance',
+    beatSaberLaunchArguments: windowed5kLaunchArguments,
+    manageDisplayScale: true,
+    recordingDisplayScalePercent: 100,
+    restoreDisplayScalePercent: 150,
+    hideTaskbarDuringRun: true
+  },
+  '720p-monitor-2x2': {
+    instanceCount: 4,
+    maxConcurrentRecordings: 4,
+    targetFps: 60,
+    captureWidth: 1280,
+    captureHeight: 720,
+    videoBitrateKbps: 8000,
+    outputFormat: 'mkv',
+    encoder: 'h264_nvenc',
+    qualityMode: 'Performance',
+    beatSaberLaunchArguments: windowed720pLaunchArguments,
+    manageDisplayScale: true,
+    recordingDisplayScalePercent: 100,
+    restoreDisplayScalePercent: 150,
+    hideTaskbarDuringRun: true
+  },
   '4k-monitor-2x2': {
     instanceCount: 4,
     maxConcurrentRecordings: 4,
@@ -94,6 +127,15 @@ const launchPresets = {
     restoreDisplayScalePercent: 150,
     hideTaskbarDuringRun: true
   },
+  'single-720p': {
+    instanceCount: 1,
+    maxConcurrentRecordings: 1,
+    captureWidth: 1280,
+    captureHeight: 720,
+    beatSaberLaunchArguments: windowed720pLaunchArguments,
+    manageDisplayScale: false,
+    hideTaskbarDuringRun: false
+  },
   'single-1080p': {
     instanceCount: 1,
     maxConcurrentRecordings: 1,
@@ -121,6 +163,15 @@ const launchPresets = {
     manageDisplayScale: false,
     hideTaskbarDuringRun: false
   },
+  'single-5k': {
+    instanceCount: 1,
+    maxConcurrentRecordings: 1,
+    captureWidth: 5120,
+    captureHeight: 2880,
+    beatSaberLaunchArguments: windowed5kLaunchArguments,
+    manageDisplayScale: false,
+    hideTaskbarDuringRun: false
+  },
   'windowed-1080p': {
     captureWidth: 1920,
     captureHeight: 1080,
@@ -133,6 +184,15 @@ const launchPresets = {
   }
 };
 const launchPresetApplyDefaults = {
+  'single-720p': {
+    targetFps: 60,
+    videoBitrateKbps: 6000,
+    outputFormat: 'mkv',
+    encoder: 'h264_nvenc',
+    qualityMode: 'Balanced',
+    recordingDisplayScalePercent: 100,
+    restoreDisplayScalePercent: 150
+  },
   'single-1080p': {
     targetFps: 60,
     videoBitrateKbps: 12000,
@@ -159,6 +219,15 @@ const launchPresetApplyDefaults = {
     qualityMode: 'Quality',
     recordingDisplayScalePercent: 100,
     restoreDisplayScalePercent: 150
+  },
+  'single-5k': {
+    targetFps: 60,
+    videoBitrateKbps: 56000,
+    outputFormat: 'mkv',
+    encoder: 'h264_nvenc',
+    qualityMode: 'Quality',
+    recordingDisplayScalePercent: 100,
+    restoreDisplayScalePercent: 150
   }
 };
 const setupProfiles = {
@@ -174,7 +243,7 @@ const setupProfiles = {
     }
   },
   'grid-720p': {
-    launchPreset: '1440p-monitor-2x2',
+    launchPreset: '720p-monitor-2x2',
     settings: {
       audioMode: 'ProcessLoopback',
       requireAudioForRun: true,
@@ -186,6 +255,21 @@ const setupProfiles = {
   },
   'single-1080p': {
     launchPreset: 'single-1080p',
+    settings: {
+      audioMode: 'ProcessLoopback',
+      requireAudioForRun: true,
+      requireAllWorkersReady: true,
+      requireMatchingInstanceBaseline: false,
+      manageDisplayScale: false,
+      recordingDisplayScalePercent: 100,
+      restoreDisplayScalePercent: 150,
+      hideTaskbarDuringRun: false,
+      audioLevelMode: 'Loudness',
+      audioTargetLevelDb: -12
+    }
+  },
+  'single-720p': {
+    launchPreset: 'single-720p',
     settings: {
       audioMode: 'ProcessLoopback',
       requireAudioForRun: true,
@@ -220,15 +304,47 @@ const setupProfiles = {
       audioLevelMode: 'Loudness',
       audioTargetLevelDb: -12
     }
+  },
+  'grid-5k': {
+    launchPreset: '5k-monitor-2x2',
+    settings: {
+      audioMode: 'ProcessLoopback',
+      requireAudioForRun: true,
+      requireAllWorkersReady: true,
+      requireMatchingInstanceBaseline: true,
+      audioLevelMode: 'Loudness',
+      audioTargetLevelDb: -12
+    }
+  },
+  'single-5k': {
+    launchPreset: 'single-5k',
+    settings: {
+      audioMode: 'ProcessLoopback',
+      requireAudioForRun: true,
+      requireAllWorkersReady: true,
+      requireMatchingInstanceBaseline: false,
+      audioLevelMode: 'Loudness',
+      audioTargetLevelDb: -12
+    }
   }
 };
 setupProfiles['quad-4k'] = setupProfiles['grid-1080p'];
 setupProfiles['quad-1440p'] = setupProfiles['grid-720p'];
+setupProfiles['quad-5k'] = setupProfiles['grid-5k'];
 const feedPresetDefinitions = [
+  {
+    profileId: 'single-720p',
+    launchPreset: 'single-720p',
+    title: '1x 720p stream (720p monitor)',
+    detail: 'One full-resolution feed for a 1280 x 720 monitor.',
+    minWidth: 1280,
+    minHeight: 720,
+    tier: '720p'
+  },
   {
     profileId: 'single-1080p',
     launchPreset: 'single-1080p',
-    title: '1 x 1080p',
+    title: '1x 1080p stream (4k monitor)',
     detail: 'One full-resolution feed for a 1920 x 1080 monitor.',
     minWidth: 1920,
     minHeight: 1080,
@@ -237,7 +353,7 @@ const feedPresetDefinitions = [
   {
     profileId: 'single-1440p',
     launchPreset: 'single-1440p',
-    title: '1 x 1440p',
+    title: '1x 1440p stream (1440p monitor)',
     detail: 'One full-resolution feed for a 2560 x 1440 monitor.',
     minWidth: 2560,
     minHeight: 1440,
@@ -245,8 +361,8 @@ const feedPresetDefinitions = [
   },
   {
     profileId: 'grid-720p',
-    launchPreset: '1440p-monitor-2x2',
-    title: 'Up to 4 x 720p',
+    launchPreset: '720p-monitor-2x2',
+    title: '4x 720p streams (1440p monitor)',
     detail: 'A 2 x 2 grid of 1280 x 720 feeds on a 1440p monitor.',
     minWidth: 2560,
     minHeight: 1440,
@@ -255,7 +371,7 @@ const feedPresetDefinitions = [
   {
     profileId: 'single-4k',
     launchPreset: 'single-4k',
-    title: '1 x 4K',
+    title: '1x 4K stream (4k monitor)',
     detail: 'One full-resolution feed for a 3840 x 2160 monitor.',
     minWidth: 3840,
     minHeight: 2160,
@@ -264,11 +380,29 @@ const feedPresetDefinitions = [
   {
     profileId: 'grid-1080p',
     launchPreset: '4k-monitor-2x2',
-    title: 'Up to 4 x 1080p',
+    title: '4x 1080p streams (4k monitor)',
     detail: 'A 2 x 2 grid of 1920 x 1080 feeds on a 4K monitor.',
     minWidth: 3840,
     minHeight: 2160,
     tier: '4k'
+  },
+  {
+    profileId: 'single-5k',
+    launchPreset: 'single-5k',
+    title: '1x 5K stream (5k monitor)',
+    detail: 'One full-resolution feed for a 5120 x 2880 monitor.',
+    minWidth: 5120,
+    minHeight: 2880,
+    tier: '5k'
+  },
+  {
+    profileId: 'grid-5k',
+    launchPreset: '5k-monitor-2x2',
+    title: '4x 1440p streams (5k monitor)',
+    detail: 'A 2 x 2 grid of 2560 x 1440 feeds on a 5K monitor.',
+    minWidth: 5120,
+    minHeight: 2880,
+    tier: '5k'
   }
 ];
 const launchPresetFieldIds = [
@@ -414,6 +548,10 @@ function render() {
   document.getElementById('requireAudioForRun').checked = settings.requireAudioForRun !== false;
   document.getElementById('manageDisplayScale').checked = Boolean(settings.manageDisplayScale);
   document.getElementById('hideTaskbarDuringRun').checked = settings.hideTaskbarDuringRun !== false;
+  document.getElementById('disableScoreSubmissions').checked = true;
+  document.getElementById('disableScoreSubmissions').disabled = true;
+  document.getElementById('suppressScoreSaberReplayUi').checked = true;
+  document.getElementById('suppressScoreSaberReplayUi').disabled = true;
   updateDisplayScaleAvailability();
   renderGamePresentationSettings(settings);
 
@@ -483,16 +621,24 @@ function buildCaptureProfile(settings) {
 
 function formatLaunchPresetLabel(id) {
   switch (id) {
+    case '5k-monitor-2x2':
+      return '4x 1440p streams (5k monitor)';
+    case 'single-5k':
+      return '1x 5K stream (5k monitor)';
     case '4k-monitor-2x2':
-      return 'Up to 4 x 1080p';
+      return '4x 1080p streams (4k monitor)';
+    case '720p-monitor-2x2':
+      return '4x 720p streams (1440p monitor)';
     case '1440p-monitor-2x2':
-      return 'Up to 4 x 720p';
+      return '4x 720p streams (1440p monitor)';
     case 'single-4k':
-      return 'Single 4K';
+      return '1x 4K stream (4k monitor)';
     case 'single-1440p':
-      return 'Single 1440p';
+      return '1x 1440p stream (1440p monitor)';
     case 'single-1080p':
-      return 'Single 1080p';
+      return '1x 1080p stream (4k monitor)';
+    case 'single-720p':
+      return '1x 720p stream (720p monitor)';
     case 'windowed-1080p':
       return 'Windowed 1080p';
     case 'windowed-720p':
@@ -1424,10 +1570,10 @@ function createEmptyQueueImportTarget() {
   const target = document.createElement('button');
   target.className = 'emptyState queueEmpty queueImportDrop';
   target.type = 'button';
-  target.setAttribute('aria-label', 'Import .bsor replay files');
+  target.setAttribute('aria-label', 'Import replay files');
   target.innerHTML = `
     <span class="queueImportIcon" aria-hidden="true">&#8595;</span>
-    <strong>Drop .bsor replays here</strong>
+    <strong>Drop replays here</strong>
     <span>or click to choose replay files</span>
     <small>Imported replays will appear in the Replay Queue.</small>
   `;
@@ -1768,6 +1914,7 @@ function renderRunPlanCard(scheduled, visibleQueue, laneIndex, totalSeconds) {
         </div>
         <span class="queueMeta">${escapeHtml(renderRunPlanCardSubtitle(item))}</span>
         <div class="planPillRow">
+          <span class="planPill provider ${providerPillClass(item)}">${escapeHtml(formatProviderPill(item))}</span>
           <span class="planPill ${mapStatusClass(item.mapStatus)}">${escapeHtml(formatPlanMapStatus(item))}</span>
           <span class="planPill sync">${escapeHtml(formatPlanSync(item))}</span>
           ${canOpen ? '<span class="planPill output">Output</span>' : ''}
@@ -1926,8 +2073,8 @@ function renderQueueDetails() {
   const active = isActiveStatus(item.status);
   const queued = sameStatus(item.status, 'Queued');
   const canOpen = canOpenRecording(item);
-  const pathText = item.error || item.outputPath || '';
-  const pathClass = item.error ? 'detailPath errorText' : 'detailPath';
+  const pathText = item.error || item.warning || item.outputPath || '';
+  const pathClass = item.error ? 'detailPath errorText' : (item.warning ? 'detailPath warningText' : 'detailPath');
   const mapMissing = sameStatus(item.mapStatus, 'Missing');
 
   details.innerHTML = `
@@ -1946,12 +2093,15 @@ function renderQueueDetails() {
           <span class="badge ${statusClass(item.status)}">${escapeHtml(item.status)}</span>
         </div>
         <dl class="detailGrid">
-          <div class="detailMetric"><dt>Player</dt><dd>${escapeHtml(item.playerName || '-')}</dd></div>
+          <div class="detailMetric"><dt>Player</dt><dd>${escapeHtml(formatPlayerName(item.playerName) || '-')}</dd></div>
+          <div class="detailMetric"><dt>Provider</dt><dd>${escapeHtml(formatProvider(item))}</dd></div>
           <div class="detailMetric"><dt>Difficulty</dt><dd>${escapeHtml(item.difficulty || '-')}</dd></div>
           <div class="detailMetric"><dt>Length</dt><dd>${formatSeconds(item.estimatedSeconds)}</dd></div>
         </dl>
         ${renderMapStatusDetail(item)}
-        ${pathText ? `<div class="${pathClass}">${item.error ? '<strong>Failure reason</strong>' : ''}<span>${escapeHtml(pathText)}</span></div>` : ''}
+        ${pathText
+        ? `<div class="${pathClass}">${item.error ? '<strong>Failure reason</strong>' : (item.warning ? '<strong>Warning</strong>' : '')}<span>${escapeHtml(pathText)}</span></div>`
+        : ''}
         ${renderSyncMarkerResult(item)}
         ${renderCalibrationResult(item)}
       </div>
@@ -1993,7 +2143,40 @@ function renderQueueSubtitle(item) {
 }
 
 function renderRunPlanCardSubtitle(item) {
-  return item.mapper || item.playerName || item.difficulty || 'Replay';
+  const parts = [];
+  if (item.mapper) parts.push(item.mapper);
+  else if (item.playerName) parts.push(formatPlayerName(item.playerName));
+  if (item.difficulty) parts.push(item.difficulty);
+  return parts.filter(Boolean).join(' | ') || 'Replay';
+}
+
+function formatPlayerName(value) {
+  return String(value ?? '')
+    .replace(/<[^>]*>/g, '')
+    .trim();
+}
+
+function formatProvider(item) {
+  if (Number(item.provider) === 3) return 'ScoreSaber';
+  if (Number(item.provider) === 1) return 'BeatLeader';
+  const provider = String(item.provider || '').toLowerCase();
+  if (provider.includes('scoresaber')) return 'ScoreSaber';
+  if (provider.includes('beatleader')) return 'BeatLeader';
+  return item.replayFormat || 'Replay';
+}
+
+function formatProviderPill(item) {
+  const provider = formatProvider(item).toLowerCase();
+  if (provider === 'scoresaber') return 'SS';
+  if (provider === 'beatleader') return 'BL';
+  return formatProvider(item);
+}
+
+function providerPillClass(item) {
+  const provider = formatProvider(item).toLowerCase();
+  if (provider === 'scoresaber') return 'scoreSaber';
+  if (provider === 'beatleader') return 'beatLeader';
+  return '';
 }
 
 function formatMapStatus(item) {
@@ -2037,9 +2220,9 @@ function renderMapStatusDetail(item) {
 }
 
 function renderQueuePathLine(item) {
-  const text = item.outputPath || item.error || '';
+  const text = item.outputPath || item.warning || item.error || '';
   if (!text) return '';
-  const className = item.error ? 'queuePath errorText' : 'queuePath outputPath';
+  const className = item.error ? 'queuePath errorText' : (item.warning ? 'queuePath warningText' : 'queuePath outputPath');
   return `<span class="${className}">${escapeHtml(text)}</span>`;
 }
 
@@ -2193,7 +2376,7 @@ function matchesQueueSearch(item) {
     item.sequenceNumber,
     item.songName,
     item.mapper,
-    item.playerName,
+    formatPlayerName(item.playerName),
     item.difficulty,
     item.fileName,
     item.path,
@@ -2391,12 +2574,25 @@ function setResolutionPreset(width, height) {
 }
 
 function resolveLaunchPreset(settings) {
+  const configuredPreset = String(settings?.beatSaberLaunchPreset || '').toLowerCase();
+  if (configuredPreset === '720p-monitor-2x2' && launchPresetMatches(settings, launchPresets['720p-monitor-2x2'], '720p-monitor-2x2')) {
+    return '720p-monitor-2x2';
+  }
+
+  if (configuredPreset === '1440p-monitor-2x2' && launchPresetMatches(settings, launchPresets['1440p-monitor-2x2'], '1440p-monitor-2x2')) {
+    return '1440p-monitor-2x2';
+  }
+
   const presetOrder = [
+    '5k-monitor-2x2',
     '4k-monitor-2x2',
+    '720p-monitor-2x2',
     '1440p-monitor-2x2',
     'single-4k',
+    'single-5k',
     'single-1440p',
     'single-1080p',
+    'single-720p',
     'windowed-720p',
     'windowed-1080p'
   ];
@@ -2650,9 +2846,11 @@ function getSelectedDisplay(settings = {}) {
 }
 
 function classifyDisplayCapability(display) {
+  if (displaySupportsResolution(display, 5120, 2880)) return '1 x 5K or up to 4 x 1440p feeds';
   if (displaySupportsResolution(display, 3840, 2160)) return '1 x 4K or up to 4 x 1080p feeds';
   if (displaySupportsResolution(display, 2560, 1440)) return '1 x 1440p or up to 4 x 720p feeds';
   if (displaySupportsResolution(display, 1920, 1080)) return '1 x 1080p feed';
+  if (displaySupportsResolution(display, 1280, 720)) return '1 x 720p feed';
   return 'custom capture sizing';
 }
 
@@ -2680,20 +2878,24 @@ function setHidden(id, hidden) {
 
 function resolveSetupProfile(settings) {
   const launchPreset = resolveLaunchPreset(settings);
+  if (launchPreset === '5k-monitor-2x2') return 'grid-5k';
   if (launchPreset === '4k-monitor-2x2') return 'grid-1080p';
+  if (launchPreset === '720p-monitor-2x2') return 'grid-720p';
   if (launchPreset === '1440p-monitor-2x2') return 'grid-720p';
+  if (launchPreset === 'single-5k') return 'single-5k';
   if (launchPreset === 'single-4k') return 'single-4k';
+  if (launchPreset === 'single-720p') return 'single-720p';
   if (launchPreset === 'single-1440p') return 'single-1440p';
   if (launchPreset === 'single-1080p' || launchPreset === 'windowed-1080p') return 'single-1080p';
   return 'custom';
 }
 
 function getSetupProfileEnabledInstanceCount(id) {
-  if (id === 'grid-1080p' || id === 'grid-720p' || id === 'quad-4k' || id === 'quad-1440p') {
+  if (id === 'grid-5k' || id === 'grid-1080p' || id === 'grid-720p' || id === 'quad-4k' || id === 'quad-1440p' || id === 'quad-5k') {
     return maxManagedInstanceCount;
   }
 
-  if (id === 'single-1080p' || id === 'single-1440p' || id === 'single-4k') {
+  if (id === 'single-720p' || id === 'single-1080p' || id === 'single-1440p' || id === 'single-4k' || id === 'single-5k') {
     return minManagedInstanceCount;
   }
 
@@ -2706,11 +2908,14 @@ function getEffectiveSetupInstanceEnabled(instance) {
 }
 
 function formatSetupProfile(id) {
-  if (id === 'grid-1080p' || id === 'quad-4k') return 'Up to 4 x 1080p';
-  if (id === 'grid-720p' || id === 'quad-1440p') return 'Up to 4 x 720p';
-  if (id === 'single-4k') return 'Single 4K';
-  if (id === 'single-1440p') return 'Single 1440p';
-  if (id === 'single-1080p') return 'Single 1080p';
+  if (id === 'grid-5k' || id === 'quad-5k') return '4x 1440p streams (5k monitor)';
+  if (id === 'grid-1080p' || id === 'quad-4k') return '4x 1080p streams (4k monitor)';
+  if (id === 'grid-720p' || id === 'quad-1440p') return '4x 720p streams (1440p monitor)';
+  if (id === 'single-720p') return '1x 720p stream (720p monitor)';
+  if (id === 'single-4k') return '1x 4K stream (4k monitor)';
+  if (id === 'single-1440p') return '1x 1440p stream (1440p monitor)';
+  if (id === 'single-5k') return '1x 5K stream (5k monitor)';
+  if (id === 'single-1080p') return '1x 1080p stream (4k monitor)';
   return 'Custom';
 }
 
@@ -3003,6 +3208,8 @@ function buildSettingsRequest() {
       'restoreDisplayScalePercent',
       150),
     hideTaskbarDuringRun: document.getElementById('hideTaskbarDuringRun').checked,
+    disableScoreSubmissions: document.getElementById('disableScoreSubmissions').checked,
+    suppressScoreSaberReplayUi: document.getElementById('suppressScoreSaberReplayUi').checked,
     delayBetweenRecordingsSeconds: getConfiguredInterReplayGapSeconds(),
     gamePresentation: {
       noHud: document.getElementById('noHud').checked,
@@ -3210,7 +3417,7 @@ replayFileInput.addEventListener('change', event => {
 
 queueReplayFileInput.addEventListener('change', event => {
   if (!selectReplayFiles(event.target.files)) {
-    showToast('Choose .bsor files');
+    showToast('Choose replay files');
     return;
   }
 
@@ -3245,7 +3452,7 @@ replayDrop.addEventListener('drop', event => {
   replayDragDepth = 0;
   replayDrop.classList.remove('dragOver');
   if (!selectReplayFiles(event.dataTransfer?.files)) {
-    showToast('Drop .bsor files');
+    showToast('Drop replay files');
     return;
   }
 
@@ -3288,7 +3495,7 @@ function bindQueueImportDropTarget(target) {
     dragDepth = 0;
     target.classList.remove('dragOver');
     if (!selectReplayFiles(event.dataTransfer?.files)) {
-      showToast('Drop .bsor files');
+      showToast('Drop replay files');
       return;
     }
 
@@ -3338,7 +3545,7 @@ function bindPersistentQueueImportDropTarget(target) {
     queueDragDepth = 0;
     target.classList.remove('queueFileDragOver');
     if (!selectReplayFiles(event.dataTransfer?.files)) {
-      showToast('Drop .bsor files');
+      showToast('Drop replay files');
       return;
     }
 
@@ -3351,6 +3558,7 @@ bindPersistentQueueImportDropTarget(queueDrop);
 document.getElementById('addReplays').addEventListener('click', openQueueReplayPicker);
 
 document.getElementById('uploadReplays').addEventListener('click', () => runAction(importSelectedReplays));
+document.getElementById('importReplayReference').addEventListener('click', () => runAction(importReplayReference));
 
 async function importSelectedReplays() {
   if (!selectedReplayFiles.length) {
@@ -3370,7 +3578,35 @@ async function importSelectedReplays() {
 }
 
 function filterReplayFiles(files) {
-  return files.filter(file => file.name.toLowerCase().endsWith('.bsor'));
+  return files.filter(file => {
+    const name = file.name.toLowerCase();
+    return name.endsWith('.bsor') || name.endsWith('.dat');
+  });
+}
+
+async function importReplayReference() {
+  const input = document.getElementById('replayReferenceInput');
+  const value = (input?.value || '').trim();
+  if (!value) {
+    showToast('Paste a replay link first');
+    return;
+  }
+
+  const references = value
+    .split(/\r?\n|,/)
+    .map(item => item.trim())
+    .filter(Boolean);
+  const response = await fetch('/api/replays/import-references', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ references })
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const result = await response.json();
+  state = result.state;
+  if (input) input.value = '';
+  render();
+  showToast(`Imported ${result.count} replay${result.count === 1 ? '' : 's'}`);
 }
 
 function selectReplayFiles(files) {

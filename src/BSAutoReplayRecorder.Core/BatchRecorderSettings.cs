@@ -2,6 +2,10 @@ namespace BSAutoReplayRecorder.Core;
 
 public sealed class BatchRecorderSettings
 {
+    public bool DisableScoreSubmissions { get; set; } = true;
+
+    public bool SuppressScoreSaberReplayUi { get; set; } = true;
+
     public bool RequirePreflightReplayValidation { get; set; } = true;
 
     public bool RefreshSongCoreBeforeReplayValidation { get; set; } = true;

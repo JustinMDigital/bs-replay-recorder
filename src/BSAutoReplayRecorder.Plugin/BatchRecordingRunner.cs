@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using BeatLeader.Models;
-using BeatLeader.Replayer;
 using BSAutoReplayRecorder.Core;
 using BSAutoReplayRecorder.Core.Playback;
 using IPA.Logging;
@@ -14,19 +12,33 @@ namespace BSAutoReplayRecorder.Plugin;
 public sealed class BatchRecordingRunner
 {
     private readonly BatchRecorderSettings _settings;
-    private readonly BeatLeaderReplayPlaybackDriver _playbackDriver;
+    private readonly IReadOnlyList<IReplayPlaybackDriver> _playbackDrivers;
     private readonly IRecordingBackend _recordingBackend;
     private readonly ReplayReferenceParser _referenceParser = new ReplayReferenceParser();
     private readonly Logger _logger;
 
     public BatchRecordingRunner(
         BatchRecorderSettings settings,
-        BeatLeaderReplayPlaybackDriver playbackDriver,
+        IReplayPlaybackDriver playbackDriver,
+        IRecordingBackend recordingBackend,
+        Logger logger)
+        : this(settings, new[] { playbackDriver }, recordingBackend, logger)
+    {
+    }
+
+    public BatchRecordingRunner(
+        BatchRecorderSettings settings,
+        IReadOnlyList<IReplayPlaybackDriver> playbackDrivers,
         IRecordingBackend recordingBackend,
         Logger logger)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        _playbackDriver = playbackDriver ?? throw new ArgumentNullException(nameof(playbackDriver));
+        _playbackDrivers = playbackDrivers ?? throw new ArgumentNullException(nameof(playbackDrivers));
+        if (_playbackDrivers.Count == 0)
+        {
+            throw new ArgumentException("At least one replay playback driver is required.", nameof(playbackDrivers));
+        }
+
         _recordingBackend = recordingBackend ?? throw new ArgumentNullException(nameof(recordingBackend));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -69,11 +81,12 @@ public sealed class BatchRecordingRunner
             try
             {
                 var replayReference = _referenceParser.Parse(plan.QueueItem.ReplayPath);
-                await ValidateReplayOnMainThreadAsync(replayReference, cancellationToken).ConfigureAwait(false);
+                var playbackDriver = SelectPlaybackDriver(replayReference);
+                await ValidateReplayOnMainThreadAsync(playbackDriver, replayReference, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                failures.Add(plan.OutputBaseName + ": " + ex.Message);
+                failures.Add(plan.OutputBaseName + ": " + ex.GetType().FullName + ": " + ex.Message);
             }
         }
 
@@ -126,16 +139,18 @@ public sealed class BatchRecordingRunner
         var replayLaunchStarted = false;
         DateTimeOffset? contentStartUtc = null;
         RecordingStopResult? stopResult = null;
+        string? warning = null;
         Exception? failure = null;
 
         try
         {
             _logger.Info("Starting assignment plan: " + plan.OutputBaseName);
             var replayReference = _referenceParser.Parse(plan.QueueItem.ReplayPath);
-            await ValidateReplayOnMainThreadAsync(replayReference, cancellationToken).ConfigureAwait(false);
+            var playbackDriver = SelectPlaybackDriver(replayReference);
+            await ValidateReplayOnMainThreadAsync(playbackDriver, replayReference, cancellationToken).ConfigureAwait(false);
 
-            using (var startWait = new ReplayStartWait())
-            using (var finishWait = new ReplayFinishWait())
+            using (var startWait = playbackDriver.CreateStartWait())
+            using (var finishWait = playbackDriver.CreateFinishWait())
             using (var lagSpikeMonitor = await CreateLagSpikeMonitorOnMainThreadAsync(cancellationToken)
                        .ConfigureAwait(false))
             {
@@ -152,7 +167,7 @@ public sealed class BatchRecordingRunner
                 var launchRequestedUtc = DateTimeOffset.UtcNow;
                 contentStartUtc = launchRequestedUtc;
                 replayLaunchStarted = true;
-                var launchTask = StartReplayOnMainThreadAsync(plan.QueueItem, replayReference, cancellationToken);
+                var launchTask = StartReplayOnMainThreadAsync(playbackDriver, plan.QueueItem, replayReference, cancellationToken);
                 var startSignalTask = startWait.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
                 var completedStartTask = await Task.WhenAny(launchTask, startSignalTask).ConfigureAwait(false);
                 if (completedStartTask == launchTask)
@@ -160,7 +175,7 @@ public sealed class BatchRecordingRunner
                     await launchTask.ConfigureAwait(false);
                     if (!startSignalTask.IsCompleted)
                     {
-                        _logger.Warn("BeatLeader replay start event was not observed before launch returned for " +
+                        _logger.Warn(playbackDriver.DriverName + " replay start event was not observed before launch returned for " +
                                      plan.OutputBaseName + "; using replay launch time for content trim.");
                     }
                     else
@@ -173,7 +188,7 @@ public sealed class BatchRecordingRunner
                     contentStartUtc = await startSignalTask.ConfigureAwait(false) ?? launchRequestedUtc;
                     if (contentStartUtc == launchRequestedUtc)
                     {
-                        _logger.Warn("BeatLeader replay start event was not observed within the timeout for " +
+                        _logger.Warn(playbackDriver.DriverName + " replay start event was not observed within the timeout for " +
                                      plan.OutputBaseName + "; using replay launch time for content trim.");
                     }
                 }
@@ -184,11 +199,23 @@ public sealed class BatchRecordingRunner
                 var completedTask = await Task.WhenAny(replayFinishTask, lagSpikeTask).ConfigureAwait(false);
                 if (completedTask == lagSpikeTask)
                 {
-                    await lagSpikeTask.ConfigureAwait(false);
+                    var lagSpike = await lagSpikeTask.ConfigureAwait(false);
+                    throw new InvalidOperationException(
+                        "Replay ended with lag spike during recording for " +
+                        plan.OutputBaseName + ": " + (lagSpike?.Message ?? "spike detected"));
                 }
 
                 await replayFinishTask.ConfigureAwait(false);
-                lagSpikeMonitor.ThrowIfLagSpikeDetected();
+                if (lagSpikeTask.Status == TaskStatus.RanToCompletion)
+                {
+                    var lagSpike = lagSpikeTask.Result;
+                    warning = lagSpike?.Message;
+                    if (!string.IsNullOrWhiteSpace(warning))
+                    {
+                        _logger.Warn("Replay ended with end-of-playback lag spike warning for " +
+                                     plan.OutputBaseName + ": " + warning);
+                    }
+                }
             }
 
             await DelayIfNeededAsync(plan.PostRoll, cancellationToken).ConfigureAwait(false);
@@ -238,13 +265,14 @@ public sealed class BatchRecordingRunner
                 true,
                 outputPath,
                 null,
+                warning,
                 stopResult?.SyncStatus,
                 stopResult?.SyncCorrectionMilliseconds,
                 stopResult?.TrimStartSeconds,
                 stopResult?.SyncReportPath);
         }
 
-        return new RecordingExecutionResult(false, outputPath, failure.Message);
+        return new RecordingExecutionResult(false, outputPath, failure.Message, null);
     }
 
     private async Task RequestLeaveActiveReplayAfterInterruptedPlanAsync(
@@ -267,13 +295,14 @@ public sealed class BatchRecordingRunner
     }
 
     private Task<ReplayPlaybackSession> StartReplayOnMainThreadAsync(
+        IReplayPlaybackDriver playbackDriver,
         ReplayQueueItem queueItem,
         ReplayReference replayReference,
         CancellationToken cancellationToken)
     {
         return UnityMainThreadTaskScheduler.Factory
             .StartNew(
-                () => _playbackDriver.StartReplayAsync(queueItem, replayReference, cancellationToken),
+                () => playbackDriver.StartReplayAsync(queueItem, replayReference, cancellationToken),
                 cancellationToken)
             .Unwrap();
     }
@@ -323,14 +352,29 @@ public sealed class BatchRecordingRunner
     }
 
     private Task ValidateReplayOnMainThreadAsync(
+        IReplayPlaybackDriver playbackDriver,
         ReplayReference replayReference,
         CancellationToken cancellationToken)
     {
         return UnityMainThreadTaskScheduler.Factory
             .StartNew(
-                () => _playbackDriver.ValidateReplayAsync(replayReference, cancellationToken),
+                () => playbackDriver.ValidateReplayAsync(replayReference, cancellationToken),
                 cancellationToken)
             .Unwrap();
+    }
+
+    private IReplayPlaybackDriver SelectPlaybackDriver(ReplayReference replayReference)
+    {
+        foreach (var playbackDriver in _playbackDrivers)
+        {
+            if (playbackDriver.CanPlay(replayReference))
+            {
+                return playbackDriver;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "No replay playback driver is available for " + replayReference.Provider + " (" + replayReference.Kind + ").");
     }
 
     private Task<ReplayLagSpikeMonitor> CreateLagSpikeMonitorOnMainThreadAsync(CancellationToken cancellationToken)
@@ -376,69 +420,4 @@ public sealed class BatchRecordingRunner
             : Task.Delay(delay, cancellationToken);
     }
 
-    private sealed class ReplayStartWait : IDisposable
-    {
-        private readonly TaskCompletionSource<DateTimeOffset> _completion = new TaskCompletionSource<DateTimeOffset>();
-
-        public ReplayStartWait()
-        {
-            ReplayerLauncher.ReplayWasStartedEvent += HandleReplayStarted;
-        }
-
-        public async Task<DateTimeOffset?> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
-        {
-            var timeoutTask = Task.Delay(timeout, cancellationToken);
-            var completed = await Task.WhenAny(_completion.Task, timeoutTask).ConfigureAwait(false);
-            if (completed == _completion.Task)
-            {
-                return await _completion.Task.ConfigureAwait(false);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            return null;
-        }
-
-        public void Dispose()
-        {
-            ReplayerLauncher.ReplayWasStartedEvent -= HandleReplayStarted;
-        }
-
-        private void HandleReplayStarted(ReplayLaunchData launchData)
-        {
-            _completion.TrySetResult(DateTimeOffset.UtcNow);
-        }
-    }
-
-    private sealed class ReplayFinishWait : IDisposable
-    {
-        private readonly TaskCompletionSource<bool> _completion = new TaskCompletionSource<bool>();
-
-        public ReplayFinishWait()
-        {
-            ReplayerLauncher.ReplayWasFinishedEvent += HandleReplayFinished;
-        }
-
-        public async Task WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
-        {
-            var timeoutTask = Task.Delay(timeout, cancellationToken);
-            var completed = await Task.WhenAny(_completion.Task, timeoutTask).ConfigureAwait(false);
-            if (completed == _completion.Task)
-            {
-                return;
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            throw new TimeoutException("Timed out waiting for BeatLeader replay to finish.");
-        }
-
-        public void Dispose()
-        {
-            ReplayerLauncher.ReplayWasFinishedEvent -= HandleReplayFinished;
-        }
-
-        private void HandleReplayFinished(ReplayLaunchData launchData)
-        {
-            _completion.TrySetResult(true);
-        }
-    }
 }

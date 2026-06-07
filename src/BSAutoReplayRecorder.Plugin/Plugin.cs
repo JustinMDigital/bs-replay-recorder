@@ -13,7 +13,6 @@ public sealed class Plugin
     private BatchRecorderSettings? _settings;
     private CancellationTokenSource? _shutdownCancellation;
     private ControlPanelWorkerRunner? _controlPanelWorker;
-    private ScoreSubmissionDisabler? _scoreSubmissionDisabler;
 
     [Init]
     public void Init(Logger logger)
@@ -30,7 +29,6 @@ public sealed class Plugin
             return;
         }
 
-        _scoreSubmissionDisabler = ScoreSubmissionDisabler.Install(_logger);
         _shutdownCancellation = new CancellationTokenSource();
         _settings = PluginSettingsStore.LoadOrCreate(_logger);
 
@@ -49,7 +47,6 @@ public sealed class Plugin
     {
         _shutdownCancellation?.Cancel();
         _controlPanelWorker?.Dispose();
-        _scoreSubmissionDisabler?.Dispose();
         InstanceWindowPlacementController.DestroyInstance();
         RecordingStatusOverlay.DestroyInstance();
         _logger?.Info("Beat Saber Auto Replay Recorder shut down.");

@@ -4,17 +4,17 @@
 
 
 
-## Record batches of Beat Saber `.bsor` replays from a local browser control panel.
+## Record batches of BeatLeader and ScoreSaber replays from a local browser control panel.
 ### Tested with 1.40.6, Plugin built for 1.40.8, 1.39.1
 
-This project runs one or more managed Beat Saber worker copies, plays each replay through BeatLeader, records the game window with FFmpeg, captures that Beat Saber process's audio, sync-corrects the result, and writes finished video files to a local recordings folder.
+This project runs one or more managed Beat Saber worker copies, plays each replay through BeatLeader or ScoreSaber, records the game window with FFmpeg, captures that Beat Saber process's audio, sync-corrects the result, and writes finished video files to a local recordings folder.
 
 The normal user flow is:
 
 1. Run `install.bat`.
 2. Open the control panel at `http://127.0.0.1:5770`.
 3. Launch the managed Beat Saber workers.
-4. Import `.bsor` replay files.
+4. Import `.bsor` files, ScoreSaber `.dat` files, or ScoreSaber replay links.
 5. Press `Start run`.
 6. Pick up the finished recordings from `ControlPanelWorkspace\Recordings`.
 
@@ -22,16 +22,17 @@ The recorder does not use OBS, obs-websocket, VB-CABLE, or BSManager as runtime 
 
 ## What You Need
 
-- BeatLeader
+- BeatLeader.
+- ScoreSaber for ScoreSaber replay playback.
 - Windows.
 - PowerShell.
 - .NET SDK 10.
 - FFmpeg and ffprobe. The installer can find common WinGet, Chocolatey, and PATH installs, offer to install `Gyan.FFmpeg` with WinGet, or save a custom `ffmpeg.exe` path.
 - A local PC Beat Saber install.
-- BSIPA and BeatLeader installed in the Beat Saber folder used as the source template.
+- BSIPA and BeatLeader installed in the Beat Saber folder used as the source template. Install ScoreSaber too if you want ScoreSaber replay playback.
 - Optional: `tools\SetDpi\SetDpi.exe`, or `BSARR_SETDPI_PATH`, if you use presets that temporarily change Windows display scaling.
 
-The default plugin manifest targets Beat Saber `1.40.6`, BSIPA `^4.3.6`, and BeatLeader `^0.9.33`. You can build against a different Beat Saber version later, but the first-time install expects a working BeatLeader setup in the source folder.
+The default plugin manifest targets Beat Saber `1.40.6`, BSIPA `^4.3.6`, and BeatLeader `^0.9.33`. You can build against a different Beat Saber version later, but the first-time install expects a working BeatLeader setup in the source folder. ScoreSaber is resolved dynamically at runtime when ScoreSaber replays are queued.
 
 ## First-Time Install
 
@@ -109,7 +110,7 @@ In the control panel:
 1. Go to `Files` and confirm the workspace, output, instance, shared-song, and shared-content paths.
 2. Go to `Settings` and choose the recording monitor and feed preset.
 3. Use `Diagnostics` -> `Launch + Verify` when you want the panel to launch workers and check readiness.
-4. Use `Run` -> `Import .bsor` to add replays.
+4. Use `Run` -> `Import replays` to add `.bsor` or `.dat` files, or paste a ScoreSaber replay link and choose `Import link`.
 5. Confirm the status chips for workers, maps, baseline, audio, disk, and sync.
 6. Press `Start run`.
 7. Review completed queue items and open recordings from the queue details.
@@ -136,10 +137,14 @@ The `Settings` view recommends feed presets based on the selected recording moni
 
 | Preset | Best for | Output per worker |
 | --- | --- | --- |
+| `single-720p` | one 720p feed | 1280x720 |
 | `single-1080p` | one 1080p feed | 1920x1080 |
 | `single-1440p` | one 1440p feed | 2560x1440 |
 | `single-4k` | one 4K feed | 3840x2160 |
-| `1440p-monitor-2x2` | up to four feeds on a 1440p monitor | 1280x720 |
+| `single-5k` | one 5K feed | 5120x2880 |
+| `720p-monitor-2x2` | up to four 720p feeds on a 1440p monitor | 1280x720 |
+| `1440p-monitor-2x2` | legacy alias for 720p grid | 1280x720 |
+| `5k-monitor-2x2` | up to four feeds on a 5K monitor | 2560x1440 |
 | `4k-monitor-2x2` | up to four feeds on a 4K monitor | 1920x1080 |
 
 The multi-feed presets can run 2, 3, or 4 managed workers. If four concurrent captures are unstable on your machine, lower the enabled instance count in the control panel.
@@ -178,7 +183,7 @@ Beat Saber worker plugin
   -> registers with the control panel
   -> starts recording through its assigned recorder host
   -> plays a visual/audio sync marker
-  -> launches the BeatLeader replay
+  -> launches the BeatLeader or ScoreSaber replay
   -> reports success, failure, output path, and sync metadata
 
 Recorder host
@@ -192,8 +197,7 @@ The stack is intentionally control-panel-first. The plugin does not own the queu
 
 ## Important Notes
 
-- Current replay playback is BeatLeader `.bsor` focused.
-- ScoreSaber replay playback is not part of the current user workflow.
+- Replay playback supports BeatLeader `.bsor` files and ScoreSaber replay `.dat` files. ScoreSaber 2 score/replay URLs can be pasted into the control panel and are downloaded into the queue with metadata.
 - The managed workers are local Beat Saber folders created for recording. Do not point the managed instance root at your everyday Beat Saber folder.
 - Some `Game settings` options in the control panel are Beat Saber profile settings for the current Windows user. Change those intentionally, because Beat Saber stores some of them outside the managed game folders.
 - The recorder expects maps to exist in the shared song folders. On import, the control panel checks maps and can download by hash from BeatSaver or accept a manual song zip upload for a queue item.
@@ -216,7 +220,7 @@ If FFmpeg is not found, re-run `install.bat` and accept the WinGet install promp
 
 The folder that contains `ffmpeg.exe` must also contain `ffprobe.exe`, because completed recordings are verified before they are accepted.
 
-If workers do not connect, use `Diagnostics` -> `Launch + Verify`, then check that each managed Beat Saber instance has the worker plugin installed and BeatLeader available.
+If workers do not connect, use `Diagnostics` -> `Launch + Verify`, then check that each managed Beat Saber instance has the worker plugin installed, BeatLeader available, and ScoreSaber installed when ScoreSaber replays are queued.
 
 If audio fails, keep `Audio` set to `Process loopback` and make sure workers are launched from the control panel so the recorder knows the correct Beat Saber process id.
 

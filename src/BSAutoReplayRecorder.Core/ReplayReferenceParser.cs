@@ -57,7 +57,7 @@ public sealed class ReplayReferenceParser
         if (string.Equals(extension, ".dat", StringComparison.OrdinalIgnoreCase))
         {
             return new ReplayReference(
-                ReplayProvider.ScoreSaberLegacy,
+                ReplayProvider.ScoreSaber2,
                 ReplayReferenceKind.LocalScoreSaberDatFile,
                 value,
                 value,

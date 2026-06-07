@@ -68,6 +68,34 @@ public sealed class WorkerAssignmentResponse
 
     public string? ReplayPath { get; set; }
 
+    public ReplayProvider Provider { get; set; } = ReplayProvider.BeatLeader;
+
+    public ReplayReferenceKind ReferenceKind { get; set; } = ReplayReferenceKind.LocalBsorFile;
+
+    public string ReplayFormat { get; set; } = "";
+
+    public string? SourceUrl { get; set; }
+
+    public string? ScoreId { get; set; }
+
+    public bool? DisableScoreSubmissions { get; set; }
+
+    public bool? SuppressScoreSaberReplayUi { get; set; }
+
+    public string? SongName { get; set; }
+
+    public string? Mapper { get; set; }
+
+    public string? PlayerName { get; set; }
+
+    public string? Difficulty { get; set; }
+
+    public string? Mode { get; set; }
+
+    public string? LevelHash { get; set; }
+
+    public double EstimatedSeconds { get; set; }
+
     public string AssignmentKind { get; set; } = "";
 
     public string? OutputBaseName { get; set; }
@@ -145,6 +173,8 @@ public sealed class WorkerReportRequest
     public string? OutputPath { get; set; }
 
     public string? Error { get; set; }
+
+    public string? Warning { get; set; }
 
     public string? SyncStatus { get; set; }
 

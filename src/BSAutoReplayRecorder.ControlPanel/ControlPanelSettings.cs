@@ -15,6 +15,8 @@ public sealed class ControlPanelSettings
         "-screen-fullscreen 0 -screen-width 2560 -screen-height 1440 --no-yeet fpfc --verbose";
     public const string Windowed4kBeatSaberLaunchArguments =
         "-screen-fullscreen 0 -screen-width 3840 -screen-height 2160 --no-yeet fpfc --verbose";
+    public const string Windowed5kBeatSaberLaunchArguments =
+        "-screen-fullscreen 0 -screen-width 5120 -screen-height 2880 --no-yeet fpfc --verbose";
 
     public string BindUrl { get; set; } = "http://127.0.0.1:5770";
 
@@ -77,6 +79,10 @@ public sealed class ControlPanelSettings
     public string AudioMode { get; set; } = "ProcessLoopback";
 
     public bool RequireAudioForRun { get; set; } = true;
+
+    public bool DisableScoreSubmissions { get; set; } = true;
+
+    public bool SuppressScoreSaberReplayUi { get; set; } = true;
 
     public int AudioBitrateKbps { get; set; } = 192;
 
@@ -197,6 +203,10 @@ public sealed class ControlPanelSettings
         {
             GamePresentationSettingsVersion = 1;
         }
+
+        // These controls are enforced for safety and must remain on by default.
+        DisableScoreSubmissions = true;
+        SuppressScoreSaberReplayUi = true;
     }
 
     private static string NormalizeOutputFormat(string? value)
@@ -272,9 +282,32 @@ public sealed class ControlPanelSettings
             return "4k-monitor-2x2";
         }
 
+        if (Matches5kMonitor2x2Preset())
+        {
+            return "5k-monitor-2x2";
+        }
+
+        if (trimmed == "720p-monitor-2x2")
+        {
+            if (Matches720pMonitor2x2Preset())
+            {
+                return "720p-monitor-2x2";
+            }
+        }
+
         if (Matches1440pMonitor2x2Preset())
         {
             return "1440p-monitor-2x2";
+        }
+
+        if (MatchesSingle4kPreset())
+        {
+            return "single-4k";
+        }
+
+        if (MatchesSingle720pPreset())
+        {
+            return "single-720p";
         }
 
         if (MatchesWindowed720pPreset())
@@ -282,9 +315,9 @@ public sealed class ControlPanelSettings
             return "windowed-720p";
         }
 
-        if (MatchesSingle4kPreset())
+        if (MatchesSingle5kPreset())
         {
-            return "single-4k";
+            return "single-5k";
         }
 
         if (MatchesSingle1440pPreset())
@@ -324,6 +357,11 @@ public sealed class ControlPanelSettings
     }
 
     private bool Matches1440pMonitor2x2Preset()
+    {
+        return Matches720pMonitor2x2Preset();
+    }
+
+    private bool Matches720pMonitor2x2Preset()
     {
         return IsGridInstanceCount() &&
                MaxConcurrentRecordings == InstanceCount &&
@@ -376,6 +414,42 @@ public sealed class ControlPanelSettings
                !ManageDisplayScale &&
                !HideTaskbarDuringRun &&
                string.Equals(BeatSaberLaunchArguments, Windowed4kBeatSaberLaunchArguments, StringComparison.Ordinal);
+    }
+
+    private bool MatchesSingle720pPreset()
+    {
+        return CaptureWidth == 1280 &&
+               CaptureHeight == 720 &&
+               !ManageDisplayScale &&
+               !HideTaskbarDuringRun &&
+               string.Equals(BeatSaberLaunchArguments, Windowed720pBeatSaberLaunchArguments, StringComparison.Ordinal);
+    }
+
+    private bool MatchesSingle5kPreset()
+    {
+        return CaptureWidth == 5120 &&
+               CaptureHeight == 2880 &&
+               !ManageDisplayScale &&
+               !HideTaskbarDuringRun &&
+               string.Equals(BeatSaberLaunchArguments, Windowed5kBeatSaberLaunchArguments, StringComparison.Ordinal);
+    }
+
+    private bool Matches5kMonitor2x2Preset()
+    {
+        return IsGridInstanceCount() &&
+               MaxConcurrentRecordings == InstanceCount &&
+               TargetFps == 60 &&
+               CaptureWidth == 2560 &&
+               CaptureHeight == 1440 &&
+               VideoBitrateKbps == 18000 &&
+               string.Equals(OutputFormat, "mkv", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(Encoder, "h264_nvenc", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(QualityMode, "Performance", StringComparison.OrdinalIgnoreCase) &&
+               ManageDisplayScale &&
+               RecordingDisplayScalePercent == 100 &&
+               RestoreDisplayScalePercent == 150 &&
+               HideTaskbarDuringRun &&
+               string.Equals(BeatSaberLaunchArguments, Windowed5kBeatSaberLaunchArguments, StringComparison.Ordinal);
     }
 
     private bool MatchesWindowed720pPreset()

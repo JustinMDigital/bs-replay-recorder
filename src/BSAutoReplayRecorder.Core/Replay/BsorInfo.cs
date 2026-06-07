@@ -14,6 +14,8 @@ public sealed class BsorInfo
 
     public string PlayerId { get; set; } = "";
 
+    public string ScoreId { get; set; } = "";
+
     public string PlayerName { get; set; } = "";
 
     public string Platform { get; set; } = "";
@@ -75,4 +77,3 @@ public sealed class BsorInfo
         }
     }
 }
-

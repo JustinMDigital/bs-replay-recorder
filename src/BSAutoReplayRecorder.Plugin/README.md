@@ -23,7 +23,7 @@ When a managed Beat Saber worker starts, the plugin:
 - waits for one replay assignment at a time;
 - asks its recorder host to start capture;
 - plays a short visual/audio sync marker;
-- launches the assigned BeatLeader `.bsor` replay;
+- launches the assigned BeatLeader `.bsor` or ScoreSaber `.dat` replay;
 - waits for replay playback to finish;
 - stops capture with timing information;
 - reports the output path, result, error details, and sync metadata.
@@ -43,11 +43,12 @@ The managed worker needs:
 - Beat Saber.
 - BSIPA.
 - BeatLeader.
+- ScoreSaber when ScoreSaber replays are queued.
 - `BSAutoReplayRecorder.Plugin.dll` in `Plugins`.
 - `BSAutoReplayRecorder.Core.dll` in `Libs`.
 - `UserData\BSAutoReplayRecorder\settings.json`.
 
-The installer handles these recorder files. You are responsible for having a working Beat Saber, BSIPA, and BeatLeader setup in the source folder used to create workers.
+The installer handles these recorder files. You are responsible for having a working Beat Saber, BSIPA, and BeatLeader setup in the source folder used to create workers. Install ScoreSaber in the source folder too if you want ScoreSaber replay playback.
 
 ## Worker Settings
 
@@ -71,7 +72,8 @@ The installer writes this file for each worker. A typical worker section looks l
     "WorkerName": "Instance 1",
     "PreferredInstanceIndex": 0,
     "PollIntervalSeconds": 1,
-    "HeartbeatIntervalSeconds": 2
+    "HeartbeatIntervalSeconds": 2,
+    "IdleShutdownMinutes": 20
   }
 }
 ```
@@ -80,15 +82,16 @@ The plugin stores a `WorkerId` after it registers for the first time. Leave that
 
 ## Replay Support
 
-The current user workflow is BeatLeader `.bsor` playback. The plugin uses the installed BeatLeader mod to decode and start local replay playback.
+The current workflow supports BeatLeader `.bsor` files and ScoreSaber `.dat` replay files. BeatLeader playback uses the installed BeatLeader mod. ScoreSaber playback resolves ScoreSaber's replay loader at runtime and uses the same recorder start, sync marker, lag guard, stop, mux, and reporting path as BeatLeader.
 
-ScoreSaber replay playback is not part of the current user workflow.
+ScoreSaber 2 score/replay URLs are imported by the control panel, downloaded to local `.dat` files, and assigned to workers with provider metadata.
 
 ## Fail-Safe Behavior
 
 A worker should report a replay as failed instead of silently producing a questionable recording when:
 
 - the control panel or recorder host cannot be reached;
+- the control panel stops responding for `IdleShutdownMinutes` (defaults to 20); then the worker exits game to avoid leaving Beat Saber open when the server is down;
 - the replay cannot be launched;
 - Beat Saber playback fails or times out;
 - ProcessLoopback audio cannot be captured;

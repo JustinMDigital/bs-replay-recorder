@@ -44,6 +44,12 @@ try
     RunSongFolderLinksCheck(Path.Combine(tempRoot, "song-folder-links"));
     RunQueueCoverArtCheck(Path.Combine(tempRoot, "queue-cover-art"));
     RunQueueMapImportCheck(Path.Combine(tempRoot, "queue-map-import"));
+    RunScoreSaberRichTextPlayerNameFormattingCheck();
+    RunScoreSaberReferenceImportCheck(Path.Combine(tempRoot, "scoresaber-reference-import"));
+    RunLocalScoreSaberImportMetadataEnrichmentCheck(Path.Combine(tempRoot, "scoresaber-local-metadata-import"));
+    RunLocalScoreSaberFilenameFallbackCheck(Path.Combine(tempRoot, "scoresaber-local-filename-fallback"));
+    RunLocalScoreSaberLongPlayerIdCheck(Path.Combine(tempRoot, "scoresaber-local-long-player-id"));
+    RunMixedProviderReplayIntegrationCheck(Path.Combine(tempRoot, "mixed-provider-integration"));
     RunQueueEditingCheck(Path.Combine(tempRoot, "queue-editing"));
     RunReplayCalibrationCheck(Path.Combine(tempRoot, "replay-calibration"));
     RunDiskSpaceAndEventLogCheck(Path.Combine(tempRoot, "disk-events"));
@@ -108,11 +114,15 @@ static void RunLaunchPlanCheck(string workspace)
 static void RunLaunchValidationCheck(string workspace)
 {
     var instancesRoot = Path.Combine(workspace, "BSInstances");
-    var store = CreateStore(workspace, instancesRoot, "Missing I-");
+    var store = CreateStore(
+        workspace,
+        instancesRoot,
+        "Missing I-",
+        workerPluginInstaller: new FakeWorkerPluginInstaller());
 
     var state = store.LaunchInstance(0);
     AssertEqual("Failed", state.Instances[0].GameLaunchStatus, "missing folder launch status");
-    AssertContains("Instance folder was not found", state.Instances[0].GameLaunchError, "missing folder launch error");
+    AssertContains("Beat Saber.exe was not found", state.Instances[0].GameLaunchError, "missing executable launch error");
 
     Directory.CreateDirectory(Path.Combine(instancesRoot, "Missing I-1"));
     state = store.LaunchInstance(0);
@@ -620,7 +630,8 @@ static void RunWorkerPluginSettingsIdentityCheck()
         BindUrl = "http://127.0.0.1:5770",
         InstanceCount = 3,
         MonitorIndex = 1,
-        LagSpikeStartupGraceSeconds = 5
+        LagSpikeStartupGraceSeconds = 5,
+        IdleShutdownMinutes = 7
     };
     settings.Normalize();
 
@@ -634,7 +645,7 @@ static void RunWorkerPluginSettingsIdentityCheck()
             LaunchDirectory = Path.Combine("ManagedInstances", "BSARR I-" + (index + 1))
         };
         var workerId = DotNetWorkerPluginInstaller.CreateManagedWorkerId(instance);
-        var pluginSettings = DotNetWorkerPluginInstaller.CreatePluginSettings(instance, settings, workerId);
+        var pluginSettings = DotNetWorkerPluginInstaller.CreatePluginSettings(instance, settings, workerId, 2, 2);
         var json = JsonSerializer.Serialize(pluginSettings);
         var parsed = JsonSerializer.Deserialize<BatchRecorderSettings>(json)
                      ?? throw new InvalidOperationException("worker plugin settings identity deserialize failed");
@@ -652,6 +663,7 @@ static void RunWorkerPluginSettingsIdentityCheck()
         AssertEqual(300d, parsed.RecorderHost.TimeoutSeconds, "recorder host timeout " + index);
         AssertEqual(5.0, parsed.LagSpikeStartupGraceSeconds, "lag spike startup grace " + index);
         AssertEqual(5.0, parsed.DelayBetweenRecordingsSeconds, "delay between recordings " + index);
+        AssertEqual(7.0, parsed.ControlPanelWorker.IdleShutdownMinutes, "worker idle shutdown timeout " + index);
         AssertEqual(index, parsed.WindowPlacement.InstanceIndex, "window placement index " + index);
     }
 }
@@ -844,6 +856,28 @@ static void RunLaunchPresetNormalizationCheck()
     migratedPresetSettings.Normalize();
     AssertEqual("4k-monitor-2x2", migratedPresetSettings.BeatSaberLaunchPreset, "saved 4k values restore 4k preset");
 
+    var monitor5kPresetSettings = new ControlPanelSettings
+    {
+        BeatSaberLaunchPreset = "single-5k",
+        InstanceCount = 3,
+        MaxConcurrentRecordings = 3,
+        TargetFps = 60,
+        CaptureWidth = 2560,
+        CaptureHeight = 1440,
+        VideoBitrateKbps = 18000,
+        OutputFormat = "mkv",
+        MonitorIndex = 1,
+        Encoder = "h264_nvenc",
+        QualityMode = "Performance",
+        ManageDisplayScale = true,
+        RecordingDisplayScalePercent = 100,
+        RestoreDisplayScalePercent = 150,
+        HideTaskbarDuringRun = true,
+        BeatSaberLaunchArguments = ControlPanelSettings.Windowed5kBeatSaberLaunchArguments
+    };
+    monitor5kPresetSettings.Normalize();
+    AssertEqual("5k-monitor-2x2", monitor5kPresetSettings.BeatSaberLaunchPreset, "saved 5k values restore 5k preset");
+
     var monitor1440pPresetSettings = new ControlPanelSettings
     {
         BeatSaberLaunchPreset = "windowed-720p",
@@ -865,6 +899,27 @@ static void RunLaunchPresetNormalizationCheck()
     monitor1440pPresetSettings.Normalize();
     AssertEqual("1440p-monitor-2x2", monitor1440pPresetSettings.BeatSaberLaunchPreset, "saved 1440p values restore 1440p preset");
 
+    var monitor720pPresetSettings = new ControlPanelSettings
+    {
+        BeatSaberLaunchPreset = "720p-monitor-2x2",
+        InstanceCount = 2,
+        MaxConcurrentRecordings = 2,
+        TargetFps = 60,
+        CaptureWidth = 1280,
+        CaptureHeight = 720,
+        VideoBitrateKbps = 8000,
+        OutputFormat = "mkv",
+        MonitorIndex = 0,
+        Encoder = "h264_nvenc",
+        QualityMode = "Performance",
+        ManageDisplayScale = true,
+        RecordingDisplayScalePercent = 100,
+        RestoreDisplayScalePercent = 150,
+        BeatSaberLaunchArguments = ControlPanelSettings.Windowed720pBeatSaberLaunchArguments
+    };
+    monitor720pPresetSettings.Normalize();
+    AssertEqual("720p-monitor-2x2", monitor720pPresetSettings.BeatSaberLaunchPreset, "saved 720p values restore 720p grid preset");
+
     var smallWindowSettings = new ControlPanelSettings
     {
         BeatSaberLaunchPreset = "windowed-720p",
@@ -874,6 +929,34 @@ static void RunLaunchPresetNormalizationCheck()
     };
     smallWindowSettings.Normalize();
     AssertEqual("windowed-720p", smallWindowSettings.BeatSaberLaunchPreset, "720p launch preset");
+
+    var single720pSettings = new ControlPanelSettings
+    {
+        BeatSaberLaunchPreset = "single-720p",
+        InstanceCount = 1,
+        MaxConcurrentRecordings = 1,
+        CaptureWidth = 1280,
+        CaptureHeight = 720,
+        ManageDisplayScale = false,
+        HideTaskbarDuringRun = false,
+        BeatSaberLaunchArguments = ControlPanelSettings.Windowed720pBeatSaberLaunchArguments
+    };
+    single720pSettings.Normalize();
+    AssertEqual("single-720p", single720pSettings.BeatSaberLaunchPreset, "single 720p launch preset");
+
+    var single5kSettings = new ControlPanelSettings
+    {
+        BeatSaberLaunchPreset = "single-5k",
+        InstanceCount = 1,
+        MaxConcurrentRecordings = 1,
+        CaptureWidth = 5120,
+        CaptureHeight = 2880,
+        ManageDisplayScale = false,
+        HideTaskbarDuringRun = false,
+        BeatSaberLaunchArguments = ControlPanelSettings.Windowed5kBeatSaberLaunchArguments
+    };
+    single5kSettings.Normalize();
+    AssertEqual("single-5k", single5kSettings.BeatSaberLaunchPreset, "single 5k launch preset");
 
     var singleInstanceSettings = new ControlPanelSettings
     {
@@ -1654,6 +1737,268 @@ static void RunQueueMapImportCheck(string workspace)
     AssertEqual(true, File.Exists(Path.Combine(downloaded[0].MapInstallPath, "Info.dat")), "downloaded map info.dat");
 }
 
+static void RunScoreSaberReferenceImportCheck(string workspace)
+{
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        scoreSaberReplayDownloader: new FakeScoreSaberReplayDownloader());
+
+    var imported = store.ImportReferencesAsync(new ReplayReferenceImportRequest
+    {
+        References = new List<string> { "https://scoresaber.com/api/v2/scores/88905556/replay" }
+    }, CancellationToken.None).GetAwaiter().GetResult();
+
+    AssertEqual(1, imported.Count, "scoresaber linked replay import count");
+    var replay = imported[0];
+    AssertEqual(ReplayProvider.ScoreSaber2, replay.Provider, "scoresaber provider");
+    AssertEqual(ReplayReferenceKind.ScoreSaber2ScoreUrl, replay.ReferenceKind, "scoresaber reference kind");
+    AssertEqual("ScoreSaber", replay.ReplayFormat, "scoresaber replay format");
+    AssertEqual("88905556", replay.ScoreId, "scoresaber score id");
+    AssertEqual("Theatore Creatore", replay.SongName, "scoresaber song");
+    AssertEqual("_Expert_SoloStandard", replay.Difficulty, "scoresaber difficulty");
+    AssertEqual("SoloStandard", replay.Mode, "scoresaber mode");
+    AssertEqual("CC0290E6A16C57889CEF9EF4AF4FC463483497BB", replay.LevelHash, "scoresaber hash");
+    AssertEqual(true, File.Exists(replay.Path), "scoresaber replay file exists");
+    AssertEqual(true, File.Exists(replay.Path + ".metadata.json"), "scoresaber sidecar exists");
+}
+
+static void RunLocalScoreSaberImportMetadataEnrichmentCheck(string workspace)
+{
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        scoreSaberReplayDownloader: new FakeScoreSaberReplayDownloader(),
+        mapDownloader: new FakeBeatSaverMapDownloader(downloadsMap: true, songLengthSeconds: 209.0));
+
+    var collection = new FormFileCollection();
+    var stream = new MemoryStream();
+    stream.Write(Encoding.UTF8.GetBytes("ScoreSaber Replay "));
+    stream.WriteByte(0x0D);
+    stream.WriteByte(0x0A);
+    stream.WriteByte(0x01);
+    stream.WriteByte(0x02);
+    stream.WriteByte(0x03);
+    stream.Position = 0;
+
+    collection.Add(
+        new FormFile(
+            stream,
+            0,
+            stream.Length,
+            "files",
+            "scoresaber-88905556-Matty-Song-_Expert_SoloStandard-CC0290E6A16C57889CEF9EF4AF4FC463483497BB.dat"));
+
+    using var files = new ReplayFormFiles(collection, new List<MemoryStream> { stream });
+    var imported = store.ImportFiles(files.Collection);
+    AssertEqual(1, imported.Count, "local scoresaber import count");
+    var replay = imported[0];
+    AssertEqual("Matty", replay.PlayerName, "local scoresaber import player");
+    AssertEqual(209.0, replay.EstimatedSeconds, "local scoresaber import duration");
+    AssertEqual(true, File.Exists(replay.Path + ".metadata.json"), "local scoresaber import sidecar");
+}
+
+static void RunLocalScoreSaberLongPlayerIdCheck(string workspace)
+{
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        scoreSaberReplayDownloader: new FakeScoreSaberReplayDownloader());
+
+    var collection = new FormFileCollection();
+    var stream = new MemoryStream();
+    stream.Write(Encoding.UTF8.GetBytes("ScoreSaber Replay "));
+    stream.WriteByte(0x0D);
+    stream.WriteByte(0x0A);
+    stream.WriteByte(0x01);
+    stream.WriteByte(0x02);
+    stream.Position = 0;
+
+    collection.Add(
+        new FormFile(
+            stream,
+            0,
+            stream.Length,
+            "files",
+            "76561198117409561-76561198117409561-Expert-Standard-CC0290E6A16C57889CEF9EF4AF4FC463497BB.dat"));
+    using var files = new ReplayFormFiles(collection, new List<MemoryStream> { stream });
+    var imported = store.ImportFiles(files.Collection);
+    var importedReplay = imported[0];
+    AssertEqual(1, imported.Count, "local scoresaber long player-id import count");
+    AssertEqual("ResolvedSteamName", importedReplay.PlayerName, "local scoresaber long player-id resolved name");
+    AssertEqual(true, File.Exists(importedReplay.Path + ".metadata.json"), "local scoresaber long player-id sidecar");
+}
+
+static void RunLocalScoreSaberFilenameFallbackCheck(string workspace)
+{
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        scoreSaberReplayDownloader: new FakeScoreSaberReplayDownloader());
+
+    var collection = new FormFileCollection();
+    var streamOne = new MemoryStream();
+    streamOne.Write(Encoding.UTF8.GetBytes("ScoreSaber Replay "));
+    streamOne.WriteByte(0x0D);
+    streamOne.WriteByte(0x0A);
+    streamOne.WriteByte(0x01);
+    streamOne.WriteByte(0x02);
+    streamOne.Position = 0;
+
+    var streamTwo = new MemoryStream();
+    streamTwo.Write(Encoding.UTF8.GetBytes("ScoreSaber Replay "));
+    streamTwo.WriteByte(0x0D);
+    streamTwo.WriteByte(0x0A);
+    streamTwo.WriteByte(0x01);
+    streamTwo.WriteByte(0x02);
+    streamTwo.Position = 0;
+
+    collection.Add(
+        new FormFile(
+            streamOne,
+            0,
+            streamOne.Length,
+            "files",
+            "scoresaber-12345678-Lunaticon-3-29-Expert-Standard-CC0290E6A16C57889CEF9EF4AF4FC463483497BB.dat"));
+    collection.Add(
+        new FormFile(
+            streamTwo,
+            0,
+            streamTwo.Length,
+            "files",
+            "76561198117409561-99.9-2-10-Expert-Standard-CC0290E6A16C57889CEF9EF4AF4FC463483497BB.dat"));
+
+    using var files = new ReplayFormFiles(collection, new List<MemoryStream> { streamOne, streamTwo });
+    var imported = store.ImportFiles(files.Collection);
+    AssertEqual(2, imported.Count, "local scoresaber filename fallback count");
+
+    var lunaticon = imported.First(item => string.Equals(item.PlayerName, "Lunaticon", StringComparison.OrdinalIgnoreCase));
+
+    var ninetyNine = imported.First(item => string.Equals(item.PlayerName, "99.9", StringComparison.OrdinalIgnoreCase));
+}
+
+static void RunScoreSaberRichTextPlayerNameFormattingCheck()
+{
+    var method = typeof(ScoreSaberReplayDownloader).GetMethod(
+                     "StripRichTextTags",
+                     System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                 ?? throw new MissingMethodException(typeof(ScoreSaberReplayDownloader).FullName, "StripRichTextTags");
+
+    var cleaned = method.Invoke(null, new object?[] { "<color=#F96854>Bizzy825</color>" });
+    AssertEqual("Bizzy825", cleaned, "scoresaber rich text player name");
+}
+
+static void RunMixedProviderReplayIntegrationCheck(string workspace)
+{
+    var store = CreateStore(
+        workspace,
+        instanceCount: 2,
+        maxConcurrentRecordings: 2,
+        scoreSaberReplayDownloader: new FakeScoreSaberReplayDownloader());
+
+    using var files = CreateBeatLeaderAndScoreSaberReplayFiles();
+    var imported = store.ImportFiles(files.Collection);
+    AssertEqual(2, imported.Count, "mixed provider local import count");
+
+    var importedReference = store.ImportReferencesAsync(
+        new ReplayReferenceImportRequest
+        {
+            References = new List<string> { "https://scoresaber.com/api/v2/scores/88905556/replay" }
+        },
+        CancellationToken.None).GetAwaiter().GetResult();
+    AssertEqual(1, importedReference.Count, "mixed provider linked import count");
+    var settingsRequest = CreateSettingsUpdateRequest(store.Snapshot().Settings);
+    // Safety settings are forced on, so these false values must be ignored by assignments.
+    settingsRequest.DisableScoreSubmissions = false;
+    settingsRequest.SuppressScoreSaberReplayUi = false;
+    store.UpdateSettings(settingsRequest);
+
+    var queue = store.Snapshot().Queue;
+    AssertEqual(3, queue.Count, "mixed provider queue count");
+    var providers = queue.Select(item => item.Provider).Distinct().OrderBy(value => value.ToString()).ToArray();
+    AssertEqual(2, providers.Length, "mixed provider queue providers");
+    AssertContains("BeatLeader", string.Join(",", providers), "mixed provider contains beatleader");
+    AssertContains("ScoreSaber2", string.Join(",", providers), "mixed provider contains scoresaber");
+
+    RegisterWorkers(store, "mixed-worker", 2);
+    var workerIds = new[] { "mixed-worker-0", "mixed-worker-1" };
+    SetGameProcessIds(store, 2100, 2101);
+    store.StartRun();
+
+    var workerAssignments = workerIds
+        .Select(workerId => new { WorkerId = workerId, Assignment = store.GetAssignment(workerId) })
+        .ToArray();
+
+    AssertEqual(2, workerAssignments.Count(item => item.Assignment.HasAssignment), "mixed provider active assignment count");
+    var assignedProviders = workerAssignments
+        .Where(item => item.Assignment.HasAssignment)
+        .Select(item => item.Assignment.Provider)
+        .Distinct()
+        .ToArray();
+    AssertEqual(2, assignedProviders.Length, "mixed provider assignment provider diversity");
+    AssertContains("BeatLeader", string.Join(",", assignedProviders), "mixed provider has beatleader assignment");
+    AssertContains("ScoreSaber2", string.Join(",", assignedProviders), "mixed provider has scoresaber assignment");
+    AssertEqual(
+        true,
+        workerAssignments
+            .Where(item => item.Assignment.HasAssignment)
+            .All(item => item.Assignment.DisableScoreSubmissions == true),
+        "mixed provider disable score submissions forced true");
+    AssertEqual(
+        true,
+        workerAssignments
+            .Where(item => item.Assignment.HasAssignment)
+            .All(item => item.Assignment.SuppressScoreSaberReplayUi == true),
+        "mixed provider suppress scoresaber replay ui forced true");
+
+    var assignedReferenceKinds = workerAssignments
+        .Where(item => item.Assignment.HasAssignment)
+        .Select(item => item.Assignment.ReferenceKind)
+        .Distinct()
+        .ToArray();
+    AssertEqual(2, assignedReferenceKinds.Length, "mixed provider assignment reference kind diversity");
+    AssertContains("LocalBsorFile", string.Join(",", assignedReferenceKinds), "mixed provider has beatleader local reference kind");
+    AssertContains("LocalScoreSaberDatFile", string.Join(",", assignedReferenceKinds), "mixed provider has scoresaber local dat reference kind");
+
+    var reportedReplayIds = new HashSet<string?>(StringComparer.OrdinalIgnoreCase);
+    foreach (var item in workerAssignments.Where(item => item.Assignment.HasAssignment))
+    {
+        store.ReportAssignment(new WorkerReportRequest
+        {
+            WorkerId = item.WorkerId,
+            AssignmentId = item.Assignment.AssignmentId!,
+            Status = "Completed",
+            OutputPath = Path.Combine(workspace, item.Assignment.InstanceIndex!.Value.ToString("00") + "-recorded.mp4"),
+            SyncStatus = "Corrected"
+        });
+        reportedReplayIds.Add(item.Assignment.ReplayId);
+    }
+
+    var additionalAssignments = workerIds
+        .Select(workerId => new { WorkerId = workerId, Assignment = store.GetAssignment(workerId) })
+        .Where(assignment => assignment.Assignment.HasAssignment &&
+                             assignment.Assignment.ReplayId != null &&
+                             !reportedReplayIds.Contains(assignment.Assignment.ReplayId))
+        .ToArray();
+
+    foreach (var assignment in additionalAssignments)
+    {
+        store.ReportAssignment(new WorkerReportRequest
+        {
+            WorkerId = assignment.WorkerId,
+            AssignmentId = assignment.Assignment.AssignmentId!,
+            Status = "Completed",
+            OutputPath = Path.Combine(workspace, assignment.Assignment.InstanceIndex!.Value.ToString("00") + "-recorded.mp4"),
+            SyncStatus = "Corrected"
+        });
+        reportedReplayIds.Add(assignment.Assignment.ReplayId);
+    }
+
+    var finalState = store.Snapshot();
+    AssertEqual("Complete", finalState.Run.Status, "mixed provider run status");
+    AssertEqual(3, finalState.Run.CompletedCount, "mixed provider completed count");
+}
+
 static void RunCompletedRecordingUriCheck(string workspace)
 {
     var store = CreateStore(workspace, instanceCount: 1);
@@ -1823,7 +2168,8 @@ static ControlPanelStore CreateStore(
     IRecordingAudioVerifier? recordingAudioVerifier = null,
     IRecorderHostHealthChecker? recorderHostHealthChecker = null,
     IBeatSaverMapDownloader? mapDownloader = null,
-    IWorkerPluginInstaller? workerPluginInstaller = null)
+    IWorkerPluginInstaller? workerPluginInstaller = null,
+    IScoreSaberReplayDownloader? scoreSaberReplayDownloader = null)
 {
     return new ControlPanelStore(new ControlPanelSettings
     {
@@ -1853,7 +2199,8 @@ static ControlPanelStore CreateStore(
     }, recordingAudioVerifier,
         recorderHostHealthChecker ?? new FakeRecorderHostHealthChecker(true),
         mapDownloader ?? new FakeBeatSaverMapDownloader(downloadsMap: true),
-        workerPluginInstaller);
+        workerPluginInstaller,
+        scoreSaberReplayDownloader);
 }
 
 static void RegisterWorkers(ControlPanelStore store, string workerPrefix, int count = 3)
@@ -1920,6 +2267,8 @@ static SettingsUpdateRequest CreateSettingsUpdateRequest(ControlPanelSettings se
         SharedCustomWallsDirectory = settings.SharedCustomWallsDirectory,
         ShareCustomBombs = settings.ShareCustomBombs,
         SharedCustomBombsDirectory = settings.SharedCustomBombsDirectory,
+        DisableScoreSubmissions = settings.DisableScoreSubmissions,
+        SuppressScoreSaberReplayUi = settings.SuppressScoreSaberReplayUi,
         BeatSaberInstancesRoot = settings.BeatSaberInstancesRoot,
         BeatSaberInstanceNamePrefix = settings.BeatSaberInstanceNamePrefix,
         BeatSaberLaunchPreset = settings.BeatSaberLaunchPreset,
@@ -2047,6 +2396,43 @@ static string CreateFakeRecorderSettings(int index)
       }
     }
     """;
+}
+
+static ReplayFormFiles CreateBeatLeaderAndScoreSaberReplayFiles()
+{
+    var collection = new FormFileCollection();
+    var streams = new List<MemoryStream>();
+
+    var beatLeaderStream = new MemoryStream();
+    WriteSampleBsor(
+        beatLeaderStream,
+        "Song 1",
+        "Mapper 1",
+        "ExpertPlus",
+        123456,
+        60);
+    beatLeaderStream.Position = 0;
+    streams.Add(beatLeaderStream);
+    collection.Add(new FormFile(beatLeaderStream, 0, beatLeaderStream.Length, "files", "01-mixed-beatleader.bsor"));
+
+    var scoreSaberStream = new MemoryStream();
+    scoreSaberStream.Write(Encoding.UTF8.GetBytes("ScoreSaber Replay "));
+    scoreSaberStream.WriteByte(0x0D);
+    scoreSaberStream.WriteByte(0x0A);
+    scoreSaberStream.WriteByte(0x01);
+    scoreSaberStream.WriteByte(0x02);
+    scoreSaberStream.WriteByte(0x03);
+    scoreSaberStream.Position = 0;
+    streams.Add(scoreSaberStream);
+    collection.Add(
+        new FormFile(
+            scoreSaberStream,
+            0,
+            scoreSaberStream.Length,
+            "files",
+            "03-scoresaber-player-song-SoloStandard-SoloStandard-CC0290E6A16C57889CEF9EF4AF4FC463483497BB.dat"));
+
+    return new ReplayFormFiles(collection, streams);
 }
 
 static ReplayFormFiles CreateReplayFiles(int count)
@@ -2261,10 +2647,12 @@ internal sealed class FakeRecorderHostHealthChecker : IRecorderHostHealthChecker
 internal sealed class FakeBeatSaverMapDownloader : IBeatSaverMapDownloader
 {
     private readonly bool _downloadsMap;
+    private readonly double? _songLengthSeconds;
 
-    public FakeBeatSaverMapDownloader(bool downloadsMap)
+    public FakeBeatSaverMapDownloader(bool downloadsMap, double? songLengthSeconds = null)
     {
         _downloadsMap = downloadsMap;
+        _songLengthSeconds = songLengthSeconds;
     }
 
     public BeatSaverMapDownloadResult DownloadByHash(string levelHash, string targetRoot)
@@ -2288,6 +2676,89 @@ internal sealed class FakeBeatSaverMapDownloader : IBeatSaverMapDownloader
             InstallPath = target,
             Detail = "Downloaded from fake BeatSaver."
         };
+    }
+
+    public double? GetSongLengthSecondsByHash(string levelHash)
+    {
+        return _songLengthSeconds;
+    }
+}
+
+internal sealed class FakeScoreSaberReplayDownloader : IScoreSaberReplayDownloader
+{
+    public Task<ScoreSaberReplayDownload> DownloadAsync(
+        ReplayReference reference,
+        string queueDirectory,
+        Func<string, string> createImportPath,
+        CancellationToken cancellationToken)
+    {
+        var targetPath = createImportPath(
+            "scoresaber-88905556-Theatore Creatore-_Expert_SoloStandard-SoloStandard-CC0290E6A16C57889CEF9EF4AF4FC463483497BB.dat");
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        File.WriteAllBytes(
+            targetPath,
+            Encoding.UTF8.GetBytes("ScoreSaber Replay ").Concat(new byte[] { 0x0D, 0x0A, 0x01, 0x02 }).ToArray());
+        return Task.FromResult(new ScoreSaberReplayDownload
+        {
+            LocalPath = targetPath,
+            Metadata = new ReplayQueueSidecar
+            {
+                Provider = ReplayProvider.ScoreSaber2,
+                ReferenceKind = ReplayReferenceKind.ScoreSaber2ScoreUrl,
+                ReplayFormat = "ScoreSaber",
+                SourceUrl = reference.OriginalValue,
+                ScoreId = "88905556",
+                PlayerName = "Matty",
+                SongName = "Theatore Creatore",
+                Mapper = "Sachiko",
+                Difficulty = "_Expert_SoloStandard",
+                Mode = "SoloStandard",
+                LevelHash = "CC0290E6A16C57889CEF9EF4AF4FC463483497BB",
+                EstimatedSeconds = 154.84
+            }
+        });
+    }
+
+    public Task<ReplayQueueSidecar?> GetReplayMetadataByScoreIdAsync(
+        string scoreId,
+        CancellationToken cancellationToken)
+    {
+        if (scoreId == "88905556")
+        {
+            return Task.FromResult<ReplayQueueSidecar?>(new ReplayQueueSidecar
+            {
+                Provider = ReplayProvider.ScoreSaber2,
+                ReferenceKind = ReplayReferenceKind.ScoreSaber2ScoreUrl,
+                ReplayFormat = "ScoreSaber",
+                SourceUrl = "https://scoresaber.com/api/v2/scores/88905556/replay",
+                ScoreId = "88905556",
+                PlayerName = "Matty",
+                PlayerId = "76561198117409561",
+                SongName = "Theatore Creatore",
+                Mapper = "Sachiko",
+                Difficulty = "_Expert_SoloStandard",
+                Mode = "SoloStandard",
+                LevelHash = "CC0290E6A16C57889CEF9EF4AF4FC463483497BB",
+                EstimatedSeconds = 154.84
+            });
+        }
+
+        return Task.FromResult<ReplayQueueSidecar?>(null);
+    }
+
+    public Task<string?> GetPlayerNameByPlayerIdAsync(string playerId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(playerId))
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        if (!string.Equals(playerId, "76561198117409561", StringComparison.Ordinal))
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        return Task.FromResult<string?>("ResolvedSteamName");
     }
 }
 

@@ -127,9 +127,16 @@ $ControlPanelUrl = if ([string]::IsNullOrWhiteSpace($ControlPanelUrlValue)) {
 else {
     $ControlPanelUrlValue.TrimEnd("/")
 }
-$RestoreDisplayScalePercent = Get-LocalSettingInt -Settings $LocalSettings -Names @("restoreDisplayScalePercent")
-if ($null -eq $RestoreDisplayScalePercent -or $RestoreDisplayScalePercent -lt 100 -or $RestoreDisplayScalePercent -gt 500) {
+$SettingsRestoreDisplayScalePercent = Get-LocalSettingInt -Settings $LocalSettings -Names @("restoreDisplayScalePercent")
+$HasSettingsRestoreDisplayScalePercent = $null -ne $SettingsRestoreDisplayScalePercent -and
+    $SettingsRestoreDisplayScalePercent -ge 100 -and
+    $SettingsRestoreDisplayScalePercent -le 500
+$RestoreDisplayScalePercent = if ($HasSettingsRestoreDisplayScalePercent) {
+    $SettingsRestoreDisplayScalePercent
+}
+else {
     $RestoreDisplayScalePercent = 150
+    $RestoreDisplayScalePercent
 }
 $DisplayScaleScreenIndex = Get-LocalSettingInt -Settings $LocalSettings -Names @("monitorIndex", "recordingMonitorIndex")
 if ($null -eq $DisplayScaleScreenIndex -or $DisplayScaleScreenIndex -lt 0 -or $DisplayScaleScreenIndex -gt 15) {
@@ -198,7 +205,7 @@ function Get-StateDisplayScaleSettings {
 }
 
 $StateDisplayScaleSettings = Get-StateDisplayScaleSettings
-if ($null -ne $StateDisplayScaleSettings) {
+if ($null -ne $StateDisplayScaleSettings -and -not $HasSettingsRestoreDisplayScalePercent) {
     $RestoreDisplayScalePercent = $StateDisplayScaleSettings.RestoreDisplayScalePercent
     if ($null -ne $StateDisplayScaleSettings.DisplayScaleScreenIndex) {
         $DisplayScaleScreenIndex = $StateDisplayScaleSettings.DisplayScaleScreenIndex
@@ -291,6 +298,25 @@ function Get-OrphanControlPanelBrowserProcesses {
     }
 }
 
+function Restore-RecordingDisplayScale {
+    if ($SkipDisplayScaleRestore) {
+        return
+    }
+
+    $scaleScript = Join-Path $RepoRoot "scripts\display\Set-RecordingDisplayScale.ps1"
+    if (-not (Test-Path -LiteralPath $scaleScript)) {
+        return
+    }
+
+    try {
+        & $scaleScript -ScreenIndex $DisplayScaleScreenIndex -ScalePercent $RestoreDisplayScalePercent | Out-Null
+        Write-Step "Restored recording display scale on screen $DisplayScaleScreenIndex to $RestoreDisplayScalePercent%."
+    }
+    catch {
+        Write-Step "Could not restore recording display scale: $($_.Exception.Message)"
+    }
+}
+
 function Get-OrphanRecorderProcesses {
     param([object[]]$KnownProcessIds)
 
@@ -366,6 +392,8 @@ try {
     $stoppedAny = $false
     $seenProcessIds = @()
 
+    Restore-RecordingDisplayScale
+
     if ($StopGames) {
         Stop-TrackedBeatSaberProcesses
     }
@@ -425,18 +453,7 @@ try {
         Write-Step "No started recorder processes were found."
     }
 
-    if (-not $SkipDisplayScaleRestore) {
-        $scaleScript = Join-Path $RepoRoot "scripts\display\Set-RecordingDisplayScale.ps1"
-        if (Test-Path -LiteralPath $scaleScript) {
-            try {
-                & $scaleScript -ScreenIndex $DisplayScaleScreenIndex -ScalePercent $RestoreDisplayScalePercent | Out-Null
-                Write-Step "Restored recording display scale on screen $DisplayScaleScreenIndex to $RestoreDisplayScalePercent%."
-            }
-            catch {
-                Write-Step "Could not restore recording display scale: $($_.Exception.Message)"
-            }
-        }
-    }
+    Restore-RecordingDisplayScale
 }
 catch {
     Write-Host ""

@@ -138,6 +138,12 @@ h1 {
   flex-wrap: nowrap;
 }
 
+.referenceInput {
+  width: min(260px, 22vw);
+  min-width: 150px;
+  min-height: 38px;
+}
+
 .viewTabs {
   flex: 0 0 auto;
   border-radius: 5px;
@@ -707,6 +713,18 @@ button,
   color: #96f2ad;
   border-color: rgba(85, 217, 119, 0.34);
   background: rgba(85, 217, 119, 0.08);
+}
+
+.planPill.provider.beatLeader {
+  color: #d7c1ff;
+  border-color: rgba(151, 105, 255, 0.48);
+  background: rgba(151, 105, 255, 0.13);
+}
+
+.planPill.provider.scoreSaber {
+  color: #ffd983;
+  border-color: rgba(236, 183, 64, 0.52);
+  background: rgba(236, 183, 64, 0.13);
 }
 
 .planPill.mapMissing,
@@ -3651,6 +3669,10 @@ textarea {
   border-color: rgba(255, 79, 87, 0.35);
   background: rgba(255, 79, 87, 0.08);
 }
+.detailPath.warningText {
+  border-color: rgba(232, 184, 76, 0.45);
+  background: rgba(232, 184, 76, 0.12);
+}
 
 .detailsActions {
   display: grid;
@@ -3729,6 +3751,10 @@ textarea {
 
 .errorText {
   color: #ffc2c2;
+}
+
+.queuePath.warningText {
+  color: #ffdf9f;
 }
 
 .emptyState {

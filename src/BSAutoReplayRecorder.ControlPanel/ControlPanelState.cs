@@ -31,6 +31,16 @@ public sealed class ReplayQueueRecord
 
     public int SequenceNumber { get; set; }
 
+    public ReplayProvider Provider { get; set; } = ReplayProvider.BeatLeader;
+
+    public ReplayReferenceKind ReferenceKind { get; set; } = ReplayReferenceKind.LocalBsorFile;
+
+    public string ReplayFormat { get; set; } = "BSOR";
+
+    public string SourceUrl { get; set; } = "";
+
+    public string ScoreId { get; set; } = "";
+
     public string FileName { get; set; } = "";
 
     public string Path { get; set; } = "";
@@ -42,6 +52,8 @@ public sealed class ReplayQueueRecord
     public string PlayerName { get; set; } = "";
 
     public string Difficulty { get; set; } = "";
+
+    public string Mode { get; set; } = "";
 
     public string LevelHash { get; set; } = "";
 
@@ -68,6 +80,8 @@ public sealed class ReplayQueueRecord
     public string? OutputPath { get; set; }
 
     public string? Error { get; set; }
+
+    public string? Warning { get; set; }
 
     public string SyncStatus { get; set; } = "";
 
@@ -306,6 +320,10 @@ public sealed class SettingsUpdateRequest
     public bool RequireAudioForRun { get; set; }
 
     public int AudioBitrateKbps { get; set; }
+
+    public bool? DisableScoreSubmissions { get; set; }
+
+    public bool? SuppressScoreSaberReplayUi { get; set; }
 
     public int AudioSampleRate { get; set; }
 

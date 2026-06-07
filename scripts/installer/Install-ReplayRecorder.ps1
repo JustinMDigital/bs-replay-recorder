@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("4k-monitor-2x2", "1440p-monitor-2x2", "single-1080p", "single-1440p", "single-4k")]
+    [ValidateSet("5k-monitor-2x2", "4k-monitor-2x2", "1440p-monitor-2x2", "single-1080p", "single-1440p", "single-4k", "single-5k")]
     [string]$Preset = "4k-monitor-2x2",
     [string]$SourceBeatSaberPath,
     [int]$InstanceCount = 0,
@@ -496,7 +496,7 @@ function Apply-LocalSettingsDefaults {
 
     if (-not $InstallerBoundParameters.ContainsKey("Preset")) {
         $presetValue = Get-LocalSettingString -Settings $LocalSettings -Names @("preset")
-        if ($presetValue -and @("4k-monitor-2x2", "1440p-monitor-2x2", "single-1080p", "single-1440p", "single-4k").Contains($presetValue)) {
+        if ($presetValue -and @("5k-monitor-2x2", "4k-monitor-2x2", "1440p-monitor-2x2", "single-1080p", "single-1440p", "single-4k", "single-5k").Contains($presetValue)) {
             $script:Preset = $presetValue
         }
     }
@@ -1113,8 +1113,27 @@ function Get-PresetSettings {
     $smallArgs = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 --no-yeet fpfc --verbose"
     $mediumArgs = "-screen-fullscreen 0 -screen-width 2560 -screen-height 1440 --no-yeet fpfc --verbose"
     $largeArgs = "-screen-fullscreen 0 -screen-width 3840 -screen-height 2160 --no-yeet fpfc --verbose"
+    $fiveKArgs = "-screen-fullscreen 0 -screen-width 5120 -screen-height 2880 --no-yeet fpfc --verbose"
 
     switch ($PresetId) {
+        "5k-monitor-2x2" {
+            return [pscustomobject]@{
+                InstanceCount = 3
+                MaxConcurrentRecordings = 3
+                TargetFps = 60
+                CaptureWidth = 2560
+                CaptureHeight = 1440
+                VideoBitrateKbps = 18000
+                MonitorIndex = 1
+                QualityMode = "Performance"
+                LaunchArguments = $fiveKArgs
+                ManageDisplayScale = $true
+                RecordingDisplayScalePercent = 100
+                RestoreDisplayScalePercent = 150
+                HideTaskbarDuringRun = $true
+                RequireMatchingInstanceBaseline = $true
+            }
+        }
         "4k-monitor-2x2" {
             return [pscustomobject]@{
                 InstanceCount = 3
@@ -1180,6 +1199,24 @@ function Get-PresetSettings {
                 MonitorIndex = 1
                 QualityMode = "Quality"
                 LaunchArguments = $largeArgs
+                ManageDisplayScale = $false
+                RecordingDisplayScalePercent = 100
+                RestoreDisplayScalePercent = 150
+                HideTaskbarDuringRun = $false
+                RequireMatchingInstanceBaseline = $false
+            }
+        }
+        "single-5k" {
+            return [pscustomobject]@{
+                InstanceCount = 1
+                MaxConcurrentRecordings = 1
+                TargetFps = 60
+                CaptureWidth = 5120
+                CaptureHeight = 2880
+                VideoBitrateKbps = 56000
+                MonitorIndex = 1
+                QualityMode = "Quality"
+                LaunchArguments = $fiveKArgs
                 ManageDisplayScale = $false
                 RecordingDisplayScalePercent = 100
                 RestoreDisplayScalePercent = 150
@@ -1473,7 +1510,7 @@ function New-PluginSettings {
             PreferredInstanceIndex = $Index
             PollIntervalSeconds = 1.0
             HeartbeatIntervalSeconds = 2.0
-            RequestTimeoutSeconds = 10.0
+            RequestTimeoutSeconds = 30.0
         }
         WindowPlacement = [ordered]@{
             Enabled = $true

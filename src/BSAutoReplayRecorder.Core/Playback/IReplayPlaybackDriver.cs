@@ -9,9 +9,16 @@ public interface IReplayPlaybackDriver
 
     bool CanPlay(ReplayReference replayReference);
 
+    IReplayPlaybackWait CreateStartWait();
+
+    IReplayPlaybackWait CreateFinishWait();
+
+    Task ValidateReplayAsync(
+        ReplayReference replayReference,
+        CancellationToken cancellationToken);
+
     Task<ReplayPlaybackSession> StartReplayAsync(
         ReplayQueueItem queueItem,
         ReplayReference replayReference,
         CancellationToken cancellationToken);
 }
-

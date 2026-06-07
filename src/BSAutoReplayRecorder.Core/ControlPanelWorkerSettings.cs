@@ -18,7 +18,9 @@ public sealed class ControlPanelWorkerSettings
 
     public double HeartbeatIntervalSeconds { get; set; } = 5;
 
-    public double RequestTimeoutSeconds { get; set; } = 10;
+    public double IdleShutdownMinutes { get; set; } = 20;
+
+    public double RequestTimeoutSeconds { get; set; } = 30;
 
     public string NormalizedBaseUrl
     {

@@ -8,16 +8,23 @@ namespace BSAutoReplayRecorder.Core;
 
 public sealed class ReplayQueue
 {
-    private readonly BsorInfoReader _reader;
+    private readonly BsorInfoReader _bsorReader;
+    private readonly ScoreSaberReplayInfoReader _scoreSaberReader;
 
     public ReplayQueue()
-        : this(new BsorInfoReader())
+        : this(new BsorInfoReader(), new ScoreSaberReplayInfoReader())
     {
     }
 
     public ReplayQueue(BsorInfoReader reader)
+        : this(reader, new ScoreSaberReplayInfoReader())
     {
-        _reader = reader ?? throw new ArgumentNullException(nameof(reader));
+    }
+
+    public ReplayQueue(BsorInfoReader reader, ScoreSaberReplayInfoReader scoreSaberReader)
+    {
+        _bsorReader = reader ?? throw new ArgumentNullException(nameof(reader));
+        _scoreSaberReader = scoreSaberReader ?? throw new ArgumentNullException(nameof(scoreSaberReader));
     }
 
     public ReplayQueueLoadResult Load(ReplayQueueOptions options)
@@ -37,7 +44,8 @@ public sealed class ReplayQueue
             : SearchOption.TopDirectoryOnly;
 
         var replayPaths = Directory
-            .EnumerateFiles(options.InputDirectory, "*.bsor", searchOption)
+            .EnumerateFiles(options.InputDirectory, "*.*", searchOption)
+            .Where(IsSupportedReplayFile)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -48,8 +56,8 @@ public sealed class ReplayQueue
         {
             try
             {
-                var info = _reader.Read(replayPath);
-                items.Add(new ReplayQueueItem(items.Count + 1, replayPath, info));
+                var item = CreateItem(items.Count + 1, replayPath);
+                items.Add(item);
             }
             catch (Exception ex) when (ex is IOException || ex is InvalidDataException || ex is EndOfStreamException)
             {
@@ -63,5 +71,42 @@ public sealed class ReplayQueue
 
         return new ReplayQueueLoadResult(items, failures);
     }
-}
 
+    private ReplayQueueItem CreateItem(int sequenceNumber, string replayPath)
+    {
+        var extension = Path.GetExtension(replayPath);
+        if (string.Equals(extension, ".bsor", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ReplayQueueItem(
+                sequenceNumber,
+                replayPath,
+                _bsorReader.Read(replayPath),
+                ReplayProvider.BeatLeader,
+                ReplayReferenceKind.LocalBsorFile,
+                null,
+                null);
+        }
+
+        if (string.Equals(extension, ".dat", StringComparison.OrdinalIgnoreCase))
+        {
+            var info = _scoreSaberReader.Read(replayPath);
+            return new ReplayQueueItem(
+                sequenceNumber,
+                replayPath,
+                info,
+                ReplayProvider.ScoreSaber2,
+                ReplayReferenceKind.LocalScoreSaberDatFile,
+                null,
+                info.ScoreId);
+        }
+
+        throw new InvalidDataException("Unsupported replay file extension: " + extension);
+    }
+
+    private static bool IsSupportedReplayFile(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return string.Equals(extension, ".bsor", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(extension, ".dat", StringComparison.OrdinalIgnoreCase);
+    }
+}

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Replay Recorder Control Panel</title>
   <link rel="icon" href="/assets/logo.png">
-  <link rel="stylesheet" href="/styles.css?v=diagnostics">
+  <link rel="stylesheet" href="/styles.css?v=provider-pills">
 </head>
 <body>
   <main class="shell dashboardShell">
@@ -36,8 +36,10 @@
           <a class="viewTab" href="/file-settings.html">Files</a>
         </nav>
         <div class="toolbar">
-          <button id="addReplays" class="secondaryButton" type="button">Import .bsor</button>
-          <input id="queueReplayFiles" class="hiddenFileInput" type="file" multiple accept=".bsor">
+          <button id="addReplays" class="secondaryButton" type="button">Import replays</button>
+          <input id="queueReplayFiles" class="hiddenFileInput" type="file" multiple accept=".bsor,.dat">
+          <input id="replayReferenceInput" class="referenceInput" type="url" placeholder="Paste replay link" aria-label="Replay URL">
+          <button id="importReplayReference" class="secondaryButton" type="button">Import link</button>
           <button id="launchGames" class="secondaryButton" type="button">Launch all</button>
           <button id="startRun" class="primaryButton" type="button">Start run</button>
           <button id="stopRun" class="secondaryButton" type="button">Stop</button>
@@ -137,8 +139,8 @@
           </div>
           <div class="importStaging" aria-hidden="true">
             <label class="fileDrop">
-              <input id="replayFiles" type="file" multiple accept=".bsor" tabindex="-1">
-              <strong>Drop .bsor files</strong>
+              <input id="replayFiles" type="file" multiple accept=".bsor,.dat" tabindex="-1">
+              <strong>Drop replay files</strong>
               <span id="fileSelection">No files selected</span>
             </label>
             <button id="uploadReplays" class="secondaryButton fullWidth" type="button" tabindex="-1">Import Replays</button>
@@ -258,6 +260,7 @@
                   <option value="1920x1080">1080p (1920 x 1080)</option>
                   <option value="2560x1440">1440p (2560 x 1440)</option>
                   <option value="3840x2160">4K (3840 x 2160)</option>
+                  <option value="5120x2880">5K (5120 x 2880)</option>
                   <option value="custom">Custom</option>
                 </select>
               </label>
@@ -506,15 +509,19 @@
             <h3>Launch</h3>
             <div class="miniGrid">
               <label class="span2">Preset
-                <select id="beatSaberLaunchPreset">
-                  <option value="4k-monitor-2x2">Up to 4 x 1080p</option>
-                  <option value="1440p-monitor-2x2">Up to 4 x 720p</option>
-                  <option value="single-4k">Single 4K</option>
-                  <option value="single-1440p">Single 1440p</option>
-                  <option value="single-1080p">Single 1080p</option>
-                  <option value="windowed-1080p">Windowed 1080p</option>
-                  <option value="windowed-720p">Windowed 720p</option>
-                  <option value="custom">Custom</option>
+                  <select id="beatSaberLaunchPreset">
+                    <option value="5k-monitor-2x2">4x 1440p streams (5k monitor)</option>
+                    <option value="4k-monitor-2x2">4x 1080p streams (4k monitor)</option>
+                    <option value="720p-monitor-2x2">4x 720p streams (1440p monitor)</option>
+                    <option value="1440p-monitor-2x2">4x 720p streams (1440p monitor)</option>
+                    <option value="single-5k">1x 5K stream (5k monitor)</option>
+                    <option value="single-4k">1x 4K stream (4k monitor)</option>
+                    <option value="single-1440p">1x 1440p stream (1440p monitor)</option>
+                    <option value="single-1080p">1x 1080p stream (4k monitor)</option>
+                    <option value="single-720p">1x 720p stream (720p monitor)</option>
+                    <option value="windowed-1080p">Windowed 1080p</option>
+                    <option value="windowed-720p">Windowed 720p</option>
+                    <option value="custom">Custom</option>
                 </select>
               </label>
               <label class="span2">Launch args <input id="beatSaberLaunchArguments" type="text"></label>
@@ -550,6 +557,14 @@
             <label class="checkboxLabel">
               <input id="requireAudioForRun" type="checkbox">
               <span>Require audio</span>
+            </label>
+            <label class="checkboxLabel">
+              <input id="disableScoreSubmissions" type="checkbox" checked disabled>
+              <span>Disable score submissions (forced)</span>
+            </label>
+            <label class="checkboxLabel">
+              <input id="suppressScoreSaberReplayUi" type="checkbox" checked disabled>
+              <span>Suppress ScoreSaber replay UI (forced)</span>
             </label>
             <label class="checkboxLabel">
               <input id="hideTaskbarDuringRun" type="checkbox">
@@ -656,6 +671,6 @@
     </div>
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=diagnostics"></script>
+  <script src="/app.js?v=provider-pills"></script>
 </body>
 </html>

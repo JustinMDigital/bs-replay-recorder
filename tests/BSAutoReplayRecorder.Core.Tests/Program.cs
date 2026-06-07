@@ -49,9 +49,9 @@ try
     AssertEqual(ReplayProvider.BeatLeader, bsorReference.Provider, "local bsor provider");
     AssertEqual(ReplayReferenceKind.LocalBsorFile, bsorReference.Kind, "local bsor kind");
 
-    var scoreSaberReference = referenceParser.Parse(@"C:\Beat Saber\UserData\ScoreSaber\Replays\example.dat");
-    AssertEqual(ReplayProvider.ScoreSaberLegacy, scoreSaberReference.Provider, "legacy scoresaber provider");
-    AssertEqual(ReplayReferenceKind.LocalScoreSaberDatFile, scoreSaberReference.Kind, "legacy scoresaber kind");
+    var scoreSaberReference = referenceParser.Parse(@"C:\Beat Saber\UserData\ScoreSaber\Replays\76561198117409561-200cc-Expert-Standard-7F60329C289BC6D4BB683AB8F52A613ED6A225C1.dat");
+    AssertEqual(ReplayProvider.ScoreSaber2, scoreSaberReference.Provider, "local scoresaber provider");
+    AssertEqual(ReplayReferenceKind.LocalScoreSaberDatFile, scoreSaberReference.Kind, "local scoresaber kind");
 
     var beatLeaderReference = referenceParser.Parse("https://replay.beatleader.xyz/?scoreId=9280912");
     AssertEqual(ReplayProvider.BeatLeader, beatLeaderReference.Provider, "beatleader url provider");
@@ -60,6 +60,45 @@ try
     var scoreSaber2Reference = referenceParser.Parse("https://new.scoresaber.com/scores/123456");
     AssertEqual(ReplayProvider.ScoreSaber2, scoreSaber2Reference.Provider, "scoresaber 2 provider");
     AssertEqual("123456", scoreSaber2Reference.ScoreId, "scoresaber 2 score id");
+
+    var scoreSaberApiReplayReference = referenceParser.Parse(
+        "https://scoresaber.com/api/v2/scores/88905556/replay");
+    AssertEqual(ReplayProvider.ScoreSaber2, scoreSaberApiReplayReference.Provider, "scoresaber api replay provider");
+    AssertEqual(ReplayReferenceKind.ScoreSaber2ScoreUrl, scoreSaberApiReplayReference.Kind, "scoresaber api replay kind");
+    AssertEqual("88905556", scoreSaberApiReplayReference.ScoreId, "scoresaber api score id");
+
+    var scoreSaberReplay = Path.Combine(tempDir, "76561198117409561-200cc-Expert-Standard-7F60329C289BC6D4BB683AB8F52A613ED6A225C1.dat");
+    WriteSampleScoreSaberReplay(scoreSaberReplay);
+    var scoreSaberInfo = new ScoreSaberReplayInfoReader().Read(scoreSaberReplay);
+    AssertEqual("200cc", scoreSaberInfo.SongName, "scoresaber song name");
+    AssertEqual("Expert", scoreSaberInfo.Difficulty, "scoresaber difficulty");
+    AssertEqual("Standard", scoreSaberInfo.Mode, "scoresaber mode");
+    AssertEqual("7F60329C289BC6D4BB683AB8F52A613ED6A225C1", scoreSaberInfo.LevelHash, "scoresaber hash");
+
+    var duplicateScoreSaberReplay = Path.Combine(tempDir, "76561198117409561-200cc-Expert-Standard-7F60329C289BC6D4BB683AB8F52A613ED6A225C1 (2).dat");
+    WriteSampleScoreSaberReplay(duplicateScoreSaberReplay);
+    var duplicateScoreSaberInfo = new ScoreSaberReplayInfoReader().Read(duplicateScoreSaberReplay);
+    AssertEqual("7F60329C289BC6D4BB683AB8F52A613ED6A225C1", duplicateScoreSaberInfo.LevelHash, "duplicate scoresaber hash");
+
+    var namedScoreSaberReplay = Path.Combine(
+        tempDir,
+        "scoresaber-88905556-Lunaticon-3-29-Expert-Standard-7F60329C289BC6D4BB683AB8F52A613ED6A225C1.dat");
+    WriteSampleScoreSaberReplay(namedScoreSaberReplay);
+    var namedScoreSaberInfo = new ScoreSaberReplayInfoReader().Read(namedScoreSaberReplay);
+    AssertEqual("88905556", namedScoreSaberInfo.ScoreId, "scoresaber score id");
+    AssertEqual("Lunaticon", namedScoreSaberInfo.PlayerName, "scoresaber player");
+    AssertEqual("", namedScoreSaberInfo.SongName, "scoresaber parsed song");
+    AssertEqual(TimeSpan.FromSeconds(209), namedScoreSaberInfo.ReplayLength, "scoresaber parsed duration");
+
+    var legacyNamedScoreSaberReplay = Path.Combine(
+        tempDir,
+        "76561198117409561-99.9-2-10-Expert-Standard-7F60329C289BC6D4BB683AB8F52A613ED6A225C1.dat");
+    WriteSampleScoreSaberReplay(legacyNamedScoreSaberReplay);
+    var legacyScoreSaberInfo = new ScoreSaberReplayInfoReader().Read(legacyNamedScoreSaberReplay);
+    AssertEqual("76561198117409561", legacyScoreSaberInfo.PlayerId, "legacy scoresaber fallback player id");
+    AssertEqual("99.9", legacyScoreSaberInfo.PlayerName, "legacy scoresaber player");
+    AssertEqual("", legacyScoreSaberInfo.SongName, "legacy scoresaber parsed song");
+    AssertEqual(TimeSpan.FromSeconds(130), legacyScoreSaberInfo.ReplayLength, "legacy scoresaber parsed duration");
 
     Console.WriteLine("All core checks passed.");
 }
@@ -112,6 +151,12 @@ static void WriteSampleBsor(
     WriteFrame(writer, 0f);
     WriteFrame(writer, lastFrameTime / 2f);
     WriteFrame(writer, lastFrameTime);
+}
+
+static void WriteSampleScoreSaberReplay(string path)
+{
+    var header = Encoding.UTF8.GetBytes("ScoreSaber Replay ");
+    File.WriteAllBytes(path, header.Concat(new byte[] { 0x0D, 0x0A, 0x01, 0x02, 0x03 }).ToArray());
 }
 
 static void WriteFrame(BinaryWriter writer, float time)

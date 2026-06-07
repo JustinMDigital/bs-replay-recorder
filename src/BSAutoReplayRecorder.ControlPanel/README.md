@@ -20,7 +20,7 @@ The control panel owns setup, queue management, worker launch, recording setting
 
 `Run` is where you record replays.
 
-- Import `.bsor` files.
+- Import BeatLeader `.bsor` files, ScoreSaber `.dat` files, or ScoreSaber replay links.
 - Search and filter the queue.
 - Edit queue item names and metadata.
 - Move, remove, retry, or open completed recordings.
@@ -66,7 +66,7 @@ After `install.bat` finishes:
 4. Save settings if the page shows unsaved changes.
 5. Go to `Diagnostics` and press `Launch + Verify`.
 6. Return to `Run`.
-7. Import `.bsor` files.
+7. Import `.bsor` or `.dat` files, or paste ScoreSaber replay links.
 8. Wait for maps, workers, baseline, audio, disk, and sync to look ready.
 9. Press `Start run`.
 
@@ -90,7 +90,7 @@ Do not set the managed instance root to your everyday Beat Saber install. Use a 
 
 ## Maps And Shared Songs
 
-When `.bsor` files are imported, the panel checks whether the matching map exists in the shared song folders. If a map is missing, the panel can:
+When replay files or ScoreSaber links are imported, the panel checks whether the matching map exists in the shared song folders. If a map is missing, the panel can:
 
 - find an already installed matching map;
 - download the map by hash from BeatSaver;

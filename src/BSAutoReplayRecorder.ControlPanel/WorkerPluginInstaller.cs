@@ -53,9 +53,13 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
             throw new InvalidOperationException("Worker plugin build did not produce the expected DLLs in " + outputDirectory + ".");
         }
 
+        var enabledInstanceCount = Math.Max(1, instances.Count(instance => instance.Enabled));
+        var columns = enabledInstanceCount == 1 ? 1 : 2;
+        var rows = enabledInstanceCount == 1 ? 1 : 2;
+
         foreach (var instance in instances.OrderBy(instance => instance.Index))
         {
-            DeployPluginToInstance(instance, settings, outputDirectory);
+            DeployPluginToInstance(instance, settings, outputDirectory, columns, rows);
         }
     }
 
@@ -96,45 +100,60 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
     private static void DeployPluginToInstance(
         WorkerInstanceRecord instance,
         ControlPanelSettings settings,
-        string outputDirectory)
+        string outputDirectory,
+        int columns,
+        int rows)
     {
-        var instanceDirectory = Path.GetFullPath(instance.LaunchDirectory);
-        foreach (var relativePath in StalePluginRelativePaths)
+        try
         {
-            DeleteFileIfExists(Path.Combine(instanceDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+            var instanceDirectory = Path.GetFullPath(instance.LaunchDirectory);
+            foreach (var relativePath in StalePluginRelativePaths)
+            {
+                DeleteFileIfExists(Path.Combine(instanceDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+            }
+
+            CopyIfExists(
+                Path.Combine(outputDirectory, "BSAutoReplayRecorder.Plugin.dll"),
+                Path.Combine(instanceDirectory, "Plugins"));
+            CopyIfExists(
+                Path.Combine(outputDirectory, "BSAutoReplayRecorder.Plugin.pdb"),
+                Path.Combine(instanceDirectory, "Plugins"),
+                optional: true);
+            CopyIfExists(
+                Path.Combine(outputDirectory, "BSAutoReplayRecorder.Core.dll"),
+                Path.Combine(instanceDirectory, "Libs"));
+            CopyIfExists(
+                Path.Combine(outputDirectory, "BSAutoReplayRecorder.Core.pdb"),
+                Path.Combine(instanceDirectory, "Libs"),
+                optional: true);
+
+            var settingsDirectory = Path.Combine(instanceDirectory, "UserData", "BSAutoReplayRecorder");
+            var settingsPath = Path.Combine(settingsDirectory, "settings.json");
+            Directory.CreateDirectory(settingsDirectory);
+            BackupFile(settingsPath);
+            var pluginSettings = CreatePluginSettings(
+                instance,
+                settings,
+                CreateManagedWorkerId(instance),
+                columns,
+                rows);
+            File.WriteAllText(settingsPath, JsonSerializer.Serialize(pluginSettings, JsonOptions.Default));
         }
-
-        CopyIfExists(
-            Path.Combine(outputDirectory, "BSAutoReplayRecorder.Plugin.dll"),
-            Path.Combine(instanceDirectory, "Plugins"));
-        CopyIfExists(
-            Path.Combine(outputDirectory, "BSAutoReplayRecorder.Plugin.pdb"),
-            Path.Combine(instanceDirectory, "Plugins"),
-            optional: true);
-        CopyIfExists(
-            Path.Combine(outputDirectory, "BSAutoReplayRecorder.Core.dll"),
-            Path.Combine(instanceDirectory, "Libs"));
-        CopyIfExists(
-            Path.Combine(outputDirectory, "BSAutoReplayRecorder.Core.pdb"),
-            Path.Combine(instanceDirectory, "Libs"),
-            optional: true);
-
-        var settingsDirectory = Path.Combine(instanceDirectory, "UserData", "BSAutoReplayRecorder");
-        var settingsPath = Path.Combine(settingsDirectory, "settings.json");
-        Directory.CreateDirectory(settingsDirectory);
-        BackupFile(settingsPath);
-        var pluginSettings = CreatePluginSettings(instance, settings, CreateManagedWorkerId(instance));
-        File.WriteAllText(settingsPath, JsonSerializer.Serialize(pluginSettings, JsonOptions.Default));
+        catch (IOException ex) when (IsPluginFileInUse(ex))
+        {
+            throw new InvalidOperationException(
+                "Cannot update plugin files for " + instance.Name + " because a Beat Saber process is still using them. Stop that instance and retry launch.");
+        }
     }
 
     internal static Dictionary<string, object?> CreatePluginSettings(
         WorkerInstanceRecord instance,
         ControlPanelSettings settings,
-        string workerId)
+        string workerId,
+        int columns,
+        int rows)
     {
         var displayIndex = instance.Index + 1;
-        var columns = settings.InstanceCount == 1 ? 1 : 2;
-        var rows = settings.InstanceCount == 1 ? 1 : 2;
         return new Dictionary<string, object?>
         {
             ["RequirePreflightReplayValidation"] = true,
@@ -181,7 +200,8 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
                 ["PreferredInstanceIndex"] = instance.Index,
                 ["PollIntervalSeconds"] = 1,
                 ["HeartbeatIntervalSeconds"] = 2,
-                ["RequestTimeoutSeconds"] = 10
+                ["IdleShutdownMinutes"] = settings.IdleShutdownMinutes,
+                ["RequestTimeoutSeconds"] = 30
             },
             ["WindowPlacement"] = new Dictionary<string, object?>
             {
@@ -284,5 +304,10 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
     {
         var trimmed = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private static bool IsPluginFileInUse(IOException ex)
+    {
+        return ex.Message.Contains("being used by another process", StringComparison.OrdinalIgnoreCase);
     }
 }

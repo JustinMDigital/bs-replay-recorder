@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BSAutoReplayRecorder.Core;
+using BSAutoReplayRecorder.Core.Replay;
 using BSAutoReplayRecorder.Core.Utility;
 using Microsoft.Win32;
 
@@ -16,6 +17,7 @@ public sealed class ControlPanelStore
     private const string BeatSaberExecutableName = "Beat Saber.exe";
     private const string BeatSaberProcessName = "Beat Saber";
     private const string BeatSaberSteamAppId = "620980";
+    private const int DefaultRestoreDisplayScalePercent = 150;
     private static readonly string[] BeatSaberSettingsIniRelativePaths =
     {
         "settings.ini",
@@ -49,6 +51,7 @@ public sealed class ControlPanelStore
     private readonly IRecorderHostHealthChecker _recorderHostHealthChecker;
     private readonly IBeatSaverMapDownloader _mapDownloader;
     private readonly IWorkerPluginInstaller _workerPluginInstaller;
+    private readonly IScoreSaberReplayDownloader _scoreSaberReplayDownloader;
     private readonly ControlPanelState _state;
     private bool _taskbarHiddenForRun;
     private int? _detectedRestoreDisplayScalePercent;
@@ -58,7 +61,8 @@ public sealed class ControlPanelStore
         IRecordingAudioVerifier? recordingAudioVerifier = null,
         IRecorderHostHealthChecker? recorderHostHealthChecker = null,
         IBeatSaverMapDownloader? mapDownloader = null,
-        IWorkerPluginInstaller? workerPluginInstaller = null)
+        IWorkerPluginInstaller? workerPluginInstaller = null,
+        IScoreSaberReplayDownloader? scoreSaberReplayDownloader = null)
     {
         settings.Normalize();
         var workspaceDirectory = Path.GetFullPath(settings.WorkspaceDirectory);
@@ -70,6 +74,7 @@ public sealed class ControlPanelStore
         _recorderHostHealthChecker = recorderHostHealthChecker ?? new HttpRecorderHostHealthChecker();
         _mapDownloader = mapDownloader ?? new BeatSaverMapDownloader(new HttpClient());
         _workerPluginInstaller = workerPluginInstaller ?? new DotNetWorkerPluginInstaller();
+        _scoreSaberReplayDownloader = scoreSaberReplayDownloader ?? new ScoreSaberReplayDownloader(new HttpClient());
         Directory.CreateDirectory(_queueDirectory);
 
         _state = LoadState(settings);
@@ -138,6 +143,7 @@ public sealed class ControlPanelStore
             _state.Settings.MonitorIndex = request.MonitorIndex;
             _state.Settings.QualityMode = request.QualityMode;
             _state.Settings.AudioMode = request.AudioMode;
+
             _state.Settings.RequireAudioForRun = request.RequireAudioForRun;
             _state.Settings.AudioBitrateKbps = request.AudioBitrateKbps;
             _state.Settings.AudioSampleRate = request.AudioSampleRate;
@@ -216,7 +222,7 @@ public sealed class ControlPanelStore
             foreach (var file in files)
             {
                 if (file.Length <= 0 ||
-                    !string.Equals(Path.GetExtension(file.FileName), ".bsor", StringComparison.OrdinalIgnoreCase))
+                    !IsSupportedReplayFileName(file.FileName))
                 {
                     continue;
                 }
@@ -247,6 +253,87 @@ public sealed class ControlPanelStore
         }
 
         return imported;
+    }
+
+    public async Task<IReadOnlyList<ReplayQueueRecord>> ImportReferencesAsync(
+        ReplayReferenceImportRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request == null || request.References == null || request.References.Count == 0)
+        {
+            return Array.Empty<ReplayQueueRecord>();
+        }
+
+        var parser = new ReplayReferenceParser();
+        var importedPaths = new List<string>();
+        var failures = new List<string>();
+
+        foreach (var value in request.References)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            ReplayReference reference;
+            try
+            {
+                reference = parser.Parse(value);
+            }
+            catch (Exception ex)
+            {
+                failures.Add(value + ": " + ex.Message);
+                continue;
+            }
+
+            if (reference.Provider != ReplayProvider.ScoreSaber2)
+            {
+                failures.Add(value + ": only ScoreSaber 2 replay URLs are supported by link import right now.");
+                continue;
+            }
+
+            try
+            {
+                var download = await _scoreSaberReplayDownloader
+                    .DownloadAsync(reference, _queueDirectory, CreateImportPath, cancellationToken)
+                    .ConfigureAwait(false);
+                WriteReplaySidecar(download.LocalPath, download.Metadata);
+                importedPaths.Add(Path.GetFullPath(download.LocalPath));
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or HttpRequestException or TaskCanceledException)
+            {
+                failures.Add(value + ": " + ex.Message);
+            }
+        }
+
+        lock (_sync)
+        {
+            var imported = new List<ReplayQueueRecord>();
+            if (importedPaths.Count > 0)
+            {
+                var importedSet = new HashSet<string>(importedPaths, StringComparer.OrdinalIgnoreCase);
+                ReloadQueueNoLock();
+                RedistributeQueuedReplayPlansNoLock();
+                imported.AddRange(_state.Queue.Where(item => importedSet.Contains(Path.GetFullPath(item.Path))));
+                RefreshQueueMapAvailabilityNoLock(allowDownload: true, imported.Select(item => item.Id));
+                AddEventNoLock(
+                    "Info",
+                    "Import",
+                    "Imported " + imported.Count + " linked replay" + (imported.Count == 1 ? "" : "s") + ".");
+            }
+
+            if (failures.Count > 0)
+            {
+                AddEventNoLock(
+                    imported.Count > 0 ? "Warn" : "Error",
+                    "Import",
+                    "Replay link import skipped " + failures.Count + ": " + string.Join("; ", failures.Take(3)) +
+                    (failures.Count > 3 ? "; and " + (failures.Count - 3) + " more." : ""));
+            }
+
+            SaveNoLock();
+            return imported;
+        }
     }
 
     public ControlPanelState DownloadQueueMap(string id)
@@ -332,9 +419,17 @@ public sealed class ControlPanelStore
         lock (_sync)
         {
             ExpireStaleWorkersNoLock(DateTimeOffset.UtcNow);
-            foreach (var file in Directory.EnumerateFiles(_queueDirectory, "*.bsor"))
+            foreach (var file in Directory.EnumerateFiles(_queueDirectory, "*.*"))
             {
-                File.Delete(file);
+                if (IsSupportedReplayFileName(file))
+                {
+                    File.Delete(file);
+                    var sidecarPath = GetReplaySidecarPath(file);
+                    if (File.Exists(sidecarPath))
+                    {
+                        File.Delete(sidecarPath);
+                    }
+                }
             }
 
             _state.Queue.Clear();
@@ -464,6 +559,7 @@ public sealed class ControlPanelStore
             replay.CompletedAtUtc = null;
             replay.OutputPath = null;
             replay.Error = null;
+            replay.Warning = null;
             RecalculateRunCountsNoLock();
             RedistributeQueuedReplayPlansNoLock();
 
@@ -897,6 +993,7 @@ public sealed class ControlPanelStore
                 throw new InvalidOperationException("Enable " + instance.Name + " before launching it.");
             }
 
+            _workerPluginInstaller.Install(_state.Instances, _state.Settings);
             LaunchInstanceNoLock(instance);
             if (!string.Equals(instance.GameLaunchStatus, "Failed", StringComparison.OrdinalIgnoreCase))
             {
@@ -1056,6 +1153,7 @@ public sealed class ControlPanelStore
             ExpireStaleWorkersNoLock(DateTimeOffset.UtcNow);
             RefreshLaunchProcessesNoLock();
             EnsureInstancesNoLock();
+            _workerPluginInstaller.Install(_state.Instances, _state.Settings);
             foreach (var instance in GetRunInstancesNoLock())
             {
                 LaunchInstanceNoLock(instance);
@@ -1237,6 +1335,7 @@ public sealed class ControlPanelStore
             replay.Status = "Assigned";
             replay.OutputPath = null;
             replay.Error = null;
+            replay.Warning = null;
 
             instance.ActiveAssignmentId = assignmentId;
             instance.CurrentReplayId = replay.Id;
@@ -1280,11 +1379,13 @@ public sealed class ControlPanelStore
                 var outputPath = NormalizeNullable(request.OutputPath);
                 var audioVerification = VerifyCompletedRecordingAudioNoLock(outputPath);
                 var syncVerification = VerifyCompletedRecordingSyncNoLock(request);
+                var warning = NormalizeNullable(request.Warning);
                 replay.Status = audioVerification.HasAudio && syncVerification.Verified ? "Completed" : "Failed";
                 replay.OutputPath = outputPath;
                 replay.Error = audioVerification.HasAudio
                     ? syncVerification.Error
                     : audioVerification.Error;
+                replay.Warning = warning;
                 replay.SyncStatus = NormalizeNullable(request.SyncStatus) ?? "";
                 replay.SyncCorrectionMilliseconds = request.SyncCorrectionMilliseconds;
                 replay.TrimStartSeconds = request.TrimStartSeconds;
@@ -1307,6 +1408,7 @@ public sealed class ControlPanelStore
                 replay.Status = "Failed";
                 replay.OutputPath = NormalizeNullable(request.OutputPath);
                 replay.Error = NormalizeNullable(request.Error) ?? "Worker reported " + status.ToLowerInvariant() + ".";
+                replay.Warning = null;
                 replay.SyncStatus = NormalizeNullable(request.SyncStatus) ?? "";
                 replay.SyncCorrectionMilliseconds = request.SyncCorrectionMilliseconds;
                 replay.TrimStartSeconds = request.TrimStartSeconds;
@@ -1326,6 +1428,7 @@ public sealed class ControlPanelStore
                 replay.Status = status;
                 replay.OutputPath = NormalizeNullable(request.OutputPath) ?? replay.OutputPath;
                 replay.Error = NormalizeNullable(request.Error);
+                replay.Warning = NormalizeNullable(request.Warning);
                 instance.Status = status;
                 instance.CurrentReplayId = replay.Id;
             }
@@ -1430,6 +1533,7 @@ public sealed class ControlPanelStore
         foreach (var replay in state.Queue)
         {
             replay.Calibration ??= new ReplayCalibrationRecord();
+            NormalizeReplayProviderFields(replay);
         }
 
         return state;
@@ -1454,25 +1558,39 @@ public sealed class ControlPanelStore
         {
             var fullPath = Path.GetFullPath(item.ReplayPath);
             existingByPath.TryGetValue(fullPath, out var existing);
+            var sidecar = ReadReplaySidecar(item.ReplayPath) ??
+                          TryReadOrDownloadScoreSaberReplayMetadata(
+                              item.ReplayPath,
+                              item.ScoreId,
+                              item.ReplayInfo.PlayerId,
+                              item.ReplayInfo.PlayerName,
+                              item.ReplayInfo.LevelHash);
             var isMetadataEdited = existing?.IsMetadataEdited == true;
+            var recordId = existing?.Id ?? CreateStableId(fullPath);
             records.Add(new ReplayQueueRecord
             {
-                Id = existing?.Id ?? CreateStableId(fullPath),
+                Id = recordId,
                 SequenceNumber = item.SequenceNumber,
+                Provider = ResolveProvider(existing, sidecar, item),
+                ReferenceKind = ResolveReferenceKind(existing, sidecar, item),
+                ReplayFormat = ResolveReplayFormat(existing, sidecar, item),
+                SourceUrl = existing?.SourceUrl ?? sidecar?.SourceUrl ?? item.SourceUrl ?? "",
+                ScoreId = existing?.ScoreId ?? sidecar?.ScoreId ?? item.ScoreId ?? "",
                 FileName = Path.GetFileName(item.ReplayPath),
                 Path = item.ReplayPath,
-                SongName = isMetadataEdited ? existing!.SongName : item.ReplayInfo.SongName,
-                Mapper = isMetadataEdited ? existing!.Mapper : item.ReplayInfo.Mapper,
-                PlayerName = ResolveReplayPlayerName(item.ReplayInfo.PlayerName, item.ReplayInfo.PlayerId, item.ReplayPath),
-                Difficulty = isMetadataEdited ? existing!.Difficulty : item.ReplayInfo.Difficulty,
-                LevelHash = item.ReplayInfo.LevelHash,
-                CoverArtUrl = "/api/queue/" + Uri.EscapeDataString(existing?.Id ?? CreateStableId(fullPath)) + "/cover",
+                SongName = isMetadataEdited ? existing!.SongName : Prefer(sidecar?.SongName, item.ReplayInfo.SongName),
+                Mapper = isMetadataEdited ? existing!.Mapper : Prefer(sidecar?.Mapper, item.ReplayInfo.Mapper),
+                PlayerName = Prefer(sidecar?.PlayerName, ResolveReplayPlayerName(item.ReplayInfo.PlayerName, item.ReplayInfo.PlayerId, item.ReplayPath)),
+                Difficulty = isMetadataEdited ? existing!.Difficulty : Prefer(sidecar?.Difficulty, item.ReplayInfo.Difficulty),
+                Mode = isMetadataEdited ? existing!.Mode : Prefer(sidecar?.Mode, item.ReplayInfo.Mode),
+                LevelHash = Prefer(sidecar?.LevelHash, item.ReplayInfo.LevelHash),
+                CoverArtUrl = "/api/queue/" + Uri.EscapeDataString(recordId) + "/cover",
                 MapStatus = existing?.MapStatus ?? "Unchecked",
                 MapStatusDetail = existing?.MapStatusDetail ?? "",
                 MapInstallPath = existing?.MapInstallPath ?? "",
                 EstimatedSeconds = isMetadataEdited
                     ? existing!.EstimatedSeconds
-                    : Math.Round(item.EstimatedPlaybackLength.TotalSeconds, 2),
+                    : Math.Round(ResolveEstimatedSeconds(sidecar, item.EstimatedPlaybackLength.TotalSeconds), 2),
                 Status = existing?.Status ?? "Queued",
                 AssignedInstance = existing?.AssignedInstance,
                 AssignmentId = existing?.AssignmentId,
@@ -1480,6 +1598,7 @@ public sealed class ControlPanelStore
                 CompletedAtUtc = existing?.CompletedAtUtc,
                 OutputPath = existing?.OutputPath,
                 Error = existing?.Error,
+                Warning = existing?.Warning,
                 SyncStatus = existing?.SyncStatus ?? "",
                 SyncCorrectionMilliseconds = existing?.SyncCorrectionMilliseconds,
                 TrimStartSeconds = existing?.TrimStartSeconds,
@@ -1499,9 +1618,11 @@ public sealed class ControlPanelStore
     private bool RefreshQueueMetadataNoLock()
     {
         var changed = false;
-        var reader = new BSAutoReplayRecorder.Core.Replay.BsorInfoReader();
+        var bsorReader = new BsorInfoReader();
+        var scoreSaberReader = new ScoreSaberReplayInfoReader();
         foreach (var replay in _state.Queue)
         {
+            NormalizeReplayProviderFields(replay);
             if (!File.Exists(replay.Path))
             {
                 continue;
@@ -1521,15 +1642,22 @@ public sealed class ControlPanelStore
 
             try
             {
-                var info = reader.Read(replay.Path);
-                replay.LevelHash = info.LevelHash;
-                replay.PlayerName = ResolveReplayPlayerName(info.PlayerName, info.PlayerId, replay.Path);
+                var info = replay.Provider == ReplayProvider.ScoreSaber2
+                    ? scoreSaberReader.Read(replay.Path)
+                    : bsorReader.Read(replay.Path);
+                var sidecar = ReadReplaySidecar(replay.Path) ??
+                              TryReadOrDownloadScoreSaberReplayMetadata(replay.Path, replay.ScoreId, info.PlayerId, info.PlayerName, info.LevelHash);
+                replay.LevelHash = Prefer(sidecar?.LevelHash, info.LevelHash);
+                replay.PlayerName = Prefer(sidecar?.PlayerName, ResolveReplayPlayerName(info.PlayerName, info.PlayerId, replay.Path));
+                replay.ScoreId = Prefer(replay.ScoreId, sidecar?.ScoreId);
+                replay.SourceUrl = Prefer(replay.SourceUrl, sidecar?.SourceUrl);
                 if (!replay.IsMetadataEdited)
                 {
-                    replay.SongName = info.SongName;
-                    replay.Mapper = info.Mapper;
-                    replay.Difficulty = info.Difficulty;
-                    replay.EstimatedSeconds = Math.Round(info.EstimatedPlaybackLength.TotalSeconds, 2);
+                    replay.SongName = Prefer(sidecar?.SongName, info.SongName);
+                    replay.Mapper = Prefer(sidecar?.Mapper, info.Mapper);
+                    replay.Difficulty = Prefer(sidecar?.Difficulty, info.Difficulty);
+                    replay.Mode = Prefer(sidecar?.Mode, info.Mode);
+                    replay.EstimatedSeconds = Math.Round(ResolveEstimatedSeconds(sidecar, info.EstimatedPlaybackLength.TotalSeconds), 2);
                 }
 
                 changed = true;
@@ -1603,6 +1731,16 @@ public sealed class ControlPanelStore
                 "Downloading",
                 "Checking BeatSaver for the replay's level hash.",
                 "");
+
+            if (string.IsNullOrWhiteSpace(replay.LevelHash))
+            {
+                changed |= SetQueueMapStatusNoLock(
+                    replay,
+                    "Missing",
+                    "Replay metadata did not include a level hash.",
+                    "");
+                continue;
+            }
 
             var targetRoot = ResolveAutomaticMapDownloadRootNoLock();
             BeatSaverMapDownloadResult result;
@@ -3187,6 +3325,7 @@ public sealed class ControlPanelStore
             replay.CompletedAtUtc = null;
             replay.OutputPath = null;
             replay.Error = null;
+            replay.Warning = null;
         }
 
         foreach (var instance in _state.Instances)
@@ -3338,6 +3477,7 @@ public sealed class ControlPanelStore
                 replay.Status = "Failed";
                 replay.CompletedAtUtc = DateTimeOffset.UtcNow;
                 replay.Error = reason;
+                replay.Warning = null;
             }
         }
 
@@ -3507,8 +3647,16 @@ public sealed class ControlPanelStore
             return;
         }
 
-        _detectedRestoreDisplayScalePercent = scalePercent.Value;
-        _state.Settings.RestoreDisplayScalePercent = scalePercent.Value;
+        var restoreScalePercent = scalePercent.Value;
+        if (restoreScalePercent == _state.Settings.RecordingDisplayScalePercent)
+        {
+            restoreScalePercent = _state.Settings.RestoreDisplayScalePercent != _state.Settings.RecordingDisplayScalePercent
+                ? _state.Settings.RestoreDisplayScalePercent
+                : DefaultRestoreDisplayScalePercent;
+        }
+
+        _detectedRestoreDisplayScalePercent = restoreScalePercent;
+        _state.Settings.RestoreDisplayScalePercent = restoreScalePercent;
         SaveNoLock();
     }
 
@@ -3710,6 +3858,20 @@ public sealed class ControlPanelStore
             AssignmentId = replay.AssignmentId,
             ReplayId = replay.Id,
             ReplayPath = Path.GetFullPath(replay.Path),
+            DisableScoreSubmissions = true,
+            SuppressScoreSaberReplayUi = true,
+            Provider = replay.Provider,
+            ReferenceKind = replay.ReferenceKind,
+            ReplayFormat = replay.ReplayFormat,
+            SourceUrl = replay.SourceUrl,
+            ScoreId = replay.ScoreId,
+            SongName = replay.SongName,
+            Mapper = replay.Mapper,
+            PlayerName = replay.PlayerName,
+            Difficulty = replay.Difficulty,
+            Mode = replay.Mode,
+            LevelHash = replay.LevelHash,
+            EstimatedSeconds = replay.EstimatedSeconds,
             AssignmentKind = "Replay",
             OutputBaseName = CreateOutputBaseName(replay),
             RecorderHostUrl = instance.RecorderHostUrl,
@@ -3861,6 +4023,412 @@ public sealed class ControlPanelStore
         }
 
         throw new InvalidOperationException("Could not create an import filename for " + safeFileName + ".");
+    }
+
+    private static bool IsSupportedReplayFileName(string fileName)
+    {
+        var extension = Path.GetExtension(fileName);
+        return string.Equals(extension, ".bsor", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(extension, ".dat", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string Prefer(string? preferred, string? fallback)
+    {
+        return string.IsNullOrWhiteSpace(preferred) ? fallback ?? "" : preferred!;
+    }
+
+    private ReplayQueueSidecar? TryReadOrDownloadScoreSaberReplayMetadata(
+        string replayPath,
+        string? scoreId,
+        string? playerId,
+        string? playerName,
+        string? levelHash)
+    {
+        if (string.IsNullOrWhiteSpace(scoreId))
+        {
+            if (TryResolveExternalPlayerId(playerId, playerName, replayPath, out var resolvedPlayerId))
+            {
+                try
+                {
+                    var resolvedPlayerName = _scoreSaberReplayDownloader
+                        .GetPlayerNameByPlayerIdAsync(resolvedPlayerId, CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult();
+                    if (!string.IsNullOrWhiteSpace(resolvedPlayerName))
+                    {
+                        var sidecar = new ReplayQueueSidecar
+                        {
+                            Provider = ReplayProvider.ScoreSaber2,
+                            ReferenceKind = ReplayReferenceKind.LocalScoreSaberDatFile,
+                            ReplayFormat = "ScoreSaber",
+                            PlayerName = resolvedPlayerName!,
+                            PlayerId = resolvedPlayerId,
+                            LevelHash = levelHash ?? "",
+                            Path = replayPath
+                        };
+                        TrySetBeatSaverEstimatedSeconds(sidecar);
+                        WriteReplaySidecar(replayPath, sidecar);
+                        return sidecar;
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+                catch (JsonException)
+                {
+                }
+                catch (System.Net.Http.HttpRequestException)
+                {
+                }
+                catch (TaskCanceledException)
+                {
+                }
+                catch (InvalidOperationException)
+                {
+                }
+            }
+
+            return null;
+        }
+
+        try
+        {
+            var metadata = _scoreSaberReplayDownloader
+                .GetReplayMetadataByScoreIdAsync(scoreId, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (metadata == null)
+            {
+                return null;
+            }
+
+            metadata.Path = replayPath;
+            if (string.IsNullOrWhiteSpace(metadata.LevelHash))
+            {
+                metadata.LevelHash = levelHash ?? "";
+            }
+
+            TrySetBeatSaverEstimatedSeconds(metadata);
+            WriteReplaySidecar(replayPath, metadata);
+            return metadata;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (System.Net.Http.HttpRequestException)
+        {
+            return null;
+        }
+        catch (TaskCanceledException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private void TrySetBeatSaverEstimatedSeconds(ReplayQueueSidecar sidecar)
+    {
+        if (string.IsNullOrWhiteSpace(sidecar.LevelHash))
+        {
+            return;
+        }
+
+        try
+        {
+            var songLength = _mapDownloader.GetSongLengthSecondsByHash(sidecar.LevelHash);
+            if (songLength > 0)
+            {
+                sidecar.EstimatedSeconds = songLength.Value;
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        catch (System.Net.Http.HttpRequestException)
+        {
+        }
+        catch (TaskCanceledException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (JsonException)
+        {
+        }
+    }
+
+    private static bool TryResolveExternalPlayerId(string? playerId, string? playerName, out string resolvedPlayerId)
+    {
+        resolvedPlayerId = "";
+        var candidateId = playerId;
+        if (!IsLikelyNumericId(candidateId))
+        {
+            candidateId = playerName;
+            if (!IsLikelyNumericId(candidateId))
+            {
+                return false;
+            }
+        }
+
+        resolvedPlayerId = candidateId!;
+        return string.IsNullOrWhiteSpace(playerName) || IsLikelyNumericId(playerName);
+    }
+
+    private static bool TryResolveExternalPlayerId(string? playerId, string? playerName, string replayPath, out string resolvedPlayerId)
+    {
+        if (TryResolveExternalPlayerId(playerId, playerName, out var valueFromMetadata))
+        {
+            resolvedPlayerId = valueFromMetadata;
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(playerName) && !IsLikelyNumericId(playerName))
+        {
+            resolvedPlayerId = "";
+            return false;
+        }
+
+        return TryResolveExternalPlayerIdFromReplayPath(replayPath, out resolvedPlayerId);
+    }
+
+    private static bool TryResolveExternalPlayerIdFromReplayPath(string replayPath, out string resolvedPlayerId)
+    {
+        resolvedPlayerId = "";
+        var fileName = Path.GetFileNameWithoutExtension(replayPath);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        var name = StripDuplicateSuffix(fileName);
+        var tokens = name.Split('-');
+        if (tokens.Length < 3)
+        {
+            return false;
+        }
+
+        // Ignore trailing hash segment if present.
+        var lastIndex = tokens.Length - 1;
+        if (LooksLikeSha1(tokens[lastIndex]))
+        {
+            lastIndex -= 1;
+        }
+
+        // Ignore difficulty/mode fields if they are present.
+        lastIndex -= 2;
+        if (lastIndex <= 0)
+        {
+            return false;
+        }
+
+        var startIndex = 0;
+        if (string.Equals(tokens[0], "scoresaber", StringComparison.OrdinalIgnoreCase))
+        {
+            startIndex = 1;
+        }
+
+        for (var index = startIndex; index <= lastIndex; index++)
+        {
+            if (IsLikelyNumericId(tokens[index]))
+            {
+                resolvedPlayerId = tokens[index];
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string StripDuplicateSuffix(string value)
+    {
+        var suffixStart = value.LastIndexOf(" (", StringComparison.Ordinal);
+        if (suffixStart <= 0 || !value.EndsWith(")", StringComparison.Ordinal))
+        {
+            return value;
+        }
+
+        for (var index = suffixStart + 2; index < value.Length - 1; index++)
+        {
+            var character = value[index];
+            if (character < '0' || character > '9')
+            {
+                return value;
+            }
+        }
+
+        return value.Substring(0, suffixStart);
+    }
+
+    private static bool LooksLikeSha1(string value)
+    {
+        if (value.Length != 40)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < value.Length; index++)
+        {
+            var character = value[index];
+            if (!((character >= '0' && character <= '9') ||
+                  (character >= 'a' && character <= 'f') ||
+                  (character >= 'A' && character <= 'F')))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsLikelyNumericId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value!.Length <= 8)
+        {
+            return false;
+        }
+
+        foreach (var character in value)
+        {
+            if (character < '0' || character > '9')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static double ResolveEstimatedSeconds(ReplayQueueSidecar? sidecar, double fallback)
+    {
+        return sidecar != null && sidecar.EstimatedSeconds > 0
+            ? sidecar.EstimatedSeconds
+            : fallback;
+    }
+
+    private static ReplayProvider ResolveProvider(
+        ReplayQueueRecord? existing,
+        ReplayQueueSidecar? sidecar,
+        ReplayQueueItem item)
+    {
+        if (existing != null && existing.Provider != ReplayProvider.Unknown)
+        {
+            return existing.Provider;
+        }
+
+        if (sidecar != null && sidecar.Provider != ReplayProvider.Unknown)
+        {
+            return sidecar.Provider;
+        }
+
+        return item.Provider == ReplayProvider.Unknown ? ReplayProvider.BeatLeader : item.Provider;
+    }
+
+    private static ReplayReferenceKind ResolveReferenceKind(
+        ReplayQueueRecord? existing,
+        ReplayQueueSidecar? sidecar,
+        ReplayQueueItem item)
+    {
+        if (existing != null && existing.ReferenceKind != ReplayReferenceKind.Unknown)
+        {
+            return existing.ReferenceKind;
+        }
+
+        if (sidecar != null && sidecar.ReferenceKind != ReplayReferenceKind.Unknown)
+        {
+            return sidecar.ReferenceKind;
+        }
+
+        return item.ReferenceKind == ReplayReferenceKind.Unknown ? ReplayReferenceKind.LocalBsorFile : item.ReferenceKind;
+    }
+
+    private static string ResolveReplayFormat(
+        ReplayQueueRecord? existing,
+        ReplayQueueSidecar? sidecar,
+        ReplayQueueItem item)
+    {
+        if (existing != null && !string.IsNullOrWhiteSpace(existing.ReplayFormat))
+        {
+            return existing.ReplayFormat;
+        }
+
+        if (sidecar != null && !string.IsNullOrWhiteSpace(sidecar.ReplayFormat))
+        {
+            return sidecar.ReplayFormat;
+        }
+
+        return item.Provider == ReplayProvider.ScoreSaber2 ? "ScoreSaber" : "BSOR";
+    }
+
+    private static void NormalizeReplayProviderFields(ReplayQueueRecord replay)
+    {
+        if (replay.Provider == ReplayProvider.Unknown)
+        {
+            var extension = Path.GetExtension(replay.Path);
+            replay.Provider = string.Equals(extension, ".dat", StringComparison.OrdinalIgnoreCase)
+                ? ReplayProvider.ScoreSaber2
+                : ReplayProvider.BeatLeader;
+        }
+
+        if (replay.ReferenceKind == ReplayReferenceKind.Unknown)
+        {
+            replay.ReferenceKind = replay.Provider == ReplayProvider.ScoreSaber2
+                ? ReplayReferenceKind.LocalScoreSaberDatFile
+                : ReplayReferenceKind.LocalBsorFile;
+        }
+
+        if (string.IsNullOrWhiteSpace(replay.ReplayFormat))
+        {
+            replay.ReplayFormat = replay.Provider == ReplayProvider.ScoreSaber2 ? "ScoreSaber" : "BSOR";
+        }
+    }
+
+    private static string GetReplaySidecarPath(string replayPath)
+    {
+        return replayPath + ".metadata.json";
+    }
+
+    private static ReplayQueueSidecar? ReadReplaySidecar(string replayPath)
+    {
+        var sidecarPath = GetReplaySidecarPath(replayPath);
+        if (!File.Exists(sidecarPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(sidecarPath);
+            return JsonSerializer.Deserialize<ReplayQueueSidecar>(json, JsonOptions.Default);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static void WriteReplaySidecar(string replayPath, ReplayQueueSidecar metadata)
+    {
+        metadata.Path = replayPath;
+        File.WriteAllText(GetReplaySidecarPath(replayPath), JsonSerializer.Serialize(metadata, JsonOptions.Default));
     }
 
     private string ResolveAutomaticMapDownloadRootNoLock()

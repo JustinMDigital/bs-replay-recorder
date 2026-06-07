@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Text.Json;
 using BSAutoReplayRecorder.Core.Utility;
@@ -7,6 +8,8 @@ namespace BSAutoReplayRecorder.ControlPanel;
 public interface IBeatSaverMapDownloader
 {
     BeatSaverMapDownloadResult DownloadByHash(string levelHash, string targetRoot);
+
+    double? GetSongLengthSecondsByHash(string levelHash);
 }
 
 public sealed class BeatSaverMapDownloadResult
@@ -123,6 +126,37 @@ public sealed class BeatSaverMapDownloader : IBeatSaverMapDownloader
         }
     }
 
+    public double? GetSongLengthSecondsByHash(string levelHash)
+    {
+        var hash = NormalizeHash(levelHash);
+        if (hash == null)
+        {
+            return null;
+        }
+
+        using var response = _httpClient.GetAsync("https://api.beatsaver.com/maps/hash/" + Uri.EscapeDataString(hash))
+            .GetAwaiter()
+            .GetResult();
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        using var stream = response.Content.ReadAsStream();
+        using var document = JsonDocument.Parse(stream);
+        var map = document.RootElement;
+
+        var metadataDuration = GetDouble(map, "metadata", "duration");
+        if (metadataDuration.HasValue && metadataDuration > 0)
+        {
+            return metadataDuration;
+        }
+
+        var versions = FindMatchingVersion(map, hash);
+        var versionDuration = GetDouble(versions, "duration");
+        return versionDuration <= 0 ? null : versionDuration;
+    }
+
     internal static void ExtractMapZip(string zipPath, string targetDirectory)
     {
         Directory.CreateDirectory(targetDirectory);
@@ -189,6 +223,38 @@ public sealed class BeatSaverMapDownloader : IBeatSaverMapDownloader
         return element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
+    }
+
+    private static double? GetDouble(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number))
+        {
+            return number;
+        }
+
+        if (value.ValueKind == JsonValueKind.String &&
+            double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number))
+        {
+            return number;
+        }
+
+        return null;
+    }
+
+    private static double? GetDouble(JsonElement element, string propertyA, string propertyB)
+    {
+        if (!element.TryGetProperty(propertyA, out var nested) ||
+            nested.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return GetDouble(nested, propertyB);
     }
 
     private static string CreateUniqueLevelDirectory(string targetRoot, string folderName)
