@@ -10,6 +10,8 @@ public interface IBeatSaverMapDownloader
     BeatSaverMapDownloadResult DownloadByHash(string levelHash, string targetRoot);
 
     double? GetSongLengthSecondsByHash(string levelHash);
+
+    BeatSaverMapCardMetadata? GetMapCardMetadataByHash(string levelHash, string difficulty, string mode);
 }
 
 public sealed class BeatSaverMapDownloadResult
@@ -157,6 +159,58 @@ public sealed class BeatSaverMapDownloader : IBeatSaverMapDownloader
         return versionDuration <= 0 ? null : versionDuration;
     }
 
+    public BeatSaverMapCardMetadata? GetMapCardMetadataByHash(string levelHash, string difficulty, string mode)
+    {
+        var hash = NormalizeHash(levelHash);
+        if (hash == null)
+        {
+            return null;
+        }
+
+        using var response = _httpClient.GetAsync("https://api.beatsaver.com/maps/hash/" + Uri.EscapeDataString(hash))
+            .GetAwaiter()
+            .GetResult();
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        using var stream = response.Content.ReadAsStream();
+        using var document = JsonDocument.Parse(stream);
+        var map = document.RootElement;
+        var version = FindMatchingVersion(map, hash);
+        var metadata = map.TryGetProperty("metadata", out var metadataElement) &&
+                       metadataElement.ValueKind == JsonValueKind.Object
+            ? metadataElement
+            : map;
+        var result = new BeatSaverMapCardMetadata
+        {
+            SongName = GetString(metadata, "songName") ?? GetString(map, "name") ?? "",
+            Artist = GetString(metadata, "songAuthorName") ?? "",
+            MapAuthor = GetString(metadata, "levelAuthorName") ?? "",
+            BeatSaverKey = GetString(version, "key") ?? GetString(map, "id") ?? "",
+            CoverArtUrl = GetString(version, "coverURL") ?? GetString(version, "coverUrl") ?? "",
+            LengthSeconds = GetDouble(metadata, "duration") ?? GetDouble(version, "duration"),
+            BeatsPerMinute = GetDouble(metadata, "bpm") ?? GetDouble(metadata, "beatsPerMinute")
+        };
+
+        var selectedDiff = FindMatchingDiff(version, difficulty, mode);
+        if (selectedDiff.HasValue)
+        {
+            var diff = selectedDiff.Value;
+            result.Difficulty = MapCardMetadataText.DisplayDifficulty(GetString(diff, "difficulty") ?? "");
+            result.Mode = GetString(diff, "characteristic") ?? "";
+            result.NotesPerSecond = GetDouble(diff, "nps");
+            var noteCount = GetInt(diff, "notes");
+            if (noteCount.HasValue)
+            {
+                result.NoteCount = noteCount;
+            }
+        }
+
+        return result;
+    }
+
     internal static void ExtractMapZip(string zipPath, string targetDirectory)
     {
         Directory.CreateDirectory(targetDirectory);
@@ -255,6 +309,54 @@ public sealed class BeatSaverMapDownloader : IBeatSaverMapDownloader
         }
 
         return GetDouble(nested, propertyB);
+    }
+
+    private static int? GetInt(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        if (value.ValueKind == JsonValueKind.String &&
+            int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number))
+        {
+            return number;
+        }
+
+        return null;
+    }
+
+    private static JsonElement? FindMatchingDiff(JsonElement version, string difficulty, string mode)
+    {
+        if (!version.TryGetProperty("diffs", out var diffs) ||
+            diffs.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var normalizedDifficulty = MapCardMetadataText.NormalizeDifficulty(difficulty);
+        var normalizedMode = MapCardMetadataText.NormalizeMode(mode);
+        JsonElement? fallback = null;
+        foreach (var diff in diffs.EnumerateArray())
+        {
+            var diffDifficulty = MapCardMetadataText.NormalizeDifficulty(GetString(diff, "difficulty"));
+            var diffMode = MapCardMetadataText.NormalizeMode(GetString(diff, "characteristic"));
+            var modeMatches = normalizedMode.Length == 0 || diffMode.Length == 0 || diffMode == normalizedMode;
+            if (diffDifficulty == normalizedDifficulty && modeMatches)
+            {
+                return diff;
+            }
+
+            fallback ??= diff;
+        }
+
+        return fallback;
     }
 
     private static string CreateUniqueLevelDirectory(string targetRoot, string folderName)

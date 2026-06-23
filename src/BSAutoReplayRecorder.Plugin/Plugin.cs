@@ -33,6 +33,7 @@ public sealed class Plugin
         _settings = PluginSettingsStore.LoadOrCreate(_logger);
 
         RecordingStatusOverlay.EnsureCreated();
+        GameFpsSampler.EnsureCreated();
         RecordingStatusOverlay.SetStatusPanelVisible(true);
         RecordingStatusOverlay.ShowIdle(
             "Worker starting",
@@ -48,6 +49,7 @@ public sealed class Plugin
         _shutdownCancellation?.Cancel();
         _controlPanelWorker?.Dispose();
         InstanceWindowPlacementController.DestroyInstance();
+        GameFpsSampler.DestroyInstance();
         RecordingStatusOverlay.DestroyInstance();
         _logger?.Info("Beat Saber Auto Replay Recorder shut down.");
     }

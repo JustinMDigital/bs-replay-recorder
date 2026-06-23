@@ -56,26 +56,28 @@ public sealed class FfmpegProcessRecorder
             var ffmpegOutputPath = resolvedOptions.UsesProcessLoopback
                 ? CreateProcessLoopbackVideoPath(outputPath)
                 : outputPath;
-            var arguments = BuildArguments(ffmpegOutputPath, request, resolvedOptions);
             var ffmpegPath = _ffmpegResolver.Resolve(_settings.FfmpegPath)
                              ?? throw new InvalidOperationException(
                                  "FFmpeg was not found. Set ffmpegPath in the config or BSARR_FFMPEG_PATH.");
+            var windowsGraphicsCapturePath = resolvedOptions.UsesWindowsGraphicsCapture
+                ? ResolveWindowsGraphicsCapturePath()
+                  ?? throw new InvalidOperationException(
+                      "WindowsGraphicsCapture capture requires WindowsGraphicsCapture.exe. Build tools\\WindowsGraphicsCapture.Managed or set windowsGraphicsCapturePath in the recorder host config.")
+                : null;
             var processLoopbackCapturePath = resolvedOptions.UsesProcessLoopback
                 ? ResolveProcessLoopbackCapturePath()
                   ?? throw new InvalidOperationException(
                       "ProcessLoopback audio requires ProcessLoopbackCapture.exe. Build tools\\ProcessLoopbackCapture or set processLoopbackCapturePath in the recorder host config.")
                 : null;
 
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = ffmpegPath,
-                Arguments = arguments,
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
+            var startInfo = resolvedOptions.UsesWindowsGraphicsCapture
+                ? CreateWindowsGraphicsCaptureStartInfo(
+                    windowsGraphicsCapturePath!,
+                    ffmpegPath,
+                    ffmpegOutputPath,
+                    request,
+                    resolvedOptions)
+                : CreateFfmpegStartInfo(BuildArguments(ffmpegOutputPath, request, resolvedOptions), ffmpegPath);
 
             var process = new Process
             {
@@ -83,7 +85,10 @@ public sealed class FfmpegProcessRecorder
                 EnableRaisingEvents = true
             };
 
-            process.OutputDataReceived += (_, args) => LogFfmpegLine(args.Data, isError: false);
+            var videoStartupCapture = resolvedOptions.UsesWindowsGraphicsCapture
+                ? new TaskCompletionSource<DateTimeOffset>(TaskCreationOptions.RunContinuationsAsynchronously)
+                : null;
+            process.OutputDataReceived += (_, args) => LogFfmpegLine(args.Data, isError: false, videoStartupCapture);
             process.ErrorDataReceived += (_, args) => LogFfmpegLine(args.Data, isError: true);
 
             var videoStartedAtUtc = DateTimeOffset.UtcNow;
@@ -94,6 +99,15 @@ public sealed class FfmpegProcessRecorder
 
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
+
+            if (resolvedOptions.UsesWindowsGraphicsCapture)
+            {
+                videoStartedAtUtc = await ReadWindowsGraphicsCaptureStartupAsync(
+                        process,
+                        videoStartupCapture!.Task,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             if (_settings.StartupProbeMilliseconds > 0)
             {
@@ -106,7 +120,7 @@ public sealed class FfmpegProcessRecorder
                 var exitCode = TryGetExitCode(process);
                 process.Dispose();
                 throw new InvalidOperationException(
-                    "FFmpeg exited during startup. ExitCode=" +
+                    resolvedOptions.CaptureEngine + " capture exited during startup. ExitCode=" +
                     (exitCode.HasValue ? exitCode.Value.ToString() : "unknown") + ".");
             }
 
@@ -141,6 +155,7 @@ public sealed class FfmpegProcessRecorder
                 outputPath,
                 ffmpegOutputPath,
                 audioProcess?.AudioPath,
+                audioProcess?.StartedAtUtc,
                 ResolveWindowTitle(request),
                 request.TargetProcessId,
                 resolvedOptions,
@@ -153,7 +168,8 @@ public sealed class FfmpegProcessRecorder
             _activeRecording = activeRecording;
             _lastStatus = activeRecording.ToStatus("recording");
             _logger.LogInformation(
-                "Started FFmpeg recording {RecordingId} with process {ProcessId}: {OutputPath}",
+                "Started {CaptureEngine} recording {RecordingId} with process {ProcessId}: {OutputPath}",
+                resolvedOptions.CaptureEngine,
                 activeRecording.RecordingId,
                 process.Id,
                 outputPath);
@@ -465,7 +481,37 @@ public sealed class FfmpegProcessRecorder
         return DateTimeOffset.UtcNow;
     }
 
+    private async Task<DateTimeOffset> ReadWindowsGraphicsCaptureStartupAsync(
+        Process process,
+        Task<DateTimeOffset> startupTask,
+        CancellationToken cancellationToken)
+    {
+        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+        var exitTask = process.WaitForExitAsync(cancellationToken);
+        var completedTask = await Task.WhenAny(startupTask, timeoutTask, exitTask).ConfigureAwait(false);
+        if (completedTask == startupTask)
+        {
+            return await startupTask.ConfigureAwait(false);
+        }
+
+        if (completedTask == exitTask || process.HasExited)
+        {
+            await exitTask.ConfigureAwait(false);
+            throw new InvalidOperationException(
+                "WindowsGraphicsCapture exited during startup. ExitCode=" +
+                (TryGetExitCode(process)?.ToString(CultureInfo.InvariantCulture) ?? "unknown") + ".");
+        }
+
+        _logger.LogWarning("WindowsGraphicsCapture did not report video startup within 2 seconds; using current time for audio sync.");
+        return DateTimeOffset.UtcNow;
+    }
+
     private static bool TryParseProcessLoopbackStartedAt(string line, out DateTimeOffset startedAtUtc)
+    {
+        return TryParseCaptureStartedAt(line, out startedAtUtc);
+    }
+
+    private static bool TryParseCaptureStartedAt(string line, out DateTimeOffset startedAtUtc)
     {
         const string prefix = "CaptureStartedUtc=";
         if (line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
@@ -537,6 +583,19 @@ public sealed class FfmpegProcessRecorder
         return null;
     }
 
+    private string? ResolveWindowsGraphicsCapturePath()
+    {
+        foreach (var candidate in EnumerateWindowsGraphicsCapturePathCandidates())
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate))
+            {
+                return Path.GetFullPath(candidate);
+            }
+        }
+
+        return null;
+    }
+
     private IEnumerable<string> EnumerateProcessLoopbackCapturePathCandidates()
     {
         if (!string.IsNullOrWhiteSpace(_settings.ProcessLoopbackCapturePath))
@@ -550,6 +609,19 @@ public sealed class FfmpegProcessRecorder
         yield return Path.Combine(Environment.CurrentDirectory, "tools", "ProcessLoopbackCapture.Managed", "bin", "Debug", "net10.0-windows10.0.20348.0", "win-x64", "ProcessLoopbackCapture.exe");
         yield return Path.Combine(AppContext.BaseDirectory, "ProcessLoopbackCapture.exe");
         yield return "ProcessLoopbackCapture.exe";
+    }
+
+    private IEnumerable<string> EnumerateWindowsGraphicsCapturePathCandidates()
+    {
+        if (!string.IsNullOrWhiteSpace(_settings.WindowsGraphicsCapturePath))
+        {
+            yield return _settings.WindowsGraphicsCapturePath;
+        }
+
+        yield return Path.Combine(Environment.CurrentDirectory, "tools", "WindowsGraphicsCapture.Managed", "bin", "Release", "net10.0-windows10.0.20348.0", "win-x64", "WindowsGraphicsCapture.exe");
+        yield return Path.Combine(Environment.CurrentDirectory, "tools", "WindowsGraphicsCapture.Managed", "bin", "Debug", "net10.0-windows10.0.20348.0", "win-x64", "WindowsGraphicsCapture.exe");
+        yield return Path.Combine(AppContext.BaseDirectory, "WindowsGraphicsCapture.exe");
+        yield return "WindowsGraphicsCapture.exe";
     }
 
     private async Task<ProcessLoopbackMuxResult> MuxProcessLoopbackRecordingAsync(
@@ -578,15 +650,30 @@ public sealed class FfmpegProcessRecorder
             trimStart = TimeSpan.Zero;
         }
 
-        var analysis = await SyncMarkerAnalyzer
-            .AnalyzeFilesAsync(
-                activeRecording.FfmpegPath,
-                activeRecording.VideoOutputPath,
-                activeRecording.AudioPath,
-                cancellationToken)
-            .ConfigureAwait(false);
         var reportPath = CreateProcessLoopbackSyncReportPath(activeRecording.OutputPath);
-        WriteProcessLoopbackSyncReport(reportPath, activeRecording, trimStart, analysis);
+        SyncMarkerAnalysisResult analysis;
+        try
+        {
+            analysis = await SyncMarkerAnalyzer
+                .AnalyzeFilesAsync(
+                    activeRecording.FfmpegPath,
+                    activeRecording.VideoOutputPath,
+                    activeRecording.AudioPath,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or Win32Exception)
+        {
+            _logger.LogWarning(
+                ex,
+                "Sync marker analysis failed for recording {RecordingId}; muxing with the process-loopback startup offset.",
+                activeRecording.RecordingId);
+            analysis = SyncMarkerAnalyzer.CreateEstimated(
+                activeRecording.ProcessLoopbackAudioOffset,
+                ex.Message);
+        }
+
+        WriteProcessLoopbackSyncReport(reportPath, activeRecording, contentStartUtc, trimStart, analysis);
 
         var arguments = CreateProcessLoopbackExactMuxArguments(
             activeRecording.VideoOutputPath,
@@ -626,8 +713,20 @@ public sealed class FfmpegProcessRecorder
             throw new InvalidOperationException("FFmpeg mux for ProcessLoopback recording failed. ExitCode=" + process.ExitCode + ".");
         }
 
-        TryDeleteSidecar(activeRecording.VideoOutputPath);
-        TryDeleteSidecar(activeRecording.AudioPath);
+        if (!_settings.PreserveProcessLoopbackSidecars)
+        {
+            TryDeleteSidecar(activeRecording.VideoOutputPath);
+            TryDeleteSidecar(activeRecording.AudioPath);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Preserved process-loopback sidecars for recording {RecordingId}: {VideoPath}, {AudioPath}",
+                activeRecording.RecordingId,
+                activeRecording.VideoOutputPath,
+                activeRecording.AudioPath);
+        }
+
         return new ProcessLoopbackMuxResult(
             analysis.Status,
             analysis.SyncCorrectionMilliseconds,
@@ -672,22 +771,57 @@ public sealed class FfmpegProcessRecorder
             "-c:a aac -b:a " + options.AudioBitrateKbps.ToString(CultureInfo.InvariantCulture) +
             "k -ar " + options.AudioSampleRate.ToString(CultureInfo.InvariantCulture) +
             " -ac " + options.AudioChannels.ToString(CultureInfo.InvariantCulture);
-        var audioOutputArguments = string.IsNullOrWhiteSpace(options.AudioFilterArguments)
-            ? audioEncoderArguments
-            : options.AudioFilterArguments + " " + audioEncoderArguments;
-        var audioInputArguments = audioOffset == TimeSpan.Zero
-            ? "-i " + QuoteArgument(audioPath)
-            : "-itsoffset " + FormatSeconds(audioOffset.TotalSeconds) + " -i " + QuoteArgument(audioPath);
         return "-hide_banner -y -i " + QuoteArgument(videoPath) +
-               " " + audioInputArguments +
-               " -ss " + FormatSeconds(Math.Max(0, trimStart.TotalSeconds)) +
-               " -map 0:v:0 -map 1:a:0 -c:v " + options.Encoder +
+               " -i " + QuoteArgument(audioPath) +
+               " -filter_complex " + QuoteArgument(CreateProcessLoopbackExactMuxFilter(options, audioOffset, trimStart)) +
+               " -map [v] -map [a] -c:v " + options.Encoder +
                " -preset " + options.EncoderPreset +
                " -b:v " + options.VideoBitrateKbps.ToString(CultureInfo.InvariantCulture) +
                "k -pix_fmt yuv420p " +
-               audioOutputArguments + " -shortest " +
+               audioEncoderArguments + " -shortest " +
                options.ContainerFlags + " " +
                QuoteArgument(outputPath);
+    }
+
+    private static string CreateProcessLoopbackExactMuxFilter(
+        ResolvedRecordingOptions options,
+        TimeSpan audioOffset,
+        TimeSpan trimStart)
+    {
+        var trimStartSeconds = Math.Max(0, trimStart.TotalSeconds);
+        var audioTrimStartSeconds = trimStartSeconds - audioOffset.TotalSeconds;
+        var audioFilters = new List<string>();
+        if (audioTrimStartSeconds >= 0)
+        {
+            audioFilters.Add("atrim=start=" + FormatSeconds(audioTrimStartSeconds));
+            audioFilters.Add("asetpts=PTS-STARTPTS");
+        }
+        else
+        {
+            audioFilters.Add("atrim=start=0");
+            audioFilters.Add("asetpts=PTS-STARTPTS");
+            audioFilters.Add(
+                "adelay=" +
+                Math.Round(-audioTrimStartSeconds * 1000.0).ToString("0", CultureInfo.InvariantCulture) +
+                ":all=1");
+        }
+
+        var audioLevelFilter = ExtractAudioLevelFilter(options.AudioFilterArguments);
+        if (!string.IsNullOrWhiteSpace(audioLevelFilter))
+        {
+            audioFilters.Add(audioLevelFilter);
+        }
+
+        return "[0:v]trim=start=" + FormatSeconds(trimStartSeconds) + ",setpts=PTS-STARTPTS[v];" +
+               "[1:a]" + string.Join(",", audioFilters) + "[a]";
+    }
+
+    private static string ExtractAudioLevelFilter(string audioFilterArguments)
+    {
+        var normalized = audioFilterArguments.Trim();
+        return normalized.StartsWith("-af ", StringComparison.OrdinalIgnoreCase)
+            ? normalized.Substring(4).Trim()
+            : normalized;
     }
 
     private static string CreateProcessLoopbackSyncReportPath(string outputPath)
@@ -700,6 +834,7 @@ public sealed class FfmpegProcessRecorder
     private static void WriteProcessLoopbackSyncReport(
         string reportPath,
         ActiveRecording activeRecording,
+        DateTimeOffset? contentStartUtc,
         TimeSpan trimStart,
         SyncMarkerAnalysisResult analysis)
     {
@@ -710,7 +845,13 @@ public sealed class FfmpegProcessRecorder
             outputPath = activeRecording.OutputPath,
             videoSidecarPath = activeRecording.VideoOutputPath,
             audioSidecarPath = activeRecording.AudioPath,
+            videoStartedAtUtc = activeRecording.StartedAtUtc,
+            audioStartedAtUtc = activeRecording.AudioStartedAtUtc,
+            contentStartUtc = contentStartUtc?.ToUniversalTime(),
+            processLoopbackStartupOffsetSeconds = activeRecording.ProcessLoopbackAudioOffset.TotalSeconds,
             status = analysis.Status,
+            audioOffsetSource = analysis.AudioOffsetSource,
+            analysisError = analysis.AnalysisError,
             audioOffsetSeconds = analysis.AudioOffsetSeconds,
             syncCorrectionMilliseconds = analysis.SyncCorrectionMilliseconds,
             trimStartSeconds = Math.Round(trimStart.TotalSeconds, 3),
@@ -824,6 +965,66 @@ public sealed class FfmpegProcessRecorder
             });
     }
 
+    private static ProcessStartInfo CreateFfmpegStartInfo(string arguments, string ffmpegPath)
+    {
+        return new ProcessStartInfo
+        {
+            FileName = ffmpegPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+    }
+
+    private ProcessStartInfo CreateWindowsGraphicsCaptureStartInfo(
+        string executablePath,
+        string ffmpegPath,
+        string outputPath,
+        StartRecordingRequest request,
+        ResolvedRecordingOptions options)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executablePath,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("capture");
+        startInfo.ArgumentList.Add("--window-title");
+        startInfo.ArgumentList.Add(ResolveWindowTitle(request));
+        if (request.TargetProcessId.HasValue)
+        {
+            startInfo.ArgumentList.Add("--process-id");
+            startInfo.ArgumentList.Add(request.TargetProcessId.Value.ToString(CultureInfo.InvariantCulture));
+        }
+
+        startInfo.ArgumentList.Add("--ffmpeg");
+        startInfo.ArgumentList.Add(ffmpegPath);
+        startInfo.ArgumentList.Add("--output");
+        startInfo.ArgumentList.Add(outputPath);
+        startInfo.ArgumentList.Add("--fps");
+        startInfo.ArgumentList.Add(options.TargetFps.ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add("--width");
+        startInfo.ArgumentList.Add(options.CaptureWidth.ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add("--height");
+        startInfo.ArgumentList.Add(options.CaptureHeight.ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add("--encoder");
+        startInfo.ArgumentList.Add(options.Encoder);
+        startInfo.ArgumentList.Add("--bitrate-kbps");
+        startInfo.ArgumentList.Add(options.VideoBitrateKbps.ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add("--format");
+        startInfo.ArgumentList.Add(options.OutputFormat);
+        startInfo.ArgumentList.Add("--quality");
+        startInfo.ArgumentList.Add(options.QualityMode);
+        return startInfo;
+    }
+
     private ResolvedRecordingOptions ResolveRecordingOptions(StartRecordingRequest request)
     {
         var targetFps = ClampValue(request.TargetFps, fallback: _settings.DefaultTargetFps, min: 1, max: 240);
@@ -840,6 +1041,7 @@ public sealed class FfmpegProcessRecorder
         var outputExtension = "." + outputFormat;
         var monitorIndex = ClampValue(request.MonitorIndex, fallback: _settings.DefaultMonitorIndex, min: 0, max: 16);
         var qualityMode = NormalizeQualityMode(request.QualityMode, _settings.DefaultQualityMode);
+        var captureEngine = RecorderHostSettings.NormalizeCaptureEngine(request.CaptureEngine ?? _settings.DefaultCaptureEngine);
         var audioMode = NormalizeAudioMode(request.AudioMode, _settings.DefaultAudioMode);
         var audioDeviceName = ResolveAudioDeviceName(request.AudioDeviceName);
         var audioBitrateKbps = ClampValue(
@@ -891,6 +1093,7 @@ public sealed class FfmpegProcessRecorder
             outputExtension,
             monitorIndex,
             qualityMode,
+            captureEngine,
             ResolveEncoderPreset(encoder, qualityMode),
             ResolveContainerFlags(outputFormat),
             audioMode,
@@ -913,11 +1116,19 @@ public sealed class FfmpegProcessRecorder
             : request.WindowTitle;
     }
 
-    private void LogFfmpegLine(string? line, bool isError)
+    private void LogFfmpegLine(
+        string? line,
+        bool isError,
+        TaskCompletionSource<DateTimeOffset>? startupCapture = null)
     {
         if (string.IsNullOrWhiteSpace(line))
         {
             return;
+        }
+
+        if (!isError && startupCapture != null && TryParseCaptureStartedAt(line, out var startedAtUtc))
+        {
+            startupCapture.TrySetResult(startedAtUtc);
         }
 
         if (isError)
@@ -940,7 +1151,7 @@ public sealed class FfmpegProcessRecorder
             return;
         }
 
-        if (!isError && startupCapture != null && TryParseProcessLoopbackStartedAt(line, out var startedAtUtc))
+        if (!isError && startupCapture != null && TryParseCaptureStartedAt(line, out var startedAtUtc))
         {
             startupCapture.TrySetResult(startedAtUtc);
         }
@@ -1155,6 +1366,7 @@ public sealed class FfmpegProcessRecorder
             string outputPath,
             string videoOutputPath,
             string? audioPath,
+            DateTimeOffset? audioStartedAtUtc,
             string windowTitle,
             int? targetProcessId,
             ResolvedRecordingOptions options,
@@ -1169,6 +1381,7 @@ public sealed class FfmpegProcessRecorder
             OutputPath = outputPath;
             VideoOutputPath = videoOutputPath;
             AudioPath = audioPath;
+            AudioStartedAtUtc = audioStartedAtUtc;
             WindowTitle = windowTitle;
             TargetProcessId = targetProcessId;
             Options = options;
@@ -1188,6 +1401,8 @@ public sealed class FfmpegProcessRecorder
         public string VideoOutputPath { get; }
 
         public string? AudioPath { get; }
+
+        public DateTimeOffset? AudioStartedAtUtc { get; }
 
         public string WindowTitle { get; }
 
@@ -1225,6 +1440,7 @@ public sealed class FfmpegProcessRecorder
                 OutputExtension = Options.OutputExtension,
                 MonitorIndex = Options.MonitorIndex,
                 QualityMode = Options.QualityMode,
+                CaptureEngine = Options.CaptureEngine,
                 EncoderPreset = Options.EncoderPreset,
                 AudioMode = Options.AudioMode,
                 AudioDeviceName = Options.AudioDeviceName,
@@ -1252,6 +1468,7 @@ public sealed class FfmpegProcessRecorder
             string outputExtension,
             int monitorIndex,
             string qualityMode,
+            string captureEngine,
             string encoderPreset,
             string containerFlags,
             string audioMode,
@@ -1275,6 +1492,7 @@ public sealed class FfmpegProcessRecorder
             OutputExtension = outputExtension;
             MonitorIndex = monitorIndex;
             QualityMode = qualityMode;
+            CaptureEngine = captureEngine;
             EncoderPreset = encoderPreset;
             ContainerFlags = containerFlags;
             AudioMode = audioMode;
@@ -1308,6 +1526,8 @@ public sealed class FfmpegProcessRecorder
 
         public string QualityMode { get; }
 
+        public string CaptureEngine { get; }
+
         public string EncoderPreset { get; }
 
         public string ContainerFlags { get; }
@@ -1335,6 +1555,8 @@ public sealed class FfmpegProcessRecorder
         public string AudioOutputArguments { get; }
 
         public bool UsesProcessLoopback => string.Equals(AudioMode, "ProcessLoopback", StringComparison.OrdinalIgnoreCase);
+
+        public bool UsesWindowsGraphicsCapture => string.Equals(CaptureEngine, "WindowsGraphicsCapture", StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class ProcessLoopbackAudioProcess

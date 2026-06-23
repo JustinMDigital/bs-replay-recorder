@@ -27,6 +27,9 @@ public sealed class ControlPanelWorkerRunner : IDisposable
     private Task? _idleShutdownTask;
     private bool _disposed;
     private int _appliedGamePresentationSettingsVersion;
+    private int _activeAssignment;
+    private int _pendingGamePresentationSettingsToastVersion;
+    private string _activeAssignmentHeartbeatStatus = "Recording";
     private string _gamePresentationSyncStatus = "Pending";
     private string? _gamePresentationSyncError;
     private long _lastControlPanelContactUtcTicks;
@@ -161,6 +164,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         CancellationToken cancellationToken)
     {
         var workerSettings = _settings.ControlPanelWorker;
+        var providerReadiness = ReplayProviderReadiness.Check();
         var response = await client.RegisterAsync(
             new ControlPanelWorkerRegisterRequest
             {
@@ -168,7 +172,12 @@ public sealed class ControlPanelWorkerRunner : IDisposable
                 WorkerName = NormalizeNullable(workerSettings.WorkerName) ?? CreateDefaultWorkerName(),
                 PreferredInstanceIndex = workerSettings.PreferredInstanceIndex,
                 GameDirectory = GamePaths.GetGameRoot(),
-                PluginVersion = GetPluginVersion()
+                PluginVersion = GetPluginVersion(),
+                ReplayProviderStatusReported = true,
+                BeatLeaderReady = providerReadiness.BeatLeaderReady,
+                BeatLeaderStatus = providerReadiness.BeatLeaderStatus,
+                ScoreSaberReady = providerReadiness.ScoreSaberReady,
+                ScoreSaberStatus = providerReadiness.ScoreSaberStatus
             },
             cancellationToken).ConfigureAwait(false);
 
@@ -197,65 +206,149 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         }
 
         SetStatus("Recording assignment");
+        Interlocked.Exchange(ref _activeAssignment, 1);
+        Volatile.Write(ref _activeAssignmentHeartbeatStatus, "Recording");
+        GameFpsSampler.ResetHeartbeatWindow();
         RecordingStatusOverlay.Clear();
         RecordingStatusOverlay.SetStatusPanelVisible(false);
         RecordControlPanelContact();
 
-        await client.ReportAsync(
-            new ControlPanelWorkerReportRequest
-            {
-                WorkerId = workerId,
-                AssignmentId = assignment.AssignmentId,
-                Status = "Recording"
-            },
-            cancellationToken).ConfigureAwait(false);
-
-        using (var assignmentCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
-        using (var heartbeatCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        try
         {
-            var heartbeatTask = Task.Run(
-                () => RunAssignmentHeartbeatAsync(
-                    client,
-                    workerId,
-                    assignment,
-                    assignmentCancellation,
-                    heartbeatCancellation.Token),
-                heartbeatCancellation.Token);
-
-            try
-            {
-                var result = await ExecuteAssignmentAsync(assignment, assignmentCancellation.Token).ConfigureAwait(false);
-                heartbeatCancellation.Cancel();
-                await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
-                RecordControlPanelContact();
-
-                await client.ReportAsync(
-                    new ControlPanelWorkerReportRequest
-                    {
-                        WorkerId = workerId,
-                        AssignmentId = assignment.AssignmentId,
-                        Status = result.Succeeded ? "Completed" : "Failed",
-                        OutputPath = result.OutputPath,
-                        Error = result.Error,
-                        Warning = result.Warning,
-                        SyncStatus = result.SyncStatus,
-                        SyncCorrectionMilliseconds = result.SyncCorrectionMilliseconds,
-                        TrimStartSeconds = result.TrimStartSeconds,
-                        SyncReportPath = result.SyncReportPath
-                    },
-                    CancellationToken.None).ConfigureAwait(false);
-
-                SetStatus(result.Succeeded ? "Control-panel worker online" : "Assignment failed");
-                if (result.Succeeded)
+            await client.ReportAsync(
+                new ControlPanelWorkerReportRequest
                 {
-                    await ShowConnectedStatusThenDelayBeforeNextAssignmentAsync(
+                    WorkerId = workerId,
+                    AssignmentId = assignment.AssignmentId,
+                    Status = "Recording"
+                },
+                cancellationToken).ConfigureAwait(false);
+
+            using (var assignmentCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            using (var heartbeatCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                var assignmentCancellationDetails = new AssignmentCancellationDetails();
+                var heartbeatTask = Task.Run(
+                    () => RunAssignmentHeartbeatAsync(
                         client,
                         workerId,
                         assignment,
-                        cancellationToken).ConfigureAwait(false);
-                }
-                else
+                        assignmentCancellation,
+                        assignmentCancellationDetails,
+                        heartbeatCancellation.Token),
+                    heartbeatCancellation.Token);
+
+                try
                 {
+                    var result = await ExecuteAssignmentAsync(
+                        assignment,
+                        (phase, token) => ReportAssignmentPhaseAsync(client, workerId, assignment, phase, token),
+                        assignmentCancellation.Token).ConfigureAwait(false);
+                    heartbeatCancellation.Cancel();
+                    await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
+                    RecordControlPanelContact();
+
+                    var cancellationDetails = assignmentCancellationDetails.GetSnapshot();
+                    var cancellationReason = NormalizeNullable(cancellationDetails.Reason);
+                    var reportStatus = cancellationReason == null
+                        ? (result.Succeeded ? "Completed" : "Failed")
+                        : (cancellationDetails.FailsAssignment ? "Failed" : "Stopped");
+                    var reportError = cancellationReason ?? result.Error;
+
+                    await client.ReportAsync(
+                        new ControlPanelWorkerReportRequest
+                        {
+                            WorkerId = workerId,
+                            AssignmentId = assignment.AssignmentId,
+                            Status = reportStatus,
+                            OutputPath = result.OutputPath,
+                            Error = reportError,
+                            Warning = result.Warning,
+                            SyncStatus = result.SyncStatus,
+                            SyncCorrectionMilliseconds = result.SyncCorrectionMilliseconds,
+                            TrimStartSeconds = result.TrimStartSeconds,
+                            SyncReportPath = result.SyncReportPath
+                        },
+                        CancellationToken.None).ConfigureAwait(false);
+
+                    SetStatus(reportStatus == "Completed"
+                        ? "Control-panel worker online"
+                        : reportStatus == "Stopped"
+                            ? "Assignment stopped"
+                            : "Assignment failed");
+                    MarkAssignmentInactive();
+                    if (reportStatus == "Completed")
+                    {
+                        await ShowConnectedStatusThenDelayBeforeNextAssignmentAsync(
+                            client,
+                            workerId,
+                            assignment,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await ShowConnectedStatusFromHeartbeatAsync(
+                            client,
+                            workerId,
+                            assignment.InstanceIndex,
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    heartbeatCancellation.Cancel();
+                    await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
+                    RecordControlPanelContact();
+                    throw;
+                }
+                catch (OperationCanceledException) when (assignmentCancellation.IsCancellationRequested)
+                {
+                    heartbeatCancellation.Cancel();
+                    await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
+                    RecordControlPanelContact();
+
+                    var cancellationDetails = assignmentCancellationDetails.GetSnapshot();
+                    var reason = NormalizeNullable(cancellationDetails.Reason) ??
+                                 "Assignment canceled by control panel.";
+                    var status = cancellationDetails.FailsAssignment ? "Failed" : "Stopped";
+                    _logger.Warn(reason);
+                    await client.ReportAsync(
+                        new ControlPanelWorkerReportRequest
+                        {
+                            WorkerId = workerId,
+                            AssignmentId = assignment.AssignmentId,
+                            Status = status,
+                            Error = reason
+                        },
+                        CancellationToken.None).ConfigureAwait(false);
+
+                    SetStatus(cancellationDetails.FailsAssignment ? "Assignment failed" : "Assignment stopped");
+                    MarkAssignmentInactive();
+                    await ShowConnectedStatusFromHeartbeatAsync(
+                        client,
+                        workerId,
+                        assignment.InstanceIndex,
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    heartbeatCancellation.Cancel();
+                    await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
+                    RecordControlPanelContact();
+
+                    _logger.Error("Control panel assignment failed: " + ex);
+                    await client.ReportAsync(
+                        new ControlPanelWorkerReportRequest
+                        {
+                            WorkerId = workerId,
+                            AssignmentId = assignment.AssignmentId,
+                            Status = "Failed",
+                            Error = ex.Message
+                        },
+                        CancellationToken.None).ConfigureAwait(false);
+
+                    SetStatus("Assignment failed");
+                    MarkAssignmentInactive();
                     await ShowConnectedStatusFromHeartbeatAsync(
                         client,
                         workerId,
@@ -263,62 +356,10 @@ public sealed class ControlPanelWorkerRunner : IDisposable
                         CancellationToken.None).ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                heartbeatCancellation.Cancel();
-                await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
-                RecordControlPanelContact();
-                throw;
-            }
-            catch (OperationCanceledException) when (assignmentCancellation.IsCancellationRequested)
-            {
-                heartbeatCancellation.Cancel();
-                await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
-                RecordControlPanelContact();
-
-                var reason = "Assignment canceled by control panel.";
-                _logger.Warn(reason);
-                await client.ReportAsync(
-                    new ControlPanelWorkerReportRequest
-                    {
-                        WorkerId = workerId,
-                        AssignmentId = assignment.AssignmentId,
-                        Status = "Stopped",
-                        Error = reason
-                    },
-                    CancellationToken.None).ConfigureAwait(false);
-
-                SetStatus("Assignment stopped");
-                await ShowConnectedStatusFromHeartbeatAsync(
-                    client,
-                    workerId,
-                    assignment.InstanceIndex,
-                    CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                heartbeatCancellation.Cancel();
-                await ObserveTaskAsync(heartbeatTask).ConfigureAwait(false);
-                RecordControlPanelContact();
-
-                _logger.Error("Control panel assignment failed: " + ex);
-                await client.ReportAsync(
-                    new ControlPanelWorkerReportRequest
-                    {
-                        WorkerId = workerId,
-                        AssignmentId = assignment.AssignmentId,
-                        Status = "Failed",
-                        Error = ex.Message
-                    },
-                    CancellationToken.None).ConfigureAwait(false);
-
-                SetStatus("Assignment failed");
-                await ShowConnectedStatusFromHeartbeatAsync(
-                    client,
-                    workerId,
-                    assignment.InstanceIndex,
-                    CancellationToken.None).ConfigureAwait(false);
-            }
+        }
+        finally
+        {
+            MarkAssignmentInactive();
         }
     }
 
@@ -327,12 +368,16 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         string workerId,
         ControlPanelWorkerAssignmentResponse assignment,
         CancellationTokenSource assignmentCancellation,
+        AssignmentCancellationDetails assignmentCancellationDetails,
         CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
             var response = await client.HeartbeatAsync(
-                CreateHeartbeatRequest(workerId, "Recording", assignment.ReplayId),
+                CreateHeartbeatRequest(
+                    workerId,
+                    Volatile.Read(ref _activeAssignmentHeartbeatStatus),
+                    assignment.ReplayId),
                 cancellationToken).ConfigureAwait(false);
             if (response.ShouldCancelAssignment)
             {
@@ -342,6 +387,9 @@ public sealed class ControlPanelWorkerRunner : IDisposable
                         ? "no reason provided"
                         : response.CancellationReason));
                 await HandleHeartbeatResponseAsync(response, cancellationToken).ConfigureAwait(false);
+                assignmentCancellationDetails.Set(
+                    response.CancellationReason,
+                    response.CancellationFailsAssignment);
                 assignmentCancellation.Cancel();
                 return;
             }
@@ -378,6 +426,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
 
     private async Task<RecordingExecutionResult> ExecuteAssignmentAsync(
         ControlPanelWorkerAssignmentResponse assignment,
+        Func<string, CancellationToken, Task> reportPhaseAsync,
         CancellationToken cancellationToken)
     {
         var replayPath = NormalizeNullable(assignment.ReplayPath)
@@ -418,10 +467,32 @@ public sealed class ControlPanelWorkerRunner : IDisposable
                 assignmentSettings,
                 CreatePlaybackDrivers(assignmentSettings.SuppressScoreSaberReplayUi),
                 recordingBackend,
-                _logger);
+                _logger,
+                reportPhaseAsync);
 
             return await runner.RunSingleAsync(plan, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task ReportAssignmentPhaseAsync(
+        ControlPanelWorkerClient client,
+        string workerId,
+        ControlPanelWorkerAssignmentResponse assignment,
+        string phase,
+        CancellationToken cancellationToken)
+    {
+        var status = NormalizeAssignmentHeartbeatStatus(phase);
+        Volatile.Write(ref _activeAssignmentHeartbeatStatus, status);
+        SetStatus(status == "Finalizing" ? "Finalizing recording" : "Recording assignment");
+        await client.ReportAsync(
+            new ControlPanelWorkerReportRequest
+            {
+                WorkerId = workerId,
+                AssignmentId = assignment.AssignmentId!,
+                Status = status
+            },
+            cancellationToken).ConfigureAwait(false);
+        RecordControlPanelContact();
     }
 
     private static BsorInfo CreateReplayInfo(ControlPanelWorkerAssignmentResponse assignment, string replayPath)
@@ -532,6 +603,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             clone.RecorderHost.OutputFormat = assignment.OutputFormat ?? "";
             clone.RecorderHost.MonitorIndex = assignment.MonitorIndex >= 0 ? assignment.MonitorIndex : null;
             clone.RecorderHost.QualityMode = assignment.QualityMode ?? "";
+            clone.RecorderHost.CaptureEngine = assignment.CaptureEngine ?? "";
             clone.RecorderHost.AudioMode = assignment.AudioMode ?? "";
             clone.RecorderHost.AudioDeviceName = assignment.AudioDeviceName ?? "";
             clone.RecorderHost.AudioBitrateKbps = assignment.AudioBitrateKbps > 0 ? assignment.AudioBitrateKbps : null;
@@ -667,6 +739,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             cancellationToken).ConfigureAwait(false);
         await HandleHeartbeatResponseAsync(heartbeat, cancellationToken).ConfigureAwait(false);
         ShowConnectedStatus(instanceIndex, heartbeat.Progress);
+        TryShowDeferredGamePresentationSettingsUpdatedToast();
         return heartbeat.Progress;
     }
 
@@ -711,20 +784,85 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         return TimeSpan.FromSeconds(Math.Min(30, seconds));
     }
 
+    private void MarkAssignmentInactive()
+    {
+        Interlocked.Exchange(ref _activeAssignment, 0);
+        Volatile.Write(ref _activeAssignmentHeartbeatStatus, "Recording");
+    }
+
+    private void ShowGamePresentationSettingsUpdatedToastOrDefer(int settingsVersion)
+    {
+        if (Volatile.Read(ref _activeAssignment) != 0)
+        {
+            Interlocked.Exchange(ref _pendingGamePresentationSettingsToastVersion, settingsVersion);
+            return;
+        }
+
+        ShowGamePresentationSettingsUpdatedToast(settingsVersion);
+    }
+
+    private void TryShowDeferredGamePresentationSettingsUpdatedToast()
+    {
+        if (Volatile.Read(ref _activeAssignment) != 0)
+        {
+            return;
+        }
+
+        var settingsVersion = Interlocked.Exchange(ref _pendingGamePresentationSettingsToastVersion, 0);
+        if (settingsVersion <= 0)
+        {
+            return;
+        }
+
+        ShowGamePresentationSettingsUpdatedToast(settingsVersion);
+    }
+
+    private static void ShowGamePresentationSettingsUpdatedToast(int settingsVersion)
+    {
+        RecordingStatusOverlay.SetStatusPanelVisible(true);
+        RecordingStatusOverlay.ShowToast(
+            "Settings updated!",
+            "Game settings v" + settingsVersion + " applied.",
+            TimeSpan.FromSeconds(4));
+    }
+
     private ControlPanelWorkerHeartbeatRequest CreateHeartbeatRequest(
         string workerId,
         string status,
         string? currentReplayId)
     {
+        var providerReadiness = ReplayProviderReadiness.Check();
+        var fpsSample = GameFpsSampler.ReadHeartbeatSample();
         return new ControlPanelWorkerHeartbeatRequest
         {
             WorkerId = workerId,
             Status = status,
             CurrentReplayId = currentReplayId,
+            FramesPerSecond = fpsSample.MinimumFramesPerSecond,
+            AverageFramesPerSecond = fpsSample.AverageFramesPerSecond,
+            SampledFrameCount = fpsSample.SampledFrameCount,
             AppliedGamePresentationSettingsVersion = _appliedGamePresentationSettingsVersion,
             GamePresentationSyncStatus = _gamePresentationSyncStatus,
-            GamePresentationSyncError = _gamePresentationSyncError
+            GamePresentationSyncError = _gamePresentationSyncError,
+            ReplayProviderStatusReported = true,
+            BeatLeaderReady = providerReadiness.BeatLeaderReady,
+            BeatLeaderStatus = providerReadiness.BeatLeaderStatus,
+            ScoreSaberReady = providerReadiness.ScoreSaberReady,
+            ScoreSaberStatus = providerReadiness.ScoreSaberStatus
         };
+    }
+
+    private static string NormalizeAssignmentHeartbeatStatus(string? status)
+    {
+        var normalized = NormalizeNullable(status) ?? "Recording";
+        if (string.Equals(normalized, "Finalizing", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "Saving", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "Stopping", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Finalizing";
+        }
+
+        return "Recording";
     }
 
     private async Task ApplyGamePresentationSettingsAsync(
@@ -746,6 +884,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             _appliedGamePresentationSettingsVersion = settingsVersion;
             _gamePresentationSyncStatus = "Applied";
             _gamePresentationSyncError = null;
+            ShowGamePresentationSettingsUpdatedToastOrDefer(settingsVersion);
         }
         catch (Exception ex)
         {
@@ -849,5 +988,42 @@ public sealed class ControlPanelWorkerRunner : IDisposable
     {
         var trimmed = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private sealed class AssignmentCancellationDetails
+    {
+        private readonly object _sync = new object();
+        private string? _reason;
+        private bool _failsAssignment;
+
+        public void Set(string? reason, bool failsAssignment)
+        {
+            lock (_sync)
+            {
+                _reason = NormalizeNullable(reason);
+                _failsAssignment = failsAssignment;
+            }
+        }
+
+        public AssignmentCancellationSnapshot GetSnapshot()
+        {
+            lock (_sync)
+            {
+                return new AssignmentCancellationSnapshot(_reason, _failsAssignment);
+            }
+        }
+    }
+
+    private readonly struct AssignmentCancellationSnapshot
+    {
+        public AssignmentCancellationSnapshot(string? reason, bool failsAssignment)
+        {
+            Reason = reason;
+            FailsAssignment = failsAssignment;
+        }
+
+        public string? Reason { get; }
+
+        public bool FailsAssignment { get; }
     }
 }

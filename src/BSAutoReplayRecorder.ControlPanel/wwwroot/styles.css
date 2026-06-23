@@ -167,10 +167,6 @@ button,
   white-space: nowrap;
 }
 
-#addReplays {
-  display: inline-flex;
-}
-
 .statusStrip {
   display: grid;
   grid-template-columns: repeat(10, minmax(108px, 1fr));
@@ -309,25 +305,44 @@ button,
 .timelineList {
   display: grid;
   gap: 4px;
-  padding: 10px 5px;
+  padding: 10px 4px 10px 5px;
   max-height: 494px;
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-color: rgba(132, 151, 168, 0.42) transparent;
+  scrollbar-width: thin;
+}
+
+.timelineList::-webkit-scrollbar {
+  width: 5px;
+}
+
+.timelineList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.timelineList::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(132, 151, 168, 0.32);
+}
+
+.timelineList:hover::-webkit-scrollbar-thumb {
+  background: rgba(153, 174, 193, 0.54);
 }
 
 .timelineItem {
   display: grid;
-  grid-template-columns: 14px 30px;
+  grid-template-columns: 13px 30px;
   justify-content: center;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   width: 100%;
   min-width: 0;
   min-height: 50px;
   border: 1px solid transparent;
   background: transparent;
   color: #d6e2eb;
-  padding: 3px;
+  padding: 3px 2px;
   text-align: left;
 }
 
@@ -337,10 +352,65 @@ button,
 }
 
 .timelineItem > span:first-child {
-  color: var(--muted-strong);
-  font-size: 11px;
+  color: #8fa1af;
+  font-size: 10px;
   font-weight: 800;
   text-align: center;
+}
+
+.timelineItem.tone-queued {
+  border-color: rgba(58, 118, 185, 0.22);
+  background: rgba(20, 39, 61, 0.4);
+}
+
+.timelineItem.tone-active {
+  border-color: rgba(101, 190, 239, 0.46);
+  background: rgba(33, 84, 112, 0.18);
+}
+
+.timelineItem.tone-complete {
+  border-color: rgba(99, 176, 119, 0.34);
+  background: rgba(23, 72, 43, 0.32);
+}
+
+.timelineItem.tone-failed {
+  border-color: rgba(221, 96, 98, 0.46);
+  background: rgba(86, 30, 36, 0.24);
+}
+
+.timelineItem.tone-warning {
+  border-color: rgba(222, 179, 89, 0.44);
+  background: rgba(81, 62, 29, 0.24);
+}
+
+.timelineItem.tone-active > span:first-child { color: #a9cfe2; }
+.timelineItem.tone-complete > span:first-child { color: #9cc8a8; }
+.timelineItem.tone-failed > span:first-child { color: #d9a0a0; }
+.timelineItem.tone-warning > span:first-child { color: #d4bf8b; }
+
+.timelineItem.tone-active .planCover { border-color: rgba(101, 190, 239, 0.58); }
+.timelineItem.tone-complete .planCover { border-color: rgba(99, 176, 119, 0.5); }
+.timelineItem.tone-failed .planCover { border-color: rgba(221, 96, 98, 0.58); }
+.timelineItem.tone-warning .planCover { border-color: rgba(222, 179, 89, 0.56); }
+
+.timelineItem .planCover {
+  background:
+    linear-gradient(135deg, rgba(44, 66, 83, 0.72), rgba(27, 45, 59, 0.74)),
+    #101b26;
+}
+
+.timelineItem .planCover img {
+  filter: saturate(0.82) contrast(0.96);
+}
+
+.timelineItem:hover .planCover img,
+.timelineItem.selected .planCover img {
+  filter: saturate(0.95) contrast(1);
+}
+
+.timelineItem.selected {
+  border-color: rgba(105, 175, 255, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(105, 175, 255, 0.36);
 }
 
 .runPlanSchedule {
@@ -403,6 +473,11 @@ button,
 
 .runPlanPlayhead.instant {
   transition: none;
+}
+
+.runPlanPlayhead.idle {
+  opacity: 0;
+  visibility: hidden;
 }
 
 .playheadLine {
@@ -475,6 +550,7 @@ button,
 .laneLabel {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
   align-content: center;
   align-items: center;
   border-right: 1px solid var(--border);
@@ -512,6 +588,36 @@ button,
 .laneLabelText > span {
   color: var(--muted);
   font-size: 11px;
+}
+
+.laneWorkerControls {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.laneWorkerButton {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(143, 167, 188, 0.38);
+  border-radius: 5px;
+  background: rgba(9, 18, 29, 0.72);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.laneWorkerButton:hover:not(:disabled) {
+  border-color: rgba(53, 181, 255, 0.64);
+  background: rgba(21, 57, 84, 0.82);
+}
+
+.laneWorkerButton:disabled {
+  opacity: 0.36;
+  cursor: default;
 }
 
 .runPlanLane.disabledLane {
@@ -612,9 +718,22 @@ button,
   box-shadow: 0 0 0 2px rgba(35, 136, 255, 0.22);
 }
 
+.runPlanCard.queued {
+  border-color: rgba(35, 136, 255, 0.42);
+  background: linear-gradient(180deg, rgba(20, 43, 68, 0.96), rgba(13, 27, 39, 0.96));
+  box-shadow: inset 3px 0 0 rgba(35, 136, 255, 0.78);
+}
+
+.runPlanCard.active {
+  border-color: rgba(53, 181, 255, 0.78);
+  background: linear-gradient(180deg, rgba(17, 63, 91, 0.97), rgba(13, 35, 49, 0.97));
+  box-shadow: inset 3px 0 0 #35b5ff, 0 0 20px rgba(53, 181, 255, 0.14);
+}
+
 .runPlanCard.warning {
   border-color: rgba(240, 184, 75, 0.72);
   background: linear-gradient(180deg, rgba(67, 48, 19, 0.96), rgba(18, 29, 36, 0.96));
+  box-shadow: inset 3px 0 0 var(--amber);
 }
 
 .runPlanCard.complete {
@@ -623,10 +742,40 @@ button,
   box-shadow: inset 3px 0 0 var(--green);
 }
 
+.runPlanCard.failed {
+  border-color: rgba(240, 82, 82, 0.82);
+  background: linear-gradient(180deg, rgba(83, 24, 29, 0.97), rgba(39, 17, 22, 0.97));
+  box-shadow: inset 3px 0 0 var(--red);
+}
+
+.runPlanCard.queued.selected {
+  box-shadow:
+    0 0 0 2px rgba(35, 136, 255, 0.24),
+    inset 3px 0 0 rgba(35, 136, 255, 0.78);
+}
+
+.runPlanCard.active.selected {
+  box-shadow:
+    0 0 0 2px rgba(53, 181, 255, 0.24),
+    inset 3px 0 0 #35b5ff;
+}
+
+.runPlanCard.warning.selected {
+  box-shadow:
+    0 0 0 2px rgba(240, 184, 75, 0.22),
+    inset 3px 0 0 var(--amber);
+}
+
 .runPlanCard.complete.selected {
   box-shadow:
     0 0 0 2px rgba(85, 217, 119, 0.24),
     inset 3px 0 0 var(--green);
+}
+
+.runPlanCard.failed.selected {
+  box-shadow:
+    0 0 0 2px rgba(240, 82, 82, 0.28),
+    inset 3px 0 0 var(--red);
 }
 
 .planCover {
@@ -650,9 +799,11 @@ button,
   position: absolute;
   inset: 0;
   z-index: 1;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center center;
 }
 
 .planCover > span {
@@ -774,10 +925,11 @@ button,
 }
 
 .legendBox.queued { background: var(--blue); }
-.legendBox.recording { background: var(--red); }
+.legendBox.active { background: #35b5ff; }
 .legendBox.complete,
 .legendBox.output,
 .legendDot.good { background: var(--green); }
+.legendBox.failed { background: var(--red); }
 .legendDot.warn { background: var(--amber); }
 
 .controlsDrawer {
@@ -1444,6 +1596,54 @@ h3 {
   justify-content: end;
 }
 
+.collectionToolbar {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) auto minmax(190px, 260px) auto auto auto auto;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 800px;
+  min-width: min(800px, 100%);
+}
+
+.collectionNameInput,
+.collectionSelect {
+  height: 30px;
+  min-height: 30px;
+  background: #0b1118;
+  border-color: var(--border);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.collectionOverwrite {
+  display: inline-flex;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: start;
+  gap: 7px;
+  min-width: max-content;
+  color: var(--muted-strong);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.collectionOverwrite input {
+  width: 15px;
+  height: 15px;
+  min-height: 15px;
+  margin: 0;
+}
+
+@media (max-width: 1260px) {
+  .collectionToolbar {
+    grid-template-columns: minmax(160px, 1fr) auto minmax(180px, 1fr) auto;
+  }
+
+  .collectionOverwrite {
+    grid-column: 1 / 2;
+  }
+}
+
 button {
   display: inline-flex;
   align-items: center;
@@ -1524,6 +1724,18 @@ a.navButton:hover {
   background: #162131;
   border-color: #526377;
   box-shadow: 0 5px 16px rgba(0, 0, 0, 0.18);
+}
+
+.secondaryButton.autoCloseArmed {
+  border-color: rgba(240, 184, 75, 0.72);
+  background: rgba(240, 184, 75, 0.12);
+  color: #ffe1a6;
+}
+
+.secondaryButton.autoCloseArmed:hover:not(:disabled) {
+  border-color: rgba(240, 184, 75, 0.9);
+  background: rgba(240, 184, 75, 0.18);
+  box-shadow: 0 5px 18px rgba(240, 184, 75, 0.12);
 }
 
 .dangerButton {
@@ -1679,14 +1891,6 @@ body.queueLoaded .runRail {
   display: none;
 }
 
-#addReplays {
-  display: none;
-}
-
-body.queueLoaded #addReplays {
-  display: inline-flex;
-}
-
 .setupView,
 .diagnosticsView,
 .fileSettingsGrid {
@@ -1746,6 +1950,129 @@ body.queueLoaded #addReplays {
   font-size: 11px;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.setupMonitorGraphic {
+  display: grid;
+  min-width: 0;
+}
+
+.setupMonitorStage {
+  position: relative;
+  min-height: 156px;
+  border: 1px solid rgba(143, 167, 188, 0.18);
+  border-radius: 6px;
+  background:
+    linear-gradient(90deg, rgba(143, 167, 188, 0.08) 1px, transparent 1px) 0 0 / 25% 100%,
+    linear-gradient(180deg, rgba(143, 167, 188, 0.06) 1px, transparent 1px) 0 0 / 100% 33.333%,
+    rgba(5, 12, 20, 0.7);
+  overflow: hidden;
+}
+
+.setupMonitorCard {
+  position: absolute;
+  left: clamp(8px, var(--monitor-left), calc(100% - 132px));
+  top: clamp(8px, var(--monitor-top), calc(100% - 82px));
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 3px;
+  width: max(132px, calc(var(--monitor-width) - 10px));
+  height: max(82px, calc(var(--monitor-height) - 10px));
+  min-width: 0;
+  border: 1px solid rgba(143, 167, 188, 0.26);
+  border-radius: 5px;
+  background:
+    linear-gradient(180deg, rgba(15, 31, 47, 0.96), rgba(8, 17, 27, 0.96));
+  color: var(--text);
+  padding: 10px;
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.setupMonitorCard:hover,
+.setupMonitorCard.active {
+  border-color: var(--blue-strong);
+  background:
+    linear-gradient(180deg, rgba(21, 55, 89, 0.98), rgba(8, 25, 42, 0.98));
+  box-shadow: 0 10px 24px rgba(22, 119, 255, 0.14);
+}
+
+.setupMonitorCard:active {
+  transform: translateY(1px);
+}
+
+.setupMonitorCardChrome {
+  width: 28px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(143, 167, 188, 0.44);
+}
+
+.setupMonitorCard.active .setupMonitorCardChrome {
+  background: var(--blue-strong);
+  box-shadow: 0 0 12px rgba(36, 152, 255, 0.5);
+}
+
+.setupMonitorCard strong,
+.setupMonitorCard span,
+.setupMonitorCard small {
+  max-width: 100%;
+}
+
+.setupMonitorCard strong {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.setupMonitorCard span {
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1.18;
+}
+
+.setupMonitorCard small {
+  color: #88dba4;
+  font-size: 10px;
+  font-weight: 840;
+  line-height: 1.25;
+  text-transform: none;
+}
+
+.setupMonitorCard.compact small {
+  display: none;
+}
+
+.setupMonitorCard.compact {
+  gap: 4px;
+}
+
+.setupMonitorGraphicEmpty {
+  display: grid;
+  gap: 4px;
+  border: 1px dashed rgba(143, 167, 188, 0.24);
+  border-radius: 6px;
+  background: rgba(5, 12, 20, 0.52);
+  padding: 14px;
+}
+
+.setupMonitorGraphicEmpty strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.setupMonitorGraphicEmpty span {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .setupFeedHeading {
@@ -1823,6 +2150,45 @@ body.queueLoaded #addReplays {
 
 .setupWizardFields {
   margin-top: 0;
+}
+
+.setupPathField {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.setupPathInputRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.setupPathInputRow .secondaryButton {
+  min-width: 112px;
+  height: 32px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.setupPathHint {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.setupPathHint.ready {
+  color: #8fdca9;
+}
+
+.setupPathHint.detected {
+  color: var(--blue-strong);
+}
+
+.setupPathHint.missing {
+  color: var(--amber);
 }
 
 .setupWizardActions {
@@ -2177,6 +2543,230 @@ body.queueLoaded #addReplays {
   line-height: 1.35;
 }
 
+.benchmarkSummary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.026);
+  padding: 12px;
+}
+
+.benchmarkHeroState {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.benchmarkHeroState > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.benchmarkHeroState strong {
+  color: var(--text);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.benchmarkHeroState span:last-child,
+.benchmarkHeroMeta span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.benchmarkHeroMeta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.benchmarkHeroMeta span {
+  max-width: 240px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 5px 8px;
+  color: var(--muted-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.benchmarkPassSelector {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  border: 1px solid rgba(143, 167, 188, 0.14);
+  border-radius: 5px;
+  background: rgba(6, 13, 20, 0.28);
+  padding: 10px;
+}
+
+.benchmarkSelectorHeader {
+  display: grid;
+  gap: 2px;
+}
+
+.benchmarkSelectorHeader strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.benchmarkSelectorHeader span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.benchmarkConcurrencyOptions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.benchmarkConcurrencyOption {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 8px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.benchmarkConcurrencyOption input {
+  grid-row: 1 / 3;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--green);
+}
+
+.benchmarkConcurrencyOption span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.benchmarkConcurrencyOption small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.benchmarkConcurrencyOption.isChecked {
+  border-color: rgba(71, 214, 156, 0.45);
+  background: rgba(71, 214, 156, 0.08);
+}
+
+.benchmarkConcurrencyOption.isUnavailable {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.benchmarkPassList {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.benchmarkPass {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(143, 167, 188, 0.15);
+  border-left: 3px solid var(--amber);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.022);
+  padding: 10px;
+}
+
+.benchmarkPass.good {
+  border-left-color: var(--green);
+}
+
+.benchmarkPass.bad {
+  border-left-color: var(--red);
+}
+
+.benchmarkPassHeader {
+  display: grid;
+  grid-template-columns: auto auto minmax(140px, 0.6fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.benchmarkPassHeader strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.benchmarkPassHeader span,
+.benchmarkPassHeader small {
+  min-width: 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.benchmarkAssignmentList {
+  display: grid;
+  gap: 7px;
+}
+
+.benchmarkAssignment {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1.2fr) minmax(78px, 0.45fr) minmax(130px, 0.75fr) minmax(180px, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 50px;
+  border: 1px solid rgba(143, 167, 188, 0.14);
+  border-radius: 5px;
+  background: rgba(6, 13, 20, 0.44);
+  padding: 8px;
+}
+
+.benchmarkAssignment > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.benchmarkAssignment span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.benchmarkAssignment strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.benchmarkAssignmentOutput strong {
+  color: var(--muted-strong);
+}
+
 .diagnosticWorkerList {
   display: grid;
   gap: 8px;
@@ -2374,6 +2964,23 @@ label {
 
 .span4 {
   grid-column: span 4;
+}
+
+.captureEngineField {
+  display: grid;
+  gap: 7px;
+}
+
+.captureEngineWarning {
+  margin: 0;
+  border: 1px solid rgba(240, 184, 75, 0.44);
+  border-left: 2px solid var(--amber);
+  border-radius: 4px;
+  background: rgba(48, 34, 11, 0.42);
+  color: #ffd98a;
+  padding: 8px 9px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 input, select, textarea {
@@ -2841,6 +3448,79 @@ textarea {
   color: #e4edf7;
   font-size: 11px;
   font-weight: 700;
+}
+
+.colorSettingsSection {
+  grid-column: span 2;
+}
+
+.colorPickerGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.colorPresetBar {
+  display: grid;
+  gap: 7px;
+}
+
+.colorPresetSelectRow {
+  grid-template-columns: minmax(0, 1fr) minmax(118px, 44%);
+}
+
+.colorPresetActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.miniButton {
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 11px;
+  white-space: normal;
+}
+
+.gameColorRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid #263848;
+  border-radius: 4px;
+  background: rgba(8, 14, 21, 0.86);
+  padding: 6px 7px 6px 9px;
+  color: #dce8f5;
+}
+
+.gameColorRow.span2 {
+  grid-column: span 2;
+}
+
+.gameColorRow span {
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.gameColorRow input[type="color"] {
+  width: 34px;
+  height: 24px;
+  border: 1px solid #405163;
+  border-radius: 4px;
+  background: #101a27;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.gameColorRow:focus-within {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 
 .settingsPanel summary {
@@ -3501,9 +4181,11 @@ textarea {
   position: absolute;
   inset: 0;
   z-index: 1;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center center;
 }
 
 .inspectorThumb span {
@@ -3898,6 +4580,455 @@ textarea {
   transition-delay: 0s;
 }
 
+.queueExportModal {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  padding: clamp(16px, 5vw, 48px);
+  background: rgba(4, 8, 12, 0.74);
+  backdrop-filter: blur(10px);
+}
+
+.queueExportModal[hidden] {
+  display: none;
+}
+
+.queueExportPanel {
+  display: grid;
+  gap: 14px;
+  width: min(760px, 100%);
+  max-height: min(760px, calc(100vh - 32px));
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: #0f161e;
+  padding: 18px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.48);
+}
+
+.queueExportHeader,
+.queueExportActions,
+.queueExportControls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.queueExportHeader {
+  justify-content: space-between;
+}
+
+.queueExportHeader h2 {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.queueExportKicker {
+  color: var(--blue-strong);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.queueExportControls {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.queueExportControls label {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 240px);
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#queueExportText {
+  width: 100%;
+  min-height: 320px;
+  max-height: min(54vh, 520px);
+  resize: vertical;
+  border-color: #2c3947;
+  background: #080d13;
+  color: #edf5ff;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.queueExportActions {
+  justify-content: end;
+  flex-wrap: wrap;
+}
+
+.mapCardExportModal {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  padding: clamp(16px, 5vw, 48px);
+  background: rgba(4, 8, 12, 0.74);
+  backdrop-filter: blur(10px);
+}
+
+.mapCardExportModal[hidden] {
+  display: none;
+}
+
+.mapCardExportPanel {
+  display: grid;
+  gap: 14px;
+  width: min(1120px, 100%);
+  max-height: min(860px, calc(100vh - 32px));
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: #0f161e;
+  padding: 18px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.48);
+}
+
+.mapCardExportHeader,
+.mapCardExportControls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mapCardExportHeader {
+  justify-content: space-between;
+}
+
+.mapCardExportHeader h2 {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.mapCardExportControls {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.mapCardExportStatus {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.mapCardCategoryToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mapCardCategoryToggle input {
+  appearance: none;
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border: 1px solid rgba(127, 148, 166, 0.48);
+  border-radius: 999px;
+  background: rgba(68, 84, 99, 0.5);
+  cursor: pointer;
+}
+
+.mapCardCategoryToggle input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: #edf4fb;
+  transition: transform 120ms ease;
+}
+
+.mapCardCategoryToggle input:checked {
+  border-color: rgba(235, 0, 255, 0.82);
+  background: #eb00ff;
+}
+
+.mapCardCategoryToggle input:checked::after {
+  transform: translateX(15px);
+}
+
+.mapCardExportControls label:not(.mapCardCategoryToggle),
+.mapCardPreviewControls label {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 210px);
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mapCardExportPreview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, 500px);
+  gap: 14px;
+  overflow: auto;
+  max-height: min(62vh, 650px);
+  padding-right: 0;
+}
+
+.mapCardPreviewShell {
+  display: grid;
+  gap: 9px;
+  width: 500px;
+  min-width: 0;
+}
+
+.mapCardPreviewCard {
+  position: relative;
+  box-sizing: border-box;
+  width: 500px;
+  height: 150px;
+  border: 1px solid #b8bec6;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  color: #000;
+  font-family: "SF Pro Display", var(--font-ui);
+  line-height: 1;
+  box-shadow: 0 9px 22px rgba(15, 23, 42, 0.17);
+}
+
+.mapCardPreviewCover {
+  position: absolute;
+  left: 18px;
+  top: 15px;
+  width: 120px;
+  height: 120px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f5f5f5;
+}
+
+.mapCardPreviewCover img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+}
+
+.mapCardPreviewCover span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #bfc8d0;
+  font-size: 32px;
+  font-weight: 800;
+}
+
+.mapCardPreviewContent {
+  position: absolute;
+  left: 154px;
+  top: 17px;
+  width: 236px;
+  min-width: 0;
+}
+
+.mapCardPreviewCard h3 {
+  margin: 0 0 6px;
+  max-width: 236px;
+  overflow: hidden;
+  color: #000;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapCardPreviewCard p {
+  margin: 0 0 5px;
+  max-width: 236px;
+  overflow: hidden;
+  color: #000;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapCardPreviewMapper,
+.mapCardPreviewMetricLine {
+  max-width: 236px;
+  overflow: hidden;
+  color: #4f5967;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapCardPreviewMapper {
+  margin-bottom: 3px;
+}
+
+.mapCardPreviewMetricLine {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mapCardMetricGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.mapCardMetricGroup svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
+.mapCardMetricGroup span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapCardMetricDot {
+  flex: 0 0 auto;
+}
+
+.mapCardPreviewSide {
+  position: absolute;
+  right: 13px;
+  top: 17px;
+  bottom: 15px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0;
+  width: 79px;
+}
+
+.mapCardPreviewCard.noMapCardCategory .mapCardPreviewSide {
+  top: 17px;
+  gap: 0;
+}
+
+.mapCardPreviewKey {
+  max-width: 79px;
+  overflow: hidden;
+  color: #000;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.1;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapCardPreviewControls select:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.mapCardPreviewCard .mapCardCategoryPill {
+  max-width: 78px;
+  font-size: 13.5px;
+}
+
+.mapCardCategoryPill {
+  align-items: center;
+  border: 1px solid var(--category-color);
+  border-radius: 8px;
+  display: flex;
+  overflow: hidden;
+  width: fit-content;
+  max-width: 100%;
+  color: #000;
+  flex: 0 0 auto;
+}
+
+.mapCardCategoryInner {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+  height: 33px;
+  padding: 0 9px;
+  width: 100%;
+  background: var(--category-color);
+}
+
+.mapCardCategoryInner svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+}
+
+.mapCardCategoryInner span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapCardPreviewControls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.mapCardPreviewControls span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .mapCardExportPreview {
+    grid-template-columns: 500px;
+  }
+
+  .mapCardPreviewControls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 body.shutdownLocked {
   overflow: hidden;
 }
@@ -3996,6 +5127,24 @@ body.shutdownLocked {
 
   .diagnosticWorkerRow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .benchmarkPassSelector {
+    grid-template-columns: 1fr;
+  }
+
+  .benchmarkConcurrencyOptions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .benchmarkPassHeader,
+  .benchmarkAssignment {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .benchmarkAssignment > .diagnosticStateDot,
+  .benchmarkAssignmentOutput {
+    grid-column: 1 / -1;
   }
 
   .diagnosticWorkerIdentity,
@@ -4141,6 +5290,14 @@ body.shutdownLocked {
     display: grid;
   }
 
+  .setupPathInputRow {
+    grid-template-columns: 1fr;
+  }
+
+  .setupPathInputRow .secondaryButton {
+    width: 100%;
+  }
+
   .queueSearch {
     width: 100%;
   }
@@ -4168,13 +5325,19 @@ body.shutdownLocked {
   }
 
   .diagnosticHero,
+  .benchmarkSummary,
+  .benchmarkPassSelector,
+  .benchmarkConcurrencyOptions,
+  .benchmarkPassHeader,
   .diagnosticChecklist,
   .diagnosticMetricGrid,
+  .benchmarkAssignment,
   .diagnosticWorkerRow {
     grid-template-columns: 1fr;
   }
 
-  .diagnosticHeroMeta {
+  .diagnosticHeroMeta,
+  .benchmarkHeroMeta {
     justify-content: flex-start;
   }
 
@@ -4328,10 +5491,6 @@ body {
   display: flex;
 }
 
-#addReplays {
-  display: inline-flex;
-}
-
 .panel {
   border-radius: 5px;
   background: linear-gradient(180deg, rgba(14, 25, 35, 0.98), rgba(9, 18, 27, 0.98));
@@ -4473,5 +5632,3153 @@ body {
 
   .settingsPageHeader {
     display: grid;
+  }
+}
+
+/* Settings surface refresh: scoped so the setup assistant controls keep their existing behavior. */
+.settingsView {
+  --settings-panel: rgba(8, 17, 25, 0.96);
+  --settings-panel-soft: rgba(11, 22, 32, 0.78);
+  --settings-line: rgba(92, 121, 145, 0.24);
+  --settings-line-strong: rgba(105, 175, 255, 0.34);
+  --settings-control: rgba(6, 14, 22, 0.84);
+  --settings-red: #f05252;
+  --settings-cyan: #2388ff;
+  --settings-green: #55d977;
+}
+
+.settingsView .settingsPageHeader {
+  min-height: 64px;
+  border-color: rgba(105, 175, 255, 0.2);
+  background:
+    linear-gradient(90deg, rgba(35, 136, 255, 0.13), transparent 28%),
+    linear-gradient(180deg, rgba(13, 23, 32, 0.98), rgba(8, 17, 25, 0.98));
+  box-shadow: inset 2px 0 0 rgba(35, 136, 255, 0.72);
+}
+
+.settingsView .settingsPageHeader h2 {
+  font-size: 19px;
+  letter-spacing: 0;
+}
+
+.settingsView .settingsPageHeader span {
+  max-width: 62ch;
+  line-height: 1.35;
+}
+
+.settingsView .setupAssistantPanel {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.84fr) minmax(520px, 1.16fr);
+  gap: 12px;
+  border-color: rgba(92, 121, 145, 0.23);
+  background:
+    linear-gradient(180deg, rgba(13, 23, 32, 0.96), rgba(7, 15, 23, 0.98)),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 96px);
+}
+
+.settingsView .setupAssistantPanel > .panelHeader,
+.settingsView .setupAssistantPanel > .setupWizardGrid {
+  grid-column: 1 / -1;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel {
+  grid-column: 1;
+  align-self: start;
+  margin: 0 0 14px 14px;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel[hidden] {
+  display: none;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel[hidden] + .setupGamePanel {
+  grid-column: 1 / -1;
+  margin: 0 14px 14px;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) + .setupGamePanel {
+  grid-column: 2;
+  margin: 0 14px 14px 0;
+}
+
+.settingsView .setupAdvancedPanel {
+  border: 1px solid var(--settings-line);
+  border-radius: 5px;
+  background:
+    linear-gradient(180deg, rgba(10, 20, 30, 0.94), rgba(7, 14, 21, 0.94));
+  padding: 12px;
+  overflow: hidden;
+}
+
+.settingsView .setupAdvancedHeader {
+  align-items: center;
+  min-height: 38px;
+  border-bottom: 1px solid var(--settings-line);
+  padding-bottom: 10px;
+}
+
+.settingsView .setupAdvancedHeader h3,
+.settingsView .gameSettingsTop h3,
+.settingsView .setupAdvancedPanel .formGroup h3,
+.settingsView .settingsGuardTitle {
+  color: var(--text);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.settingsView .setupAdvancedHeader span,
+.settingsView .gameSettingsMode {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settingsView .setupAdvancedPanel .formGrid {
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.settingsView .setupAdvancedPanel .span2,
+.settingsView .setupAdvancedPanel .span4 {
+  grid-column: 1;
+}
+
+.settingsView .setupAdvancedPanel .formGroup {
+  display: grid;
+  gap: 9px;
+  border: 1px solid rgba(92, 121, 145, 0.18);
+  border-radius: 5px;
+  background: rgba(8, 16, 24, 0.58);
+  padding: 10px;
+}
+
+.settingsView .setupAdvancedPanel .formGroup h3,
+.settingsView .settingsGuardTitle {
+  margin: 0;
+}
+
+.settingsView .setupAdvancedPanel .miniGrid {
+  margin-top: 0;
+}
+
+.settingsView .setupAdvancedPanel .compactChecks {
+  grid-template-columns: 1fr;
+}
+
+.settingsView .settingsGuardTitle {
+  grid-column: 1 / -1;
+}
+
+.settingsView .setupAdvancedPanel label {
+  color: var(--muted-strong);
+}
+
+.settingsView .setupAdvancedPanel input,
+.settingsView .setupAdvancedPanel select,
+.settingsView .setupAdvancedPanel textarea {
+  border-color: rgba(92, 121, 145, 0.38);
+  background: var(--settings-control);
+}
+
+.settingsView .displayScaleBlock {
+  border-color: rgba(92, 121, 145, 0.24);
+  background: rgba(6, 14, 22, 0.58);
+}
+
+.settingsView .displayScaleAutoRestore {
+  border-color: rgba(92, 121, 145, 0.2);
+  background: rgba(105, 175, 255, 0.06);
+}
+
+.settingsView .setupGamePanel {
+  border: 1px solid var(--settings-line);
+  border-radius: 5px;
+  background:
+    linear-gradient(90deg, rgba(35, 136, 255, 0.08), transparent 34%),
+    linear-gradient(180deg, rgba(10, 20, 30, 0.96), rgba(7, 14, 21, 0.96));
+  padding: 12px;
+  overflow: hidden;
+}
+
+.settingsView .gameSettingsGroup {
+  gap: 12px;
+}
+
+.settingsView .gameSettingsTop {
+  min-height: 42px;
+  border-bottom: 1px solid var(--settings-line);
+  padding-bottom: 10px;
+}
+
+.settingsView .gameSettingsVersion {
+  border-color: rgba(105, 175, 255, 0.42);
+  background: rgba(35, 136, 255, 0.1);
+  color: #a7dfff;
+}
+
+.settingsView .gameSettingsNotice {
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  border: 1px solid rgba(240, 184, 75, 0.44);
+  border-left: 2px solid var(--amber);
+  background: rgba(48, 34, 11, 0.46);
+  padding: 9px 10px;
+}
+
+.settingsView .gameSettingsSurface {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid rgba(105, 175, 255, 0.22);
+  border-radius: 5px;
+  background:
+    linear-gradient(90deg, rgba(35, 136, 255, 0.1), transparent 22%),
+    rgba(6, 14, 22, 0.66);
+  box-shadow: inset 2px 0 0 rgba(35, 136, 255, 0.72);
+  padding: 8px;
+}
+
+.settingsView .playerSettingsSurface {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-color: rgba(240, 82, 82, 0.22);
+  background:
+    linear-gradient(90deg, rgba(240, 82, 82, 0.08), transparent 24%),
+    rgba(6, 14, 22, 0.66);
+  box-shadow: inset 2px 0 0 rgba(240, 82, 82, 0.66);
+}
+
+.settingsView .gameSettingsSection {
+  gap: 9px;
+  border: 1px solid rgba(92, 121, 145, 0.2);
+  border-left: 0;
+  border-radius: 4px;
+  background: rgba(9, 18, 27, 0.72);
+  padding: 10px;
+}
+
+.settingsView .gameSettingsSection:first-child {
+  border-left: 0;
+}
+
+.settingsView .gameSettingsSectionTitle {
+  color: #dce8f5;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.settingsView .gameToggle,
+.settingsView .gameValueRow,
+.settingsView .gameSelectRow,
+.settingsView .gameColorRow {
+  min-height: 36px;
+  border-color: rgba(92, 121, 145, 0.3);
+  background: var(--settings-control);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.settingsView .gameToggle:hover,
+.settingsView .gameValueRow:hover,
+.settingsView .gameSelectRow:hover,
+.settingsView .gameColorRow:hover {
+  border-color: rgba(105, 175, 255, 0.48);
+  background: rgba(11, 24, 35, 0.9);
+}
+
+.settingsView .gameSwitch {
+  border-color: rgba(105, 175, 255, 0.34);
+  background: rgba(9, 19, 28, 0.98);
+}
+
+.settingsView .gameToggle input:checked ~ .gameSwitch {
+  border-color: rgba(85, 217, 119, 0.72);
+  background: rgba(38, 126, 70, 0.62);
+}
+
+.settingsView .gameSelectRow select {
+  border-color: rgba(92, 121, 145, 0.38);
+  background: rgba(9, 19, 28, 0.98);
+}
+
+.settingsView .colorSettingsSection {
+  grid-column: span 2;
+}
+
+.settingsView .colorPickerGrid {
+  gap: 8px;
+}
+
+.settingsView .colorPresetActions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settingsView .miniButton {
+  min-height: 32px;
+}
+
+@media (min-width: 1181px) and (max-width: 1820px) {
+  .appHeader.commandBar {
+    grid-template-columns: minmax(245px, 320px) minmax(260px, 380px) minmax(220px, 1fr);
+  }
+
+  .headerControls {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 1320px) {
+  .settingsView .setupAssistantPanel {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) + .setupGamePanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel[hidden] + .setupGamePanel {
+    grid-column: 1;
+    margin: 0 14px 14px;
+  }
+
+  .settingsView .setupAdvancedPanel .formGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsView .setupAdvancedPanel .span2,
+  .settingsView .setupAdvancedPanel .span4 {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 920px) {
+  .settingsView .gameSettingsSurface,
+  .settingsView .playerSettingsSurface,
+  .settingsView .setupAdvancedPanel .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsView .colorSettingsSection {
+    grid-column: span 1;
+  }
+
+  .settingsView .gameSettingsNotice {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) + .setupGamePanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel[hidden] + .setupGamePanel {
+    margin: 0 10px 10px;
+  }
+
+  .settingsView .gameSettingsTop,
+  .settingsView .setupAdvancedHeader,
+  .settingsView .settingsPageHeader {
+    align-items: start;
+  }
+
+  .settingsView .colorPresetActions,
+  .settingsView .colorPickerGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsView .gameColorRow.span2 {
+    grid-column: span 1;
+  }
+}
+
+/* Settings console reference pass. Keep this at the end so it wins over older setup-era styles. */
+body.settingsActive .statusStrip {
+  display: none;
+}
+
+body:has(.settingsView.active) .statusStrip {
+  display: none;
+}
+
+body.settingsActive .appHeader.commandBar {
+  margin-bottom: 14px;
+}
+
+body:has(.settingsView.active) .appHeader.commandBar {
+  margin-bottom: 14px;
+}
+
+.settingsView {
+  --settings-blue: #2498ff;
+  --settings-blue-soft: rgba(36, 152, 255, 0.18);
+  --settings-red: #f05252;
+  --settings-green: #2bd98f;
+  --settings-amber: #f5aa24;
+  --settings-line: rgba(116, 145, 171, 0.26);
+  --settings-line-soft: rgba(116, 145, 171, 0.14);
+  --settings-surface: rgba(6, 15, 24, 0.72);
+  --settings-field: rgba(4, 12, 20, 0.7);
+  margin-top: 10px;
+}
+
+.settingsView .settingsPageHeader {
+  min-height: 58px;
+  margin: 0;
+  border-color: var(--settings-line);
+  border-radius: 4px 4px 0 0;
+  background:
+    linear-gradient(90deg, rgba(36, 152, 255, 0.08), transparent 42%),
+    linear-gradient(180deg, rgba(8, 20, 31, 0.96), rgba(5, 13, 21, 0.96));
+  box-shadow: none;
+  padding: 0 18px;
+}
+
+.settingsView .settingsPageHeader > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settingsView .settingsPageHeader h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: #f3f8fc;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.settingsView .settingsPageHeader h2::before {
+  content: "\2699";
+  display: inline-grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  color: #8ccaff;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.settingsView .settingsPageHeader > div:first-child > span {
+  display: none;
+}
+
+.settingsView .settingsPageHeader .panelActions {
+  gap: 18px;
+}
+
+.settingsView #settingsDirtyBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 0;
+  color: #dce9f5;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settingsView #settingsDirtyBadge::before {
+  content: "";
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--settings-green);
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(43, 217, 143, 0.3);
+}
+
+.settingsView #settingsDirtyBadge.dirty {
+  color: #ffd990;
+}
+
+.settingsView #settingsDirtyBadge.dirty::before {
+  border-color: var(--settings-amber);
+  box-shadow: 0 0 10px rgba(245, 170, 36, 0.3);
+}
+
+.settingsView #saveSettings {
+  min-width: 174px;
+  border-color: rgba(36, 152, 255, 0.88);
+  background: rgba(0, 94, 180, 0.16);
+  color: #73c6ff;
+  box-shadow: inset 0 0 0 1px rgba(36, 152, 255, 0.1);
+}
+
+.settingsView #saveSettings::before {
+  content: "\25A3";
+  margin-right: 9px;
+  color: var(--settings-blue);
+  font-size: 13px;
+}
+
+.settingsView .setupAssistantPanel {
+  display: grid;
+  grid-template-columns: minmax(355px, 0.56fr) minmax(620px, 1fr);
+  gap: 24px;
+  margin: 0;
+  border: 1px solid var(--settings-line);
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  background:
+    radial-gradient(circle at 72% 12%, rgba(36, 152, 255, 0.08), transparent 26%),
+    linear-gradient(180deg, rgba(6, 16, 25, 0.98), rgba(4, 11, 18, 0.98));
+  padding: 18px 18px 18px 14px;
+  overflow: visible;
+}
+
+.settingsView .setupAssistantPanel > .panelHeader,
+.settingsView .setupAssistantPanel > .setupWizardGrid {
+  display: none !important;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel,
+.settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]),
+.settingsView .setupAssistantPanel > .setupAdvancedPanel[hidden] {
+  display: block;
+  grid-column: 1;
+  align-self: start;
+  margin: 0;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel + .setupGamePanel,
+.settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) + .setupGamePanel,
+.settingsView .setupAssistantPanel > .setupAdvancedPanel[hidden] + .setupGamePanel {
+  grid-column: 2;
+  align-self: start;
+  margin: 0;
+}
+
+.settingsView .setupAdvancedPanel {
+  border: 0;
+  border-right: 1px solid var(--settings-line);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 24px 0 2px;
+}
+
+.settingsView .setupAdvancedHeader {
+  display: none;
+}
+
+.settingsView .setupAdvancedPanel .formGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin: 0;
+}
+
+.settingsView .setupAdvancedPanel .span2,
+.settingsView .setupAdvancedPanel .span4,
+.settingsView .setupAdvancedPanel .miniGrid .span2 {
+  grid-column: 1;
+}
+
+.settingsView .setupAdvancedPanel .formGroup {
+  position: relative;
+  display: grid;
+  gap: 9px;
+  border: 0;
+  border-bottom: 1px solid var(--settings-line);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 6px 13px 20px;
+}
+
+.settingsView .setupAdvancedPanel .formGroup + .formGroup {
+  padding-top: 13px;
+}
+
+.settingsView .setupAdvancedPanel .formGroup::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: 3px;
+  height: 18px;
+  background: var(--settings-blue);
+  box-shadow: 0 0 10px rgba(36, 152, 255, 0.28);
+}
+
+.settingsView .setupAdvancedPanel .formGroup:first-child::before {
+  background: var(--settings-red);
+  box-shadow: 0 0 10px rgba(240, 82, 82, 0.28);
+}
+
+.settingsView .setupAdvancedPanel .formGroup h3,
+.settingsView .settingsGuardTitle {
+  display: grid;
+  grid-template-columns: max-content minmax(24px, 1fr);
+  align-items: center;
+  gap: 13px;
+  margin: 0;
+  color: #f2f7fc;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.settingsView .setupAdvancedPanel .formGroup h3::after,
+.settingsView .settingsGuardTitle::after {
+  content: "";
+  height: 1px;
+  background: var(--settings-line);
+}
+
+.settingsView .setupAdvancedPanel .miniGrid,
+.settingsView .setupAdvancedPanel .compactChecks {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin: 0;
+}
+
+.settingsView .setupAdvancedPanel label:not(.displayScaleToggle),
+.settingsView .setupAdvancedPanel .checkboxLabel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 202px);
+  align-items: center;
+  gap: 12px;
+  min-height: 29px;
+  color: #d9e8f4;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.settingsView .setupAdvancedPanel label small,
+.settingsView .setupAdvancedPanel .checkboxLabel small,
+.settingsView .displayScaleToggle small {
+  color: #8fa4b8;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.settingsView .setupAdvancedPanel input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
+.settingsView .setupAdvancedPanel select {
+  height: 28px;
+  border-color: rgba(116, 145, 171, 0.32);
+  border-radius: 3px;
+  background:
+    linear-gradient(180deg, rgba(12, 25, 37, 0.78), rgba(4, 12, 20, 0.78));
+  color: #f1f7fc;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.settingsView .setupAdvancedPanel .checkboxLabel input[type="checkbox"] {
+  order: 2;
+  justify-self: end;
+  appearance: none;
+  width: 32px;
+  height: 18px;
+  border: 1px solid rgba(96, 121, 145, 0.54);
+  border-radius: 999px;
+  background: rgba(56, 73, 88, 0.62);
+  padding: 0;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.settingsView .setupAdvancedPanel .checkboxLabel input[type="checkbox"]::after {
+  content: "";
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 2px;
+  border-radius: 999px;
+  background: #e9f1f7;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.42);
+  transition: transform 120ms ease;
+}
+
+.settingsView .setupAdvancedPanel .checkboxLabel input[type="checkbox"]:checked {
+  border-color: rgba(36, 152, 255, 0.9);
+  background: linear-gradient(180deg, #42aaff, #137be8);
+}
+
+.settingsView .setupAdvancedPanel .checkboxLabel input[type="checkbox"]:checked::after {
+  transform: translateX(14px);
+}
+
+.settingsView .setupAdvancedPanel .checkboxLabel input[type="checkbox"]:disabled {
+  opacity: 0.55;
+}
+
+.settingsView .setupAdvancedPanel .checkboxLabel > span {
+  order: 1;
+  min-width: 0;
+}
+
+.settingsView .displayScaleBlock {
+  gap: 8px;
+  border: 0;
+  border-top: 1px solid var(--settings-line-soft);
+  border-radius: 0;
+  background: transparent;
+  padding: 9px 0 0;
+}
+
+.settingsView .displayScaleToggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.settingsView .displayScaleFields {
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 202px);
+}
+
+.settingsView .displayScaleAutoRestore {
+  min-height: 46px;
+  border-color: rgba(116, 145, 171, 0.22);
+  border-radius: 3px;
+  background: rgba(6, 15, 24, 0.68);
+}
+
+.settingsView .setupGamePanel {
+  border: 1px solid var(--settings-line);
+  border-radius: 4px;
+  background:
+    radial-gradient(circle at 42% 12%, rgba(36, 152, 255, 0.08), transparent 36%),
+    rgba(5, 13, 22, 0.64);
+  padding: 0;
+  overflow: hidden;
+}
+
+.settingsView .gameSettingsTop {
+  min-height: 42px;
+  border-bottom: 0;
+  padding: 0 16px;
+}
+
+.settingsView .gameSettingsTop h3 {
+  display: grid;
+  grid-template-columns: 3px max-content minmax(24px, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  color: #f2f7fc;
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.settingsView .gameSettingsTop h3::before {
+  content: "";
+  width: 3px;
+  height: 20px;
+  background: var(--settings-blue);
+  box-shadow: 0 0 10px rgba(36, 152, 255, 0.32);
+}
+
+.settingsView .gameSettingsTop h3::after {
+  content: "";
+  height: 1px;
+  background: var(--settings-line);
+}
+
+.settingsView .gameSettingsMode,
+.settingsView .gameSettingsVersion {
+  display: none;
+}
+
+.settingsView .gameSettingsSurface {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 8px 16px 14px;
+}
+
+.settingsView .playerSettingsSurface {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--settings-line);
+  background: transparent;
+}
+
+.settingsView .gameSettingsSection {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.settingsView .gameSettingsSectionTitle {
+  display: grid;
+  grid-template-columns: max-content minmax(24px, 1fr);
+  align-items: center;
+  gap: 12px;
+  color: #f2f7fc;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.settingsView .gameSettingsSectionTitle::after {
+  content: "";
+  height: 1px;
+  background: var(--settings-line);
+}
+
+.settingsView .gameSectionHeading {
+  gap: 4px;
+}
+
+.settingsView .gameSectionHeading .gameSettingsSectionTitle {
+  margin-bottom: 2px;
+}
+
+.settingsView .gameSectionHint,
+.settingsView .gameToggleHint,
+.settingsView .gameFieldHint {
+  color: #8fa4b8;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.settingsView .gameToggle,
+.settingsView .gameValueRow,
+.settingsView .gameSelectRow,
+.settingsView .gameColorRow {
+  min-height: 29px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.settingsView .gameToggle:hover,
+.settingsView .gameValueRow:hover,
+.settingsView .gameSelectRow:hover,
+.settingsView .gameColorRow:hover {
+  background: transparent;
+}
+
+.settingsView .gameToggle {
+  grid-template-columns: minmax(0, 1fr) 34px;
+}
+
+.settingsView .gameSwitch {
+  width: 32px;
+  height: 18px;
+  border-color: rgba(96, 121, 145, 0.54);
+  background: rgba(56, 73, 88, 0.62);
+}
+
+.settingsView .gameSwitch::after {
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: #e9f1f7;
+}
+
+.settingsView .gameToggle input:checked ~ .gameSwitch {
+  border-color: rgba(36, 152, 255, 0.9);
+  background: linear-gradient(180deg, #42aaff, #137be8);
+}
+
+.settingsView .gameToggle input:checked ~ .gameSwitch::after {
+  transform: translateX(14px);
+  background: #ffffff;
+}
+
+.settingsView .gameToggleText,
+.settingsView .gameValueRow span,
+.settingsView .gameSelectRow span,
+.settingsView .gameColorRow span {
+  color: #dceaf6;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.settingsView .gameValueRow,
+.settingsView .gameSelectRow {
+  grid-template-columns: minmax(0, 1fr) minmax(82px, auto);
+}
+
+.settingsView .gameValueRow output {
+  min-width: 54px;
+  height: 27px;
+  border: 1px solid rgba(116, 145, 171, 0.28);
+  border-radius: 3px;
+  color: #e7f1f9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 12, 20, 0.65);
+  font-size: 12px;
+}
+
+.settingsView .gameValueRow input[type="range"] {
+  height: 18px;
+  accent-color: var(--settings-blue);
+}
+
+.settingsView .gameSelectRow select {
+  min-width: 132px;
+  height: 28px;
+  border-color: rgba(116, 145, 171, 0.32);
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(12, 25, 37, 0.78), rgba(4, 12, 20, 0.78));
+  color: #f1f7fc;
+}
+
+.settingsView .colorSettingsSection {
+  grid-column: span 2;
+}
+
+.settingsView .colorPresetBar,
+.settingsView .colorPickerGrid {
+  gap: 8px;
+}
+
+.settingsView .colorPresetActions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settingsView .gameColorRow {
+  grid-template-columns: minmax(0, 1fr) 34px;
+}
+
+.settingsView .gameColorRow input[type="color"] {
+  border-color: rgba(116, 145, 171, 0.34);
+  border-radius: 3px;
+  background: rgba(4, 12, 20, 0.72);
+}
+
+.settingsView .gameSettingsNotice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  margin: 0 16px 16px;
+  border: 1px solid rgba(245, 170, 36, 0.42);
+  border-radius: 4px;
+  background:
+    linear-gradient(90deg, rgba(245, 170, 36, 0.08), transparent 42%),
+    rgba(31, 22, 8, 0.42);
+  padding: 14px 16px;
+}
+
+.settingsView .gameSettingsNotice::before {
+  content: "\26A0";
+  color: var(--settings-amber);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.settingsView .gameSettingsNoticeText {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settingsView .gameSettingsNotice strong {
+  min-width: 0;
+  color: #ffc15f;
+  font-size: 14px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.settingsView .gameSettingsNotice span {
+  min-width: 0;
+  color: #c4d0dc;
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1320px) {
+  .settingsView .setupAssistantPanel {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel + .setupGamePanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) + .setupGamePanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel[hidden] + .setupGamePanel {
+    grid-column: 1;
+  }
+
+  .settingsView .setupAdvancedPanel {
+    border-right: 0;
+    border-bottom: 1px solid var(--settings-line);
+    padding: 0 0 18px;
+  }
+}
+
+@media (max-width: 920px) {
+  .settingsView .gameSettingsSurface,
+  .settingsView .playerSettingsSurface {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsView .colorSettingsSection {
+    grid-column: span 1;
+  }
+
+  .settingsView .setupAdvancedPanel label:not(.displayScaleToggle),
+  .settingsView .setupAdvancedPanel .checkboxLabel,
+  .settingsView .displayScaleFields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .settingsView .settingsPageHeader {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .settingsView .settingsPageHeader .panelActions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .settingsView #saveSettings {
+    min-width: 0;
+  }
+
+  .settingsView .setupAssistantPanel {
+    padding: 12px;
+  }
+
+  .settingsView .gameSettingsNotice {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+}
+
+/* Settings responsive and native select polish. */
+.settingsView,
+.settingsView input,
+.settingsView select,
+.settingsView textarea {
+  color-scheme: dark;
+}
+
+select,
+select option,
+select optgroup {
+  background-color: #071521;
+  color: #edf7ff;
+}
+
+select option:checked {
+  background-color: #0b67af;
+  color: #ffffff;
+}
+
+select option:disabled,
+select optgroup {
+  color: #8ca1b4;
+}
+
+.settingsView .setupAdvancedPanel select,
+.settingsView .gameSelectRow select,
+.settingsView .colorPresetSelectRow select {
+  background-color: #071521;
+  box-shadow: inset 0 0 0 1px rgba(36, 152, 255, 0.06);
+}
+
+.settingsView .setupAdvancedPanel select:hover,
+.settingsView .gameSelectRow select:hover,
+.settingsView .colorPresetSelectRow select:hover {
+  border-color: rgba(78, 176, 255, 0.58);
+  background-color: #0a1928;
+}
+
+.settingsView .setupAdvancedPanel select:focus,
+.settingsView .gameSelectRow select:focus,
+.settingsView .colorPresetSelectRow select:focus {
+  border-color: rgba(78, 176, 255, 0.86);
+  outline: 2px solid rgba(36, 152, 255, 0.24);
+  outline-offset: 1px;
+}
+
+@media (min-width: 1321px) and (max-width: 1520px) {
+  .settingsView .setupAssistantPanel {
+    grid-template-columns: minmax(320px, 0.48fr) minmax(560px, 1fr);
+    gap: 18px;
+    padding-left: 12px;
+    padding-right: 14px;
+  }
+
+  .settingsView .setupAdvancedPanel {
+    padding-right: 18px;
+  }
+
+  .settingsView .gameSettingsSurface {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsView .playerSettingsSurface {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsView .colorSettingsSection {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 1100px) {
+  .settingsView .setupAdvancedPanel .formGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsView .setupAdvancedPanel .span4 {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 920px) {
+  .settingsView .setupAdvancedPanel .formGrid,
+  .settingsView .setupAdvancedPanel .miniGrid,
+  .settingsView .setupAdvancedPanel .compactChecks {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsView .setupAdvancedPanel .formGroup,
+  .settingsView .setupAdvancedPanel .span2,
+  .settingsView .setupAdvancedPanel .span4,
+  .settingsView .setupAdvancedPanel .miniGrid .span2 {
+    grid-column: 1;
+  }
+
+  .settingsView .gameValueRow,
+  .settingsView .gameSelectRow {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 7px;
+  }
+
+  .settingsView .gameValueRow output {
+    justify-self: start;
+  }
+
+  .settingsView .gameValueRow input[type="range"],
+  .settingsView .gameSelectRow select,
+  .settingsView .colorPresetSelectRow select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .settingsView .colorPresetActions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .settingsView {
+    margin-top: 6px;
+  }
+
+  .settingsView .settingsPageHeader {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .settingsView .settingsPageHeader .panelActions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .settingsView #settingsDirtyBadge {
+    justify-content: center;
+  }
+
+  .settingsView #saveSettings {
+    width: 100%;
+  }
+
+  .settingsView .setupAssistantPanel {
+    padding: 10px;
+  }
+
+  .settingsView .setupAdvancedPanel {
+    padding-bottom: 14px;
+  }
+
+  .settingsView .gameSettingsSurface,
+  .settingsView .playerSettingsSurface {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .settingsView .gameSettingsNotice {
+    margin-left: 12px;
+    margin-right: 12px;
+    padding: 12px;
+  }
+
+  .settingsView .colorPresetActions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Run view declutter: keep the queue dominant and let healthy status recede. */
+.statusStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  gap: 6px;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid rgba(38, 54, 70, 0.58);
+}
+
+.statusChip {
+  grid-template-areas:
+    "dot label"
+    "dot value";
+  min-height: 40px;
+  border-color: rgba(143, 167, 188, 0.16);
+  background: rgba(9, 18, 27, 0.68);
+  padding: 6px 9px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.026);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.statusChip:hover {
+  border-color: rgba(143, 167, 188, 0.32);
+  background: rgba(14, 27, 39, 0.86);
+}
+
+.statusChip.needsAttention {
+  grid-template-areas:
+    "dot label"
+    "dot value"
+    "dot sub";
+  min-height: 48px;
+  background: rgba(13, 23, 33, 0.92);
+}
+
+.statusChip.isWarn {
+  border-color: rgba(240, 184, 75, 0.42);
+  box-shadow: inset 0 1px 0 rgba(240, 184, 75, 0.1);
+}
+
+.statusChip.isBad {
+  border-color: rgba(240, 82, 82, 0.58);
+  box-shadow: inset 0 1px 0 rgba(240, 82, 82, 0.12);
+}
+
+.chipLabel {
+  color: #8393a3;
+  font-size: 9px;
+}
+
+.statusChip strong {
+  font-size: 12px;
+  line-height: 1.08;
+}
+
+.statusChip > span:last-child {
+  display: none;
+  font-size: 10px;
+}
+
+.statusChip.needsAttention > span:last-child {
+  display: block;
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+}
+
+.runBottomGrid {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.42fr);
+  align-items: start;
+  margin-top: 10px;
+}
+
+.runBottomGrid .panel {
+  background: rgba(9, 18, 27, 0.76);
+  border-color: rgba(143, 167, 188, 0.18);
+  box-shadow: none;
+}
+
+.runBottomGrid .panelHeader {
+  min-height: 42px;
+  background: rgba(9, 18, 27, 0.54);
+  padding: 7px 12px;
+}
+
+.runBottomGrid .panelTitleGroup h2 {
+  font-size: 15px;
+}
+
+.runBottomGrid .panelTitleGroup .muted {
+  font-size: 12px;
+}
+
+.runBottomGrid .instancesPanel,
+.runBottomGrid .eventLogPanel {
+  max-height: 246px;
+  overflow: hidden;
+}
+
+.runBottomGrid .instanceLanes,
+.runBottomGrid .attentionLog {
+  max-height: 198px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 167, 188, 0.42) rgba(7, 14, 21, 0.55);
+}
+
+.workerRow.instanceLane {
+  grid-template-columns: minmax(136px, 1.15fr) repeat(4, minmax(70px, 0.48fr)) minmax(156px, 1.1fr) 58px;
+  min-height: 46px;
+  padding: 5px 10px;
+}
+
+.instanceIdentity strong,
+.assignmentPreview strong,
+.instanceMetric strong {
+  font-size: 11px;
+}
+
+.instanceIdentity span:not(.instanceDot):not(.monitorIcon),
+.assignmentPreview span,
+.instanceMetric span {
+  font-size: 9px;
+}
+
+.assignmentPreview {
+  min-height: 32px;
+}
+
+.attentionLog {
+  gap: 6px;
+  padding: 8px;
+}
+
+.attentionItem {
+  grid-template-columns: 14px 42px minmax(0, 1fr) auto;
+  gap: 7px;
+  min-height: 32px;
+  padding: 6px 7px;
+}
+
+.attentionDot {
+  width: 11px;
+  height: 11px;
+}
+
+.attentionItem time,
+.attentionItem strong {
+  font-size: 11px;
+}
+
+.attentionItem > span:last-child {
+  padding: 2px 6px;
+  font-size: 9px;
+}
+
+.runPlanPanel > .panelHeader {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.runPlanPanel > .panelHeader .panelTitleGroup {
+  flex: 0 0 auto;
+  min-width: 158px;
+}
+
+#queueSummary {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1580px) {
+  .statusStrip {
+    grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  }
+
+  .runBottomGrid {
+    grid-template-columns: minmax(0, 1fr) minmax(288px, 360px);
+  }
+
+  .workerRow.instanceLane {
+    grid-template-columns: minmax(132px, 1fr) repeat(2, minmax(70px, 0.5fr)) minmax(90px, 0.58fr) minmax(100px, 0.62fr) minmax(134px, 1fr) 56px;
+  }
+}
+
+@media (max-width: 1460px) {
+  .runPlanPanel > .panelHeader {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .runPlanPanel > .panelHeader .panelTitleGroup {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .runPlanPanel > .panelHeader .panelTitleGroup h2 {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  #queueSummary {
+    max-width: none;
+  }
+
+  .runPlanPanel .collectionToolbar {
+    min-width: 0;
+    width: 100%;
+    grid-template-columns: minmax(160px, 1fr) auto minmax(180px, 1.2fr) auto auto auto auto;
+  }
+
+  .runPlanPanel > .panelHeader .panelActions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .runPlanCard {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 7px;
+    width: max(var(--card-width, 74px), min(74px, calc(100% - var(--card-left, 0px))));
+    min-width: min(56px, calc(100% - var(--card-left, 0px)));
+    min-height: 70px;
+    padding: 6px;
+  }
+
+  .runPlanCard .planCover {
+    width: 38px;
+    height: 38px;
+  }
+
+  .runPlanCard .queueMeta {
+    display: none;
+  }
+
+  .runPlanCard .cardTitleRow {
+    display: grid;
+    gap: 1px;
+  }
+
+  .runPlanCard .cardTitleRow strong {
+    font-size: 11px;
+  }
+
+  .runPlanCard .cardTitleRow span {
+    font-size: 9px;
+  }
+
+  .runPlanCard .planPillRow {
+    gap: 3px;
+  }
+
+  .runPlanCard .planPill {
+    min-height: 15px;
+    padding: 0 4px;
+    font-size: 9px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .runBottomGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .runBottomGrid .instancesPanel,
+  .runBottomGrid .eventLogPanel,
+  .runBottomGrid .instanceLanes,
+  .runBottomGrid .attentionLog {
+    max-height: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .headerControls {
+    display: grid;
+    justify-items: stretch;
+    width: 100%;
+  }
+
+  .toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .toolbar button,
+  .toolbar .referenceInput {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .toolbar .referenceInput {
+    grid-column: 1 / -1;
+  }
+
+  .statusStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .statusChip,
+  .statusChip.needsAttention {
+    min-height: 44px;
+  }
+
+  .statusChip > span:last-child {
+    display: block;
+  }
+
+  .runPlanPanel > .panelHeader .panelTitleGroup {
+    display: grid;
+    gap: 3px;
+  }
+
+  #queueSummary {
+    white-space: normal;
+  }
+
+  .runPlanPanel .collectionToolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .runPlanPanel .collectionNameInput,
+  .runPlanPanel .collectionSelect,
+  .runPlanPanel .collectionOverwrite {
+    grid-column: 1 / -1;
+  }
+
+  .runPlanPanel > .panelHeader .panelActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .runPlanPanel > .panelHeader .panelActions button {
+    justify-content: center;
+    width: 100%;
+  }
+}
+
+/* Guided Run redesign. This final layer intentionally wins over older concept rules. */
+:root {
+  --guided-bg: #050a10;
+  --guided-panel: rgba(11, 19, 28, 0.92);
+  --guided-panel-soft: rgba(8, 15, 23, 0.78);
+  --guided-line: rgba(121, 149, 176, 0.2);
+  --guided-line-strong: rgba(121, 149, 176, 0.34);
+  --guided-blue: #1677ff;
+  --guided-blue-strong: #49a3ff;
+  --guided-green: #52d86f;
+  --guided-amber: #f1a817;
+}
+
+body {
+  background:
+    radial-gradient(circle at 72% 0%, rgba(22, 119, 255, 0.1), transparent 30%),
+    linear-gradient(180deg, #07111b 0%, var(--guided-bg) 54%, #03070b 100%);
+}
+
+.shell.dashboardShell {
+  width: min(1840px, calc(100vw - 20px));
+  padding-bottom: 10px;
+}
+
+.appHeader.commandBar.guidedHeader {
+  grid-template-columns: minmax(220px, 300px) auto minmax(230px, 310px) minmax(250px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 10px 0;
+  background:
+    linear-gradient(180deg, rgba(5, 12, 20, 0.98), rgba(5, 12, 20, 0.92));
+  border-bottom-color: rgba(121, 149, 176, 0.18);
+}
+
+.guidedHeader .brandCluster {
+  min-width: 0;
+}
+
+.guidedHeader .brandMark {
+  width: 32px;
+  height: 32px;
+  border-width: 0;
+  border-radius: 7px;
+  background: transparent;
+  transform: none;
+  box-shadow: none;
+}
+
+.guidedHeader .titleBlock {
+  min-width: 0;
+}
+
+.guidedHeader h1 {
+  font-size: 19px;
+  font-weight: 780;
+}
+
+.guidedHeader .runMeta {
+  max-width: 280px;
+  color: #8fa4b8;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guidedHeader .headerControls {
+  justify-content: flex-start;
+}
+
+.guidedHeader .viewTabs {
+  height: 40px;
+  border: 1px solid rgba(121, 149, 176, 0.18);
+  background: rgba(8, 15, 23, 0.74);
+  padding: 3px;
+}
+
+.guidedHeader .viewTab {
+  min-height: 32px;
+  border-radius: 4px;
+  color: #aab7c5;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.guidedHeader .viewTab.active {
+  background: rgba(22, 119, 255, 0.16);
+  color: #f4f8fc;
+  box-shadow: inset 0 -2px 0 var(--guided-blue);
+}
+
+.guidedHeader .captureProfile {
+  min-height: 38px;
+  border-color: rgba(121, 149, 176, 0.2);
+  background: rgba(8, 15, 23, 0.72);
+  color: #dce7f2;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.guidedHeader .commandSearch {
+  min-height: 38px;
+  border-color: rgba(121, 149, 176, 0.18);
+  background: rgba(8, 15, 23, 0.72);
+}
+
+.headerRunControls,
+.guidedHeader .toolbar {
+  min-width: 0;
+}
+
+.guidedHeader .toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.guidedHeader .primaryButton,
+.guidedHeader .secondaryButton {
+  min-height: 40px;
+  border-radius: 5px;
+  padding-inline: 14px;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.guidedHeader #closeGamesAfterQueue {
+  max-width: 150px;
+}
+
+.runView.active {
+  display: block;
+}
+
+.guidedRunLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 330px);
+  gap: 10px;
+  align-items: start;
+}
+
+.guidedRunLayout .runPlanPanel {
+  min-height: calc(100dvh - 192px);
+  border-color: var(--guided-line);
+  background:
+    linear-gradient(180deg, rgba(10, 20, 31, 0.96), rgba(6, 13, 21, 0.96));
+}
+
+.guidedRunPanelHeader {
+  min-height: 58px;
+  border-bottom-color: var(--guided-line);
+  background: rgba(7, 14, 22, 0.72);
+}
+
+.guidedRunPanelHeader .panelTitleGroup {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.guidedRunPanelHeader h2 {
+  font-size: 19px;
+  font-weight: 820;
+}
+
+.guidedRunPanelHeader #queueSummary {
+  max-width: none;
+  color: #9bacbc;
+  font-size: 12px;
+}
+
+.guidedRunLayout .runPlanHost {
+  min-height: calc(100dvh - 276px);
+}
+
+.guidedRunLayout .runPlanBoard {
+  grid-template-columns: 68px minmax(0, 1fr);
+  min-height: calc(100dvh - 276px);
+}
+
+.guidedRunLayout .runPlanTimeline,
+.guidedRunLayout .runPlanSchedule {
+  background: rgba(5, 13, 21, 0.88);
+}
+
+.guidedRunLayout .timelineHeader,
+.guidedRunLayout .timeRuler {
+  height: 42px;
+  border-bottom-color: var(--guided-line);
+}
+
+.guidedRunLayout .timeRuler {
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+
+.guidedRunLayout .timelineList {
+  max-height: calc(100dvh - 334px);
+  padding: 10px 6px;
+}
+
+.guidedRunLayout .laneStack {
+  grid-auto-rows: minmax(116px, 1fr);
+}
+
+.guidedRunLayout .runPlanLane {
+  grid-template-columns: 132px minmax(0, 1fr);
+  min-height: 116px;
+  border-bottom-color: rgba(121, 149, 176, 0.15);
+}
+
+.guidedRunLayout .laneLabel {
+  padding-inline: 14px;
+}
+
+.guidedRunLayout .laneLabelText strong {
+  font-size: 13px;
+}
+
+.guidedRunLayout .laneLabelText > span {
+  color: #9badbe;
+  font-size: 11px;
+}
+
+.guidedRunLayout .laneTrack {
+  background:
+    linear-gradient(90deg, rgba(121, 149, 176, 0.15) 1px, transparent 1px) 0 0 / 25% 100%;
+}
+
+.guidedRunLayout .runPlanCard {
+  border-color: rgba(121, 149, 176, 0.35);
+  background: rgba(13, 27, 40, 0.96);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.18);
+}
+
+.guidedRunLayout .runPlanCard.selected {
+  border-color: var(--guided-blue);
+  background: linear-gradient(180deg, rgba(16, 50, 84, 0.98), rgba(10, 28, 43, 0.98));
+}
+
+.guidedRunLayout .runPlanCard.queued {
+  border-color: rgba(35, 136, 255, 0.52);
+  background: linear-gradient(180deg, rgba(12, 42, 73, 0.98), rgba(8, 23, 41, 0.98));
+  box-shadow: inset 3px 0 0 rgba(35, 136, 255, 0.86);
+}
+
+.guidedRunLayout .runPlanCard.active {
+  border-color: rgba(111, 204, 255, 0.82);
+  background: linear-gradient(180deg, rgba(28, 82, 113, 0.98), rgba(10, 38, 58, 0.98));
+  box-shadow: inset 3px 0 0 #6fccff, 0 0 20px rgba(111, 204, 255, 0.16);
+}
+
+.guidedRunLayout .runPlanCard.warning {
+  border-color: rgba(245, 199, 94, 0.8);
+  background: linear-gradient(180deg, rgba(78, 55, 16, 0.98), rgba(31, 32, 22, 0.98));
+  box-shadow: inset 3px 0 0 #f5c75e;
+}
+
+.guidedRunLayout .runPlanCard.complete {
+  border-color: rgba(85, 217, 119, 0.82);
+  background: linear-gradient(180deg, rgba(24, 82, 47, 0.98), rgba(10, 42, 31, 0.98));
+  box-shadow: inset 3px 0 0 #55d977;
+}
+
+.guidedRunLayout .runPlanCard.failed {
+  border-color: rgba(240, 82, 82, 0.88);
+  background: linear-gradient(180deg, rgba(88, 25, 32, 0.98), rgba(44, 15, 22, 0.98));
+  box-shadow: inset 3px 0 0 #f05252;
+}
+
+.guidedRunLayout .runPlanLegend {
+  border-top-color: var(--guided-line);
+  color: #9badbe;
+}
+
+.inlineReplayDetails {
+  border-top: 1px solid var(--guided-line);
+  background:
+    linear-gradient(180deg, rgba(12, 24, 36, 0.88), rgba(7, 14, 22, 0.94));
+  padding: 0;
+}
+
+.inlineReplayDetails .inspectorHero {
+  grid-template-columns: 82px minmax(0, 1fr) minmax(360px, 0.72fr);
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+}
+
+.inlineReplayDetails .inspectorThumb {
+  width: 82px;
+  height: 58px;
+}
+
+.inlineReplayDetails .detailsHeader {
+  align-items: start;
+}
+
+.inlineReplayDetails .detailsTitleBlock h3 {
+  font-size: 16px;
+}
+
+.inlineReplayDetails .detailGrid {
+  grid-template-columns: repeat(4, minmax(82px, 1fr));
+}
+
+.inlineReplayDetails .detailsActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.inlineReplayDetails .actionButton {
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.guidedAssistant {
+  position: sticky;
+  top: 82px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  max-height: calc(100dvh - 92px);
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(121, 149, 176, 0.38) rgba(4, 10, 16, 0.5);
+}
+
+.guidedAssistant .panel {
+  border-color: var(--guided-line);
+  background: var(--guided-panel);
+  box-shadow: none;
+}
+
+.assistantCard {
+  padding: 14px;
+}
+
+.assistantHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistantHeader h2 {
+  margin: 2px 0 0;
+  color: #f3f8fd;
+  font-size: 16px;
+  font-weight: 820;
+}
+
+.assistantKicker {
+  color: #8fa5b8;
+  font-size: 11px;
+  font-weight: 780;
+}
+
+.assistantTone {
+  flex: 0 0 auto;
+  border: 1px solid rgba(121, 149, 176, 0.22);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #aebdca;
+  padding: 4px 7px;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.assistantTone.good {
+  border-color: rgba(82, 216, 111, 0.35);
+  background: rgba(82, 216, 111, 0.08);
+  color: #91efa6;
+}
+
+.assistantTone.warn {
+  border-color: rgba(241, 168, 23, 0.4);
+  background: rgba(241, 168, 23, 0.1);
+  color: #ffd47c;
+}
+
+.assistantTone.bad {
+  border-color: rgba(240, 82, 82, 0.44);
+  background: rgba(240, 82, 82, 0.1);
+  color: #ffaaa9;
+}
+
+.assistantTone.active {
+  border-color: rgba(73, 163, 255, 0.44);
+  background: rgba(73, 163, 255, 0.1);
+  color: #9fd0ff;
+}
+
+.assistantCard p {
+  margin: 12px 0 0;
+  color: #b7c4d0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.assistantActions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.assistantActions button {
+  justify-content: center;
+  width: 100%;
+}
+
+.assistantSection {
+  overflow: hidden;
+}
+
+.assistantSection summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 0 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.assistantSection summary::-webkit-details-marker {
+  display: none;
+}
+
+.assistantSection summary span {
+  color: #eef5fb;
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.assistantSection summary small {
+  color: #8ea0b1;
+  font-size: 11px;
+  font-weight: 720;
+  text-align: right;
+}
+
+.assistantSection[open] summary {
+  border-bottom: 1px solid var(--guided-line);
+}
+
+.assistantBody {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.guidedAssistant .importStaging {
+  display: grid;
+  gap: 8px;
+}
+
+.guidedAssistant .fileDrop {
+  min-height: 94px;
+  border-color: rgba(121, 149, 176, 0.28);
+  border-radius: 5px;
+  background:
+    linear-gradient(180deg, rgba(12, 24, 36, 0.82), rgba(7, 14, 22, 0.9));
+}
+
+.guidedAssistant .assistantField {
+  display: grid;
+  gap: 6px;
+  color: #dce7f2;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.guidedAssistant .referenceInput,
+.guidedAssistant .collectionNameInput,
+.guidedAssistant .collectionSelect {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  height: 34px;
+  border-color: rgba(121, 149, 176, 0.24);
+  background: rgba(5, 12, 20, 0.78);
+}
+
+.guidedAssistant .collectionToolbar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  min-width: 0;
+}
+
+.guidedAssistant .collectionNameInput,
+.guidedAssistant .collectionSelect,
+.guidedAssistant .collectionOverwrite {
+  grid-column: 1 / -1;
+}
+
+.guidedAssistant .collectionToolbar .textButton {
+  min-height: 30px;
+  justify-content: center;
+  border: 1px solid rgba(121, 149, 176, 0.18);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.readinessAssistant .statusStrip {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  border-bottom: 0;
+  padding: 10px;
+}
+
+.readinessAssistant .statusChip {
+  min-height: 42px;
+  padding: 7px 8px;
+}
+
+.readinessAssistant .statusChip strong {
+  font-size: 11px;
+}
+
+.readinessAssistant .statusChip > span:last-child {
+  font-size: 10px;
+}
+
+.workersAssistant .assistantBody {
+  padding-top: 10px;
+}
+
+.workersAssistant .instanceCountControl {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.guidedAssistant .instanceLanes {
+  display: grid;
+  gap: 6px;
+  max-height: 290px;
+  overflow: auto;
+}
+
+.guidedAssistant .workerRow.instanceLane {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  min-height: 0;
+  border: 1px solid rgba(121, 149, 176, 0.14);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 8px;
+}
+
+.guidedAssistant .instanceMetric {
+  display: none;
+}
+
+.guidedAssistant .instanceIdentity {
+  min-width: 0;
+}
+
+.guidedAssistant .instanceIdentity strong {
+  font-size: 12px;
+}
+
+.guidedAssistant .instanceIdentity span:not(.instanceDot):not(.monitorIcon) {
+  font-size: 10px;
+}
+
+.guidedAssistant .assignmentPreview {
+  grid-column: 1 / -1;
+  min-height: 34px;
+}
+
+.guidedAssistant .assignmentPreview .planCover {
+  width: 32px;
+  height: 32px;
+}
+
+.guidedAssistant .rowAction {
+  min-height: 30px;
+  align-self: start;
+}
+
+.runAttentionPanel {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
+  margin-top: 10px;
+  border-color: var(--guided-line);
+  background: rgba(8, 15, 23, 0.78);
+  overflow: hidden;
+}
+
+.attentionSummary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  gap: 8px;
+  border-right: 1px solid var(--guided-line);
+  padding: 12px 14px;
+}
+
+.attentionSummary h2 {
+  margin: 0;
+  color: #f3f8fd;
+  font-size: 14px;
+}
+
+.attentionSummary span {
+  color: #9cadbd;
+  font-size: 12px;
+}
+
+.attentionSummary .textButton {
+  justify-self: start;
+}
+
+.compactAttentionLog {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 8px;
+  align-items: center;
+  min-height: 88px;
+  padding: 10px;
+  overflow: auto;
+}
+
+.compactAttentionLog .emptyState {
+  grid-column: 1 / -1;
+  min-height: 52px;
+  display: grid;
+  place-items: center;
+}
+
+.compactAttentionLog .attentionItem {
+  grid-template-columns: 12px minmax(0, 1fr);
+  grid-template-areas:
+    "dot text"
+    "dot meta";
+  min-height: 52px;
+  border-color: rgba(121, 149, 176, 0.14);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.compactAttentionLog .attentionItem time {
+  display: none;
+}
+
+.compactAttentionLog .attentionDot {
+  grid-area: dot;
+}
+
+.compactAttentionLog .attentionItem strong {
+  grid-area: text;
+  font-size: 11px;
+}
+
+.compactAttentionLog .attentionItem > span:last-child {
+  grid-area: meta;
+  justify-self: start;
+}
+
+body.settingsActive .runAttentionPanel,
+body:has(.settingsView.active) .runAttentionPanel {
+  display: none;
+}
+
+@media (max-width: 1480px) {
+  .appHeader.commandBar.guidedHeader {
+    grid-template-columns: minmax(220px, 300px) auto minmax(230px, 1fr);
+  }
+
+  .guidedHeader .captureProfile {
+    grid-column: 3;
+  }
+
+  .guidedHeader .commandSearch,
+  .guidedHeader .headerRunControls {
+    grid-column: 1 / -1;
+  }
+
+  .guidedHeader .toolbar {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 1200px) {
+  .guidedRunLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .guidedAssistant {
+    position: static;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: none;
+    overflow: visible;
+  }
+
+  .guidedAssistant .nextActionCard {
+    grid-column: 1 / -1;
+  }
+
+  .guidedRunLayout .runPlanPanel,
+  .guidedRunLayout .runPlanHost,
+  .guidedRunLayout .runPlanBoard {
+    min-height: 620px;
+  }
+
+  .inlineReplayDetails .inspectorHero {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .inlineReplayDetails .detailsActions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 860px) {
+  .appHeader.commandBar.guidedHeader {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .guidedHeader .captureProfile,
+  .guidedHeader .commandSearch,
+  .guidedHeader .headerRunControls {
+    grid-column: 1;
+  }
+
+  .guidedHeader .headerControls,
+  .guidedHeader .toolbar {
+    justify-content: stretch;
+  }
+
+  .guidedHeader .viewTabs,
+  .guidedHeader .toolbar {
+    width: 100%;
+  }
+
+  .guidedHeader .toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .guidedHeader .toolbar button {
+    width: 100%;
+  }
+
+  .guidedAssistant {
+    grid-template-columns: 1fr;
+  }
+
+  .guidedRunLayout .runPlanBoard {
+    grid-template-columns: 1fr;
+  }
+
+  .guidedRunLayout .runPlanTimeline {
+    display: none;
+  }
+
+  .guidedRunLayout .timeRuler,
+  .guidedRunLayout .runPlanLane {
+    grid-template-columns: 106px minmax(0, 1fr);
+  }
+
+  .runAttentionPanel {
+    grid-template-columns: 1fr;
+  }
+
+  .attentionSummary {
+    border-right: 0;
+    border-bottom: 1px solid var(--guided-line);
+  }
+
+  .compactAttentionLog {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Unified secondary pages: collections, setup/settings, diagnostics. */
+.viewPanel {
+  display: none;
+}
+
+.viewPanel.active {
+  display: block;
+}
+
+.collectionsView.active,
+.settingsView.active,
+.diagnosticsView.active {
+  margin-top: 10px;
+}
+
+.collectionsShell {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(270px, 320px);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.collectionLibraryPanel,
+.collectionPreviewPanel,
+.collectionActionPanel,
+.collectionImportDock {
+  border-color: var(--guided-line);
+  background:
+    linear-gradient(180deg, rgba(10, 20, 31, 0.95), rgba(6, 13, 21, 0.95));
+  box-shadow: none;
+}
+
+.collectionPageHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 64px;
+  border-bottom: 1px solid var(--guided-line);
+  padding: 12px 14px;
+}
+
+.collectionPageHeader h2,
+.collectionPreviewHero h2,
+.collectionImportDock h2 {
+  margin: 0;
+  color: #f4f8fd;
+  font-size: 18px;
+  font-weight: 840;
+}
+
+.collectionPageHeader span,
+.collectionPreviewHero p,
+.collectionImportDock span {
+  color: #9aacbb;
+  font-size: 12px;
+}
+
+.collectionsList {
+  display: grid;
+  gap: 8px;
+  max-height: calc(100dvh - 228px);
+  overflow: auto;
+  padding: 12px;
+  scrollbar-width: thin;
+}
+
+.collectionListCard,
+.collectionListEmpty {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-height: 106px;
+  border: 1px solid rgba(121, 149, 176, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.026);
+  color: var(--text);
+  padding: 12px;
+  text-align: left;
+}
+
+.collectionListCard:hover,
+.collectionListCard.selected {
+  border-color: rgba(22, 119, 255, 0.7);
+  background: rgba(22, 119, 255, 0.1);
+}
+
+.collectionListTitle {
+  color: #f3f8fd;
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.collectionListMeta {
+  color: #8fa4b8;
+  font-size: 11px;
+}
+
+.collectionListStats {
+  display: grid;
+  grid-template-columns: repeat(3, auto minmax(0, 1fr));
+  gap: 3px 5px;
+  align-items: baseline;
+}
+
+.collectionListStats strong {
+  color: var(--guided-green);
+  font-size: 16px;
+}
+
+.collectionListStats small {
+  color: #92a4b5;
+  font-size: 10px;
+}
+
+.collectionPreviewPanel {
+  min-height: calc(100dvh - 196px);
+}
+
+.collectionPreviewHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  min-height: 118px;
+  border-bottom: 1px solid var(--guided-line);
+  padding: 18px 20px;
+}
+
+.collectionPreviewStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(74px, 1fr));
+  gap: 8px;
+}
+
+.collectionPreviewStats div {
+  display: grid;
+  gap: 3px;
+  min-width: 74px;
+  border: 1px solid rgba(121, 149, 176, 0.16);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 9px;
+}
+
+.collectionPreviewStats strong {
+  color: #f5f9fe;
+  font-size: 18px;
+}
+
+.collectionPreviewStats span {
+  color: #8fa4b8;
+  font-size: 10px;
+  font-weight: 780;
+  text-transform: uppercase;
+}
+
+.collectionPreviewTimeline {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid var(--guided-line);
+  padding: 16px 20px;
+}
+
+.collectionMiniTimeline {
+  display: flex;
+  width: 100%;
+  height: 42px;
+  overflow: hidden;
+  border: 1px solid rgba(121, 149, 176, 0.18);
+  border-radius: 5px;
+  background: rgba(5, 12, 20, 0.72);
+}
+
+.collectionMiniTimeline span {
+  flex: 0 0 max(7px, var(--segment));
+  border-right: 1px solid rgba(5, 12, 20, 0.72);
+}
+
+.collectionMiniTimeline .ready {
+  background: linear-gradient(180deg, rgba(82, 216, 111, 0.82), rgba(52, 157, 76, 0.82));
+}
+
+.collectionMiniTimeline .recorded {
+  background:
+    repeating-linear-gradient(135deg, rgba(143, 167, 188, 0.16) 0 5px, rgba(143, 167, 188, 0.08) 5px 10px),
+    rgba(143, 167, 188, 0.24);
+}
+
+.collectionTimelineLegend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #9cadbd;
+  font-size: 12px;
+}
+
+.legendDot.mutedDot {
+  background: #738497;
+}
+
+.collectionPreviewItems {
+  display: grid;
+  gap: 8px;
+  padding: 14px 20px 20px;
+}
+
+.collectionPreviewItem {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 58px 74px;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  border: 1px solid rgba(121, 149, 176, 0.13);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.022);
+  padding: 7px 9px;
+}
+
+.collectionPreviewItem .planCover {
+  width: 42px;
+  height: 42px;
+}
+
+.collectionPreviewItem strong {
+  color: #edf4fb;
+  font-size: 13px;
+}
+
+.collectionPreviewItem span,
+.collectionPreviewItem time {
+  min-width: 0;
+  color: #93a5b6;
+  font-size: 11px;
+}
+
+.collectionItemState {
+  justify-self: end;
+  border: 1px solid rgba(82, 216, 111, 0.34);
+  border-radius: 4px;
+  background: rgba(82, 216, 111, 0.08);
+  color: #91efa6 !important;
+  padding: 4px 7px;
+  font-weight: 820;
+}
+
+.collectionPreviewItem.recorded .collectionItemState {
+  border-color: rgba(121, 149, 176, 0.24);
+  background: rgba(121, 149, 176, 0.08);
+  color: #a9b7c6 !important;
+}
+
+.collectionPreviewEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 86px;
+  color: #9badbd;
+  font-size: 13px;
+}
+
+.collectionActionPanel {
+  padding: 14px;
+}
+
+.collectionActionStack {
+  display: grid;
+  gap: 10px;
+}
+
+.collectionActionPanel .assistantField,
+.collectionImportDock .assistantField {
+  display: grid;
+  gap: 6px;
+  color: #dce7f2;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.collectionActionPanel input,
+.collectionActionPanel select,
+.collectionImportDock input {
+  min-height: 36px;
+  border-color: rgba(121, 149, 176, 0.22);
+  background: rgba(5, 12, 20, 0.76);
+}
+
+.collectionPageOverwrite {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  white-space: normal;
+}
+
+.collectionImportDock {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.75fr) minmax(260px, 1fr) auto minmax(260px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 10px;
+  padding: 14px;
+}
+
+.collectionDropTarget {
+  display: grid;
+  gap: 4px;
+  min-height: 70px;
+  border: 1px dashed rgba(121, 149, 176, 0.34);
+  border-radius: 6px;
+  background: rgba(5, 12, 20, 0.62);
+  color: #dce7f2;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.collectionDropTarget:hover,
+.collectionDropTarget.dragOver {
+  border-color: rgba(36, 152, 255, 0.74);
+  background: rgba(22, 119, 255, 0.1);
+}
+
+.collectionDropTarget strong {
+  color: #f4f8fd;
+  font-size: 13px;
+  font-weight: 840;
+}
+
+.collectionDropTarget span {
+  color: #94a8ba;
+  font-size: 12px;
+}
+
+.collectionLinkField {
+  margin: 0;
+}
+
+.settingsView .settingsPageHeader,
+.diagnosticsView .settingsPageHeader {
+  border: 1px solid var(--guided-line);
+  border-radius: 6px;
+  background: rgba(8, 15, 23, 0.78);
+  padding: 14px 18px;
+}
+
+.settingsView .settingsPageHeader h2,
+.diagnosticsView .settingsPageHeader h2 {
+  font-size: 20px;
+  font-weight: 840;
+}
+
+.settingsView .setupAssistantPanel,
+.diagnosticsView .panel {
+  border-color: var(--guided-line);
+  background:
+    linear-gradient(180deg, rgba(10, 20, 31, 0.94), rgba(6, 13, 21, 0.96));
+  box-shadow: none;
+}
+
+.settingsView .setupAssistantPanel > .panelHeader,
+.diagnosticsView .panelHeader {
+  border-bottom-color: var(--guided-line);
+  background: rgba(7, 14, 22, 0.62);
+}
+
+.settingsView .setupWizardColumn,
+.settingsView .setupAdvancedPanel .formGroup,
+.settingsView .setupGamePanel,
+.diagnosticsView .diagnosticHero,
+.diagnosticsView .diagnosticMetricGrid,
+.diagnosticsView .diagnosticChecklist,
+.diagnosticsView .benchmarkSummary,
+.diagnosticsView .syncSummary,
+.diagnosticsView .baselineSummary {
+  border-color: rgba(121, 149, 176, 0.16);
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.diagnosticsView .diagnosticsGrid {
+  gap: 10px;
+  margin-top: 10px;
+}
+
+@media (max-width: 1240px) {
+  .collectionsShell {
+    grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  }
+
+  .collectionActionPanel {
+    grid-column: 1 / -1;
+  }
+
+  .collectionImportDock {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .collectionsShell,
+  .collectionPreviewHero,
+  .collectionImportDock {
+    grid-template-columns: 1fr;
+  }
+
+  .collectionPreviewStats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .collectionPreviewItem {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .collectionPreviewItem time,
+  .collectionItemState {
+    justify-self: start;
+  }
+}
+
+/* Final guided redesign pass: keep the first view calm and assistant-led. */
+.appHeader.commandBar.guidedHeader {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 9px;
+  min-height: 58px;
+  padding: 8px 0;
+}
+
+.guidedHeader .brandCluster {
+  flex: 0 1 232px;
+  gap: 9px;
+}
+
+.appHeader.commandBar.guidedHeader .brandMark {
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  transform: none;
+  box-shadow: none;
+  filter: drop-shadow(0 0 12px rgba(35, 136, 255, 0.24));
+}
+
+.guidedHeader h1 {
+  font-size: 17px;
+}
+
+.guidedHeader .runMeta {
+  max-width: 178px;
+}
+
+.guidedHeader .headerControls,
+.guidedHeader .captureProfile,
+.guidedHeader .commandSearch,
+.guidedHeader .headerRunControls {
+  grid-column: auto !important;
+}
+
+.guidedHeader .headerControls {
+  flex: 0 0 auto;
+}
+
+.guidedHeader .viewTabs {
+  height: 36px;
+}
+
+.guidedHeader .viewTab {
+  min-height: 28px;
+  padding-inline: 8px;
+  font-size: 11px;
+}
+
+.guidedHeader .captureProfile {
+  flex: 0 1 210px;
+  min-height: 34px;
+  padding-inline: 10px;
+  font-size: 11px;
+}
+
+.guidedHeader .commandSearch {
+  flex: 1 1 160px;
+  min-width: 128px;
+  min-height: 34px;
+}
+
+.guidedHeader .headerRunControls {
+  flex: 0 0 auto;
+}
+
+.guidedHeader .toolbar {
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.guidedHeader .primaryButton,
+.guidedHeader .secondaryButton {
+  min-height: 34px;
+  padding-inline: 10px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.guidedHeader #closeGamesAfterQueue {
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.guidedRunLayout .runPlanCard {
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 8px;
+  width: min(max(var(--card-width, 168px), 154px), calc(100% - var(--card-left, 0px)));
+  min-width: 0;
+  min-height: 72px;
+  overflow: hidden;
+  padding: 7px;
+}
+
+.guidedRunLayout .runPlanCard .planCover {
+  width: 42px;
+  height: 42px;
+}
+
+.guidedRunLayout .runPlanCardMain,
+.guidedRunLayout .runPlanCard .cardTitleRow,
+.guidedRunLayout .runPlanCard .cardTitleRow strong {
+  min-width: 0;
+}
+
+.guidedRunLayout .runPlanCard .cardTitleRow span {
+  flex: 0 0 auto;
+}
+
+.guidedRunLayout .runPlanCard .planPillRow {
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.guidedRunLayout .runPlanCard .planPill {
+  flex: 0 0 auto;
+  font-size: 9px;
+}
+
+.guidedRunLayout .runPlanCard .planPill:nth-child(n+3) {
+  display: none;
+}
+
+.settingsView .setupAssistantPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.46fr);
+  gap: 12px;
+  border-color: var(--guided-line);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(10, 20, 31, 0.96), rgba(6, 13, 21, 0.96));
+  padding: 0;
+  overflow: hidden;
+}
+
+.settingsView .setupAssistantPanel > .panelHeader {
+  display: flex !important;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-height: 56px;
+  border-bottom: 1px solid var(--guided-line);
+  background: rgba(7, 14, 22, 0.72);
+  padding: 12px 16px;
+}
+
+.settingsView .setupAssistantPanel > .setupWizardGrid {
+  display: grid !important;
+  grid-column: 1;
+  grid-row: 2;
+  grid-template-columns: minmax(280px, 0.82fr) minmax(340px, 1fr);
+  gap: 12px;
+  padding: 14px 0 16px 16px;
+}
+
+.settingsView .setupWizardColumn {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border: 1px solid rgba(121, 149, 176, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 14px;
+}
+
+.settingsView .setupWizardColumn h3,
+.settingsView .setupFeedHeading h3,
+.settingsView .setupInstanceManagerHeader span {
+  color: #eff6fd;
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.settingsView .setupMonitorPicker,
+.settingsView .setupMonitorGraphic,
+.settingsView .setupPathField,
+.settingsView .setupInstanceManager {
+  border-color: rgba(121, 149, 176, 0.16);
+  background: rgba(5, 12, 20, 0.54);
+}
+
+.settingsView .setupMonitorGraphic {
+  border: 0;
+  background: transparent;
+}
+
+.settingsView .setupMonitorStage {
+  min-height: 180px;
+  border-color: rgba(121, 149, 176, 0.16);
+  background:
+    linear-gradient(90deg, rgba(121, 149, 176, 0.08) 1px, transparent 1px) 0 0 / 25% 100%,
+    linear-gradient(180deg, rgba(121, 149, 176, 0.06) 1px, transparent 1px) 0 0 / 100% 33.333%,
+    rgba(5, 12, 20, 0.56);
+}
+
+.settingsView .setupProfileList {
+  gap: 8px;
+}
+
+.settingsView .setupProfileButton,
+.settingsView .setupInstanceRow {
+  border-color: rgba(121, 149, 176, 0.14);
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.settingsView .setupWizardActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel[hidden] {
+  display: none !important;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) {
+  display: block !important;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  margin: 0;
+  border-top: 1px solid var(--guided-line);
+  border-right: 0;
+  border-radius: 0;
+  background: rgba(5, 12, 20, 0.42);
+  padding: 16px;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) .setupAdvancedHeader {
+  display: grid;
+  margin-bottom: 12px;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) .setupAdvancedGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) .span2 {
+  grid-column: span 2;
+}
+
+.settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) .span4 {
+  grid-column: span 4;
+}
+
+.settingsView .setupAssistantPanel > .setupGamePanel {
+  display: grid !important;
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  max-height: calc(100dvh - 220px);
+  margin: 14px 16px 16px 0 !important;
+  overflow: auto;
+  border: 1px solid rgba(121, 149, 176, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.settingsView .setupGamePanel .gameSettingsSurface,
+.settingsView .setupGamePanel .playerSettingsSurface,
+.settingsView .setupGamePanel .gameToggleGrid {
+  grid-template-columns: 1fr;
+}
+
+.settingsView .setupGamePanel .gameValueRow,
+.settingsView .setupGamePanel .gameSelectRow {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+
+.diagnosticsView .diagnosticsGrid {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  align-items: start;
+}
+
+.diagnosticsView .diagnosticsWide {
+  grid-column: 1;
+}
+
+.diagnosticsView .syncPanel,
+.diagnosticsView .baselinePanel {
+  grid-column: 2;
+}
+
+.diagnosticsView .syncPanel {
+  grid-row: 1;
+}
+
+.diagnosticsView .baselinePanel {
+  grid-row: 2;
+}
+
+.diagnosticsView .diagnosticEventsPanel {
+  grid-column: 1 / -1;
+}
+
+.diagnosticsView .diagnosticChecklist {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.diagnosticsView .diagnosticReadinessPanel .panelTitleGroup .muted {
+  max-width: 54ch;
+}
+
+.diagnosticsView .benchmarkPanel,
+.diagnosticsView .diagnosticWorkersPanel {
+  margin-top: 10px;
+}
+
+@media (max-width: 1480px) {
+  .appHeader.commandBar.guidedHeader {
+    flex-wrap: wrap;
+  }
+
+  .guidedHeader .brandCluster {
+    flex-basis: 250px;
+  }
+
+  .guidedHeader .commandSearch {
+    order: 5;
+    flex-basis: min(340px, 100%);
+  }
+
+  .guidedHeader .headerRunControls {
+    order: 6;
+  }
+}
+
+@media (max-width: 1500px) {
+  .settingsView .setupAssistantPanel {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsView .setupAssistantPanel > .setupWizardGrid,
+  .settingsView .setupAssistantPanel > .setupGamePanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel + .setupGamePanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel[hidden] + .setupGamePanel,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) + .setupGamePanel,
+  .settingsView .setupAssistantPanel > .setupGamePanel {
+    grid-column: 1 !important;
+    grid-row: auto !important;
+  }
+
+  .settingsView .setupAssistantPanel > .setupWizardGrid {
+    padding-right: 16px;
+  }
+
+  .settingsView .setupAssistantPanel > .setupGamePanel {
+    max-height: none;
+    margin: 0 16px 16px !important;
+  }
+}
+
+@media (max-width: 1240px) {
+  .diagnosticsView .diagnosticsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnosticsView .diagnosticsWide,
+  .diagnosticsView .syncPanel,
+  .diagnosticsView .baselinePanel,
+  .diagnosticsView .diagnosticEventsPanel {
+    grid-column: 1;
+  }
+
+  .diagnosticsView .syncPanel,
+  .diagnosticsView .baselinePanel {
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 1100px) {
+  .settingsView .setupAssistantPanel > .setupWizardGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 920px) {
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) .setupAdvancedGrid,
+  .diagnosticsView .diagnosticChecklist {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) .span2,
+  .settingsView .setupAssistantPanel > .setupAdvancedPanel:not([hidden]) .span4 {
+    grid-column: 1;
   }
 }

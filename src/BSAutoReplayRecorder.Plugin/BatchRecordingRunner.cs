@@ -14,6 +14,7 @@ public sealed class BatchRecordingRunner
     private readonly BatchRecorderSettings _settings;
     private readonly IReadOnlyList<IReplayPlaybackDriver> _playbackDrivers;
     private readonly IRecordingBackend _recordingBackend;
+    private readonly Func<string, CancellationToken, Task>? _phaseChangedAsync;
     private readonly ReplayReferenceParser _referenceParser = new ReplayReferenceParser();
     private readonly Logger _logger;
 
@@ -21,8 +22,9 @@ public sealed class BatchRecordingRunner
         BatchRecorderSettings settings,
         IReplayPlaybackDriver playbackDriver,
         IRecordingBackend recordingBackend,
-        Logger logger)
-        : this(settings, new[] { playbackDriver }, recordingBackend, logger)
+        Logger logger,
+        Func<string, CancellationToken, Task>? phaseChangedAsync = null)
+        : this(settings, new[] { playbackDriver }, recordingBackend, logger, phaseChangedAsync)
     {
     }
 
@@ -30,7 +32,8 @@ public sealed class BatchRecordingRunner
         BatchRecorderSettings settings,
         IReadOnlyList<IReplayPlaybackDriver> playbackDrivers,
         IRecordingBackend recordingBackend,
-        Logger logger)
+        Logger logger,
+        Func<string, CancellationToken, Task>? phaseChangedAsync = null)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _playbackDrivers = playbackDrivers ?? throw new ArgumentNullException(nameof(playbackDrivers));
@@ -41,6 +44,7 @@ public sealed class BatchRecordingRunner
 
         _recordingBackend = recordingBackend ?? throw new ArgumentNullException(nameof(recordingBackend));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _phaseChangedAsync = phaseChangedAsync;
     }
 
     public async Task<RecordingExecutionResult> RunSingleAsync(
@@ -235,6 +239,7 @@ public sealed class BatchRecordingRunner
             {
                 try
                 {
+                    await NotifyPhaseChangedAsync("Finalizing", CancellationToken.None).ConfigureAwait(false);
                     stopResult = await _recordingBackend.StopRecordingAsync(plan, contentStartUtc, CancellationToken.None)
                         .ConfigureAwait(false);
                     outputPath = stopResult.OutputPath;
@@ -273,6 +278,23 @@ public sealed class BatchRecordingRunner
         }
 
         return new RecordingExecutionResult(false, outputPath, failure.Message, null);
+    }
+
+    private async Task NotifyPhaseChangedAsync(string phase, CancellationToken cancellationToken)
+    {
+        if (_phaseChangedAsync == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _phaseChangedAsync(phase, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("Could not report assignment phase " + phase + ": " + ex.Message);
+        }
     }
 
     private async Task RequestLeaveActiveReplayAfterInterruptedPlanAsync(

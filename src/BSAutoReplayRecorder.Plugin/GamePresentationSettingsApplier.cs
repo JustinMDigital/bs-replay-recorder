@@ -11,6 +11,12 @@ namespace BSAutoReplayRecorder.Plugin;
 
 internal static class GamePresentationSettingsApplier
 {
+    private static readonly IGamePresentationSettingsSectionApplier[] SectionAppliers =
+    {
+        new BeatLeaderReplayerSettingsApplier(),
+        new BeatSaberPlayerSpecificSettingsApplier()
+    };
+
     public static void Apply(GamePresentationSettings settings, IPA.Logging.Logger logger)
     {
         if (settings == null)
@@ -20,94 +26,173 @@ internal static class GamePresentationSettingsApplier
 
         settings.Normalize();
 
-        var changed = ApplyBeatLeaderSettings(settings);
-        changed |= ApplyPlayerSpecificSettings(settings);
+        var changedSections = new List<string>();
+        foreach (var applier in SectionAppliers)
+        {
+            var result = applier.Apply(settings);
+            if (result.Changed)
+            {
+                changedSections.Add(applier.Name);
+            }
+        }
+
         ApplyRuntimeAudioSettings(settings);
 
-        if (changed)
+        if (changedSections.Count > 0)
         {
-            logger.Info("Applied game settings from the control panel.");
+            logger.Info("Applied game settings from the control panel: " + string.Join(", ", changedSections) + ".");
         }
     }
 
-    private static bool ApplyBeatLeaderSettings(GamePresentationSettings settings)
+    private interface IGamePresentationSettingsSectionApplier
     {
-        var replayerSettings = ReplayerSettings.UserSettings
-                               ?? GetPluginConfigReplayerSettings()
-                               ?? ReplayerSettings.DefaultSettings
-                               ?? new ReplayerSettings();
-        var changed = false;
+        string Name { get; }
 
-        if (replayerSettings.AutoHideUI != settings.NoHud)
-        {
-            replayerSettings.AutoHideUI = settings.NoHud;
-            changed = true;
-        }
-
-        changed |= SetBoolean(replayerSettings.LoadPlayerEnvironment, settings.LoadPlayerEnvironment, value => replayerSettings.LoadPlayerEnvironment = value);
-        changed |= SetBoolean(replayerSettings.LoadPlayerJumpDistance, settings.LoadPlayerJumpDistance, value => replayerSettings.LoadPlayerJumpDistance = value);
-        changed |= SetBoolean(replayerSettings.IgnoreModifiers, settings.IgnoreModifiers, value => replayerSettings.IgnoreModifiers = value);
-        changed |= SetBoolean(replayerSettings.ShowHead, settings.ShowHead, value => replayerSettings.ShowHead = value);
-        changed |= SetBoolean(replayerSettings.ShowLeftSaber, settings.ShowLeftSaber, value => replayerSettings.ShowLeftSaber = value);
-        changed |= SetBoolean(replayerSettings.ShowRightSaber, settings.ShowRightSaber, value => replayerSettings.ShowRightSaber = value);
-        changed |= SetBoolean(replayerSettings.ShowWatermark, settings.ShowWatermark, value => replayerSettings.ShowWatermark = value);
-        changed |= SetBoolean(replayerSettings.ShowTimelineMisses, settings.ShowTimelineMisses, value => replayerSettings.ShowTimelineMisses = value);
-        changed |= SetBoolean(replayerSettings.ShowTimelineBombs, settings.ShowTimelineBombs, value => replayerSettings.ShowTimelineBombs = value);
-        changed |= SetBoolean(replayerSettings.ShowTimelinePauses, settings.ShowTimelinePauses, value => replayerSettings.ShowTimelinePauses = value);
-
-        if (!ReferenceEquals(GetPluginConfigReplayerSettings(), replayerSettings))
-        {
-            SetPluginConfigReplayerSettings(replayerSettings);
-            changed = true;
-        }
-
-        if (changed)
-        {
-            NotifyPluginConfigReplayerSettingsChanged();
-        }
-
-        return changed;
+        GamePresentationSettingsApplyResult Apply(GamePresentationSettings settings);
     }
 
-    private static bool ApplyPlayerSpecificSettings(GamePresentationSettings settings)
+    private readonly struct GamePresentationSettingsApplyResult
     {
-        var playerDataModel = ResolvePlayerDataModel()
-                              ?? throw new InvalidOperationException("Beat Saber player data model is not available yet.");
-        var playerData = playerDataModel.playerData
-                         ?? throw new InvalidOperationException("Beat Saber player data is not loaded yet.");
-        var current = playerData.playerSpecificSettings
-                      ?? throw new InvalidOperationException("Beat Saber player-specific settings are not loaded yet.");
-
-        var next = current.CopyWith(
-            null,
-            null,
-            null,
-            settings.SfxVolume,
-            settings.ReduceDebris,
-            settings.NoTextsAndHuds,
-            settings.NoFailEffects,
-            settings.AdvancedHud,
-            null,
-            settings.SaberTrailIntensity,
-            ParseEnum(settings.NoteJumpDurationType, NoteJumpDurationTypeSettings.Dynamic),
-            settings.NoteJumpFixedDuration,
-            settings.NoteJumpStartBeatOffset,
-            settings.HideNoteSpawnEffect,
-            settings.AdaptiveSfx,
-            settings.ArcsHapticFeedback,
-            ParseEnum(settings.ArcVisibility, ArcVisibilityType.Low),
-            ParseEnum(settings.EnvironmentEffectsFilterDefaultPreset, EnvironmentEffectsFilterPreset.AllEffects),
-            ParseEnum(settings.EnvironmentEffectsFilterExpertPlusPreset, EnvironmentEffectsFilterPreset.AllEffects),
-            settings.HeadsetHapticIntensity);
-
-        if (current.AreValuesEqual(next))
+        public GamePresentationSettingsApplyResult(bool changed)
         {
-            return false;
+            Changed = changed;
         }
 
-        playerData.SetPlayerSpecificSettings(next);
-        SavePlayerData(playerDataModel);
-        return true;
+        public bool Changed { get; }
+    }
+
+    private sealed class BeatLeaderReplayerSettingsApplier : IGamePresentationSettingsSectionApplier
+    {
+        public string Name => "BeatLeader replay settings";
+
+        public GamePresentationSettingsApplyResult Apply(GamePresentationSettings settings)
+        {
+            var replayerSettings = ReplayerSettings.UserSettings
+                                   ?? GetPluginConfigReplayerSettings()
+                                   ?? ReplayerSettings.DefaultSettings
+                                   ?? new ReplayerSettings();
+            var changed = false;
+
+            if (replayerSettings.AutoHideUI != settings.NoHud)
+            {
+                replayerSettings.AutoHideUI = settings.NoHud;
+                changed = true;
+            }
+
+            changed |= SetBoolean(replayerSettings.LoadPlayerEnvironment, settings.LoadPlayerEnvironment, value => replayerSettings.LoadPlayerEnvironment = value);
+            changed |= SetBoolean(replayerSettings.LoadPlayerJumpDistance, settings.LoadPlayerJumpDistance, value => replayerSettings.LoadPlayerJumpDistance = value);
+            changed |= SetBoolean(replayerSettings.IgnoreModifiers, settings.IgnoreModifiers, value => replayerSettings.IgnoreModifiers = value);
+            changed |= SetBoolean(replayerSettings.ShowHead, settings.ShowHead, value => replayerSettings.ShowHead = value);
+            changed |= SetBoolean(replayerSettings.ShowLeftSaber, settings.ShowLeftSaber, value => replayerSettings.ShowLeftSaber = value);
+            changed |= SetBoolean(replayerSettings.ShowRightSaber, settings.ShowRightSaber, value => replayerSettings.ShowRightSaber = value);
+            changed |= SetBoolean(replayerSettings.ShowWatermark, settings.ShowWatermark, value => replayerSettings.ShowWatermark = value);
+            changed |= SetBoolean(replayerSettings.ShowTimelineMisses, settings.ShowTimelineMisses, value => replayerSettings.ShowTimelineMisses = value);
+            changed |= SetBoolean(replayerSettings.ShowTimelineBombs, settings.ShowTimelineBombs, value => replayerSettings.ShowTimelineBombs = value);
+            changed |= SetBoolean(replayerSettings.ShowTimelinePauses, settings.ShowTimelinePauses, value => replayerSettings.ShowTimelinePauses = value);
+
+            if (!ReferenceEquals(GetPluginConfigReplayerSettings(), replayerSettings))
+            {
+                SetPluginConfigReplayerSettings(replayerSettings);
+                changed = true;
+            }
+
+            if (changed)
+            {
+                NotifyPluginConfigReplayerSettingsChanged();
+            }
+
+            return new GamePresentationSettingsApplyResult(changed);
+        }
+    }
+
+    private sealed class BeatSaberPlayerSpecificSettingsApplier : IGamePresentationSettingsSectionApplier
+    {
+        public string Name => "Beat Saber player settings";
+
+        public GamePresentationSettingsApplyResult Apply(GamePresentationSettings settings)
+        {
+            var playerDataModel = ResolvePlayerDataModel()
+                                  ?? throw new InvalidOperationException("Beat Saber player data model is not available yet.");
+            var playerData = playerDataModel.playerData
+                             ?? throw new InvalidOperationException("Beat Saber player data is not loaded yet.");
+            var current = playerData.playerSpecificSettings
+                          ?? throw new InvalidOperationException("Beat Saber player-specific settings are not loaded yet.");
+
+            var next = current.CopyWith(
+                null,
+                null,
+                null,
+                settings.SfxVolume,
+                settings.ReduceDebris,
+                settings.NoTextsAndHuds,
+                settings.NoFailEffects,
+                settings.AdvancedHud,
+                null,
+                settings.SaberTrailIntensity,
+                ParseEnum(settings.NoteJumpDurationType, NoteJumpDurationTypeSettings.Dynamic),
+                settings.NoteJumpFixedDuration,
+                settings.NoteJumpStartBeatOffset,
+                settings.HideNoteSpawnEffect,
+                settings.AdaptiveSfx,
+                settings.ArcsHapticFeedback,
+                ParseEnum(settings.ArcVisibility, ArcVisibilityType.Low),
+                ParseEnum(settings.EnvironmentEffectsFilterDefaultPreset, EnvironmentEffectsFilterPreset.AllEffects),
+                ParseEnum(settings.EnvironmentEffectsFilterExpertPlusPreset, EnvironmentEffectsFilterPreset.AllEffects),
+                settings.HeadsetHapticIntensity);
+
+            var changed = false;
+            if (!current.AreValuesEqual(next))
+            {
+                playerData.SetPlayerSpecificSettings(next);
+                changed = true;
+            }
+
+            changed |= ApplyColorScheme(playerData, settings);
+            if (changed)
+            {
+                SavePlayerData(playerDataModel);
+            }
+
+            return new GamePresentationSettingsApplyResult(changed);
+        }
+
+        private static bool ApplyColorScheme(PlayerData playerData, GamePresentationSettings settings)
+        {
+            var colorSchemesSettings = playerData.colorSchemesSettings
+                                       ?? throw new InvalidOperationException("Beat Saber color settings are not loaded yet.");
+            var selectedColorScheme = colorSchemesSettings.GetSelectedColorScheme()
+                                      ?? colorSchemesSettings.GetColorSchemeForId("User0")
+                                      ?? throw new InvalidOperationException("Beat Saber user color scheme is not available yet.");
+            var colorSchemeId = GetStringProperty(selectedColorScheme, "colorSchemeId");
+            colorSchemeId = string.IsNullOrWhiteSpace(colorSchemeId)
+                ? "User0"
+                : colorSchemeId;
+
+            var nextColorScheme = CreateColorScheme(
+                selectedColorScheme.GetType(),
+                colorSchemeId,
+                settings);
+
+            var changed =
+                !colorSchemesSettings.overrideDefaultColors ||
+                !string.Equals(GetEnumPropertyName(colorSchemesSettings, "colorOverrideType"), "All", StringComparison.Ordinal) ||
+                !string.Equals(colorSchemesSettings.selectedColorSchemeId, colorSchemeId, StringComparison.Ordinal) ||
+                !ColorSchemesEqual(selectedColorScheme, nextColorScheme);
+
+            if (!changed)
+            {
+                return false;
+            }
+
+            colorSchemesSettings
+                .GetType()
+                .GetMethod("SetColorSchemeForId", BindingFlags.Public | BindingFlags.Instance)
+                ?.Invoke(colorSchemesSettings, new[] { nextColorScheme });
+            colorSchemesSettings.selectedColorSchemeId = colorSchemeId;
+            colorSchemesSettings.overrideDefaultColors = true;
+            SetEnumPropertyByName(colorSchemesSettings, "colorOverrideType", "All");
+            return true;
+        }
     }
 
     private static void ApplyRuntimeAudioSettings(GamePresentationSettings settings)
@@ -223,6 +308,105 @@ internal static class GamePresentationSettingsApplier
         }
 
         return fallback;
+    }
+
+    private static Color ParseColor(string? value)
+    {
+        var trimmed = value?.Trim().TrimStart('#') ?? "";
+        if (trimmed.Length != 6 ||
+            !byte.TryParse(trimmed.Substring(0, 2), System.Globalization.NumberStyles.HexNumber, null, out var red) ||
+            !byte.TryParse(trimmed.Substring(2, 2), System.Globalization.NumberStyles.HexNumber, null, out var green) ||
+            !byte.TryParse(trimmed.Substring(4, 2), System.Globalization.NumberStyles.HexNumber, null, out var blue))
+        {
+            return Color.white;
+        }
+
+        return new Color(red / 255f, green / 255f, blue / 255f, 1f);
+    }
+
+    private static object CreateColorScheme(Type colorSchemeType, string colorSchemeId, GamePresentationSettings settings)
+    {
+        return colorSchemeType
+            .GetConstructor(new[]
+            {
+                typeof(string),
+                typeof(bool),
+                typeof(Color),
+                typeof(Color),
+                typeof(Color),
+                typeof(bool),
+                typeof(Color),
+                typeof(Color),
+                typeof(Color),
+                typeof(Color)
+            })
+            ?.Invoke(new object[]
+            {
+                colorSchemeId,
+                true,
+                ParseColor(settings.LeftSaberColor),
+                ParseColor(settings.RightSaberColor),
+                ParseColor(settings.WallColor),
+                true,
+                ParseColor(settings.LightColorA),
+                ParseColor(settings.LightColorB),
+                ParseColor(settings.BoostLightColorA),
+                ParseColor(settings.BoostLightColorB)
+            })
+            ?? throw new InvalidOperationException("Beat Saber color scheme constructor is not available.");
+    }
+
+    private static bool ColorSchemesEqual(object left, object right)
+    {
+        return ColorsEqual(GetColorProperty(left, "saberAColor"), GetColorProperty(right, "saberAColor")) &&
+               ColorsEqual(GetColorProperty(left, "saberBColor"), GetColorProperty(right, "saberBColor")) &&
+               ColorsEqual(GetColorProperty(left, "obstaclesColor"), GetColorProperty(right, "obstaclesColor")) &&
+               ColorsEqual(GetColorProperty(left, "environmentColor0"), GetColorProperty(right, "environmentColor0")) &&
+               ColorsEqual(GetColorProperty(left, "environmentColor1"), GetColorProperty(right, "environmentColor1")) &&
+               ColorsEqual(GetColorProperty(left, "environmentColor0Boost"), GetColorProperty(right, "environmentColor0Boost")) &&
+               ColorsEqual(GetColorProperty(left, "environmentColor1Boost"), GetColorProperty(right, "environmentColor1Boost"));
+    }
+
+    private static bool ColorsEqual(Color left, Color right)
+    {
+        const float tolerance = 0.0001f;
+        return Math.Abs(left.r - right.r) < tolerance &&
+               Math.Abs(left.g - right.g) < tolerance &&
+               Math.Abs(left.b - right.b) < tolerance &&
+               Math.Abs(left.a - right.a) < tolerance;
+    }
+
+    private static string GetStringProperty(object target, string propertyName)
+    {
+        return target.GetType()
+                   .GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+                   ?.GetValue(target, null) as string ??
+               "";
+    }
+
+    private static Color GetColorProperty(object target, string propertyName)
+    {
+        var value = target.GetType()
+            .GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+            ?.GetValue(target, null);
+        return value is Color color ? color : Color.clear;
+    }
+
+    private static string GetEnumPropertyName(object target, string propertyName)
+    {
+        return target.GetType()
+                   .GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+                   ?.GetValue(target, null)
+                   ?.ToString() ??
+               "";
+    }
+
+    private static void SetEnumPropertyByName(object target, string propertyName, string valueName)
+    {
+        var property = target.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+                       ?? throw new InvalidOperationException("Beat Saber color override property is not available.");
+        var value = Enum.Parse(property.PropertyType, valueName, ignoreCase: true);
+        property.SetValue(target, value, null);
     }
 
     private static Type? FindType(string fullName)

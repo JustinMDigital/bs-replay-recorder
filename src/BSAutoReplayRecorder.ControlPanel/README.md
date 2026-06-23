@@ -1,14 +1,14 @@
 # Replay Recorder Control Panel
 
-The control panel is the browser dashboard for the recorder. Most users should start it with the repo launchers instead of running this project directly.
+The control panel is the dashboard loaded by `Replay Recorder.exe`. Most users should start the desktop app instead of running this project directly.
 
 Start the full stack:
 
 ```bat
-start.bat
+Replay Recorder.exe
 ```
 
-Then open:
+For debugging, the same local UI is also served at:
 
 ```text
 http://127.0.0.1:5770
@@ -20,7 +20,7 @@ The control panel owns setup, queue management, worker launch, recording setting
 
 `Run` is where you record replays.
 
-- Import BeatLeader `.bsor` files, ScoreSaber `.dat` files, or ScoreSaber replay links.
+- Import BeatLeader `.bsor` files, ScoreSaber `.dat` files, BeatLeader score/replay links, or ScoreSaber replay links.
 - Search and filter the queue.
 - Edit queue item names and metadata.
 - Move, remove, retry, or open completed recordings.
@@ -58,7 +58,7 @@ The control panel owns setup, queue management, worker launch, recording setting
 
 ## First Run From The Panel
 
-After `install.bat` finishes:
+After `Support\install.bat` finishes:
 
 1. Open the dashboard.
 2. Go to `Files` and confirm the workspace and recording paths.
@@ -66,7 +66,7 @@ After `install.bat` finishes:
 4. Save settings if the page shows unsaved changes.
 5. Go to `Diagnostics` and press `Launch + Verify`.
 6. Return to `Run`.
-7. Import `.bsor` or `.dat` files, or paste ScoreSaber replay links.
+7. Import `.bsor` or `.dat` files, or paste BeatLeader score/replay links or ScoreSaber replay links.
 8. Wait for maps, workers, baseline, audio, disk, and sync to look ready.
 9. Press `Start run`.
 
@@ -90,13 +90,19 @@ Do not set the managed instance root to your everyday Beat Saber install. Use a 
 
 ## Maps And Shared Songs
 
-When replay files or ScoreSaber links are imported, the panel checks whether the matching map exists in the shared song folders. If a map is missing, the panel can:
+When replay files, BeatLeader links, or ScoreSaber links are imported, the panel checks whether the matching map exists in the shared song folders. If a map is missing, the panel can:
 
 - find an already installed matching map;
 - download the map by hash from BeatSaver;
 - accept a manually uploaded song zip for that queue item.
 
 Shared songs and shared custom content are linked into the managed workers so every worker sees the same replay content.
+
+## Mod Integration Framework
+
+Managed workers should connect to third-party mod state through the control panel's mod integration catalog, not by editing random files in each instance. The catalog currently defines shared-folder integrations for `CustomLevels`, `CustomWIPLevels`, `CustomSabers`, `CustomNotes`, `CustomPlatforms`, `CustomAvatars`, `CustomWalls`, and `CustomBombs`.
+
+Future settings integrations should add a named adapter in the same catalog after the target mod's on-disk format is confirmed. Examples are Chroma worker-local settings or a Custom Sabers picker selection. Those adapters should only read or write files inside managed worker folders unless true profile redirection exists.
 
 ## Readiness Checks
 
@@ -116,7 +122,7 @@ If the `Start run` button fails, the message usually points to one of these read
 
 Use `Stop` to stop the current run, ask launched Beat Saber workers to exit the current replay, and leave the stack open.
 
-Use `Quit` to stop the run, stop the recorder stack, and close tracked Beat Saber workers. This is the same cleanup path as:
+Close `Replay Recorder.exe` to stop the run, stop the recorder stack, and close tracked Beat Saber workers. This is the same cleanup path as:
 
 ```powershell
 scripts\launcher\Stop-ReplayRecorder.ps1 -StopGames

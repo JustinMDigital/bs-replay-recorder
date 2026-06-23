@@ -46,6 +46,20 @@ public sealed class GamePresentationSettings
 
     public float SaberTrailIntensity { get; set; }
 
+    public string LeftSaberColor { get; set; } = "#a82020";
+
+    public string RightSaberColor { get; set; } = "#2064a8";
+
+    public string LightColorA { get; set; } = "#ff3030";
+
+    public string LightColorB { get; set; } = "#c03030";
+
+    public string BoostLightColorA { get; set; } = "#ff3030";
+
+    public string BoostLightColorB { get; set; } = "#c03030";
+
+    public string WallColor { get; set; } = "#3098ff";
+
     public string NoteJumpDurationType { get; set; } = NoteJumpDurationTypeDynamic;
 
     public float NoteJumpFixedDuration { get; set; } = 0.2f;
@@ -70,6 +84,13 @@ public sealed class GamePresentationSettings
     {
         SfxVolume = ClampFinite(SfxVolume, 0f, 1f, 0.3f);
         SaberTrailIntensity = ClampFinite(SaberTrailIntensity, 0f, 1f, 0f);
+        LeftSaberColor = NormalizeHexColor(LeftSaberColor, "#a82020");
+        RightSaberColor = NormalizeHexColor(RightSaberColor, "#2064a8");
+        LightColorA = NormalizeHexColor(LightColorA, "#ff3030");
+        LightColorB = NormalizeHexColor(LightColorB, "#c03030");
+        BoostLightColorA = NormalizeHexColor(BoostLightColorA, LightColorA);
+        BoostLightColorB = NormalizeHexColor(BoostLightColorB, LightColorB);
+        WallColor = NormalizeHexColor(WallColor, "#3098ff");
         NoteJumpDurationType = NormalizeChoice(
             NoteJumpDurationType,
             NoteJumpDurationTypeDynamic,
@@ -112,6 +133,40 @@ public sealed class GamePresentationSettings
         }
 
         return value > maximum ? maximum : value;
+    }
+
+    private static string NormalizeHexColor(string? value, string fallback)
+    {
+        var trimmed = value?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return fallback;
+        }
+
+        if (!trimmed.StartsWith("#", System.StringComparison.Ordinal))
+        {
+            trimmed = "#" + trimmed;
+        }
+
+        if (trimmed.Length != 7)
+        {
+            return fallback;
+        }
+
+        for (var index = 1; index < trimmed.Length; index++)
+        {
+            var character = trimmed[index];
+            var isHex =
+                character >= '0' && character <= '9' ||
+                character >= 'a' && character <= 'f' ||
+                character >= 'A' && character <= 'F';
+            if (!isHex)
+            {
+                return fallback;
+            }
+        }
+
+        return trimmed.ToLowerInvariant();
     }
 
     private static string NormalizeChoice(string? value, string fallback, params string[] allowedValues)

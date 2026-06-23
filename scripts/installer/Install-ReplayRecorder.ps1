@@ -597,6 +597,10 @@ $PluginOutput = Join-Path $RepoRoot "src\BSAutoReplayRecorder.Plugin\bin\Debug\n
 $StartScript = Join-Path $RepoRoot "scripts\launcher\Start-ReplayRecorder.ps1"
 $StopScript = Join-Path $RepoRoot "scripts\launcher\Stop-ReplayRecorder.ps1"
 $CopyExistingSongsSelected = [bool]$CopyExistingSongs
+$RuntimeRoot = Join-Path $RepoRoot "runtime"
+$HasPublishedRuntime = (Test-Path -LiteralPath (Join-Path $RuntimeRoot "control-panel\BSAutoReplayRecorder.ControlPanel.exe") -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $RuntimeRoot "recorder-host\BSAutoReplayRecorder.RecorderHost.exe") -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $RuntimeRoot "desktop-host\BSAutoReplayRecorder.DesktopHost.exe") -PathType Leaf)
 
 function Write-Section {
     param([string]$Message)
@@ -608,7 +612,7 @@ function Assert-Command {
     param([string]$Name)
 
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        throw "Required command '$Name' was not found. Install it and run install.bat again."
+        throw "Required command '$Name' was not found. Install it and run Support\install.bat again."
     }
 }
 
@@ -1811,7 +1815,7 @@ try {
         }
 
         Write-Step "Dashboard: $runningControlPanelUrl"
-        Write-Step "Re-run install.bat with -Force if you need to reinstall while the stack is running."
+        Write-Step "Re-run Support\install.bat with -Force if you need to reinstall while the stack is running."
         Wait-BeforeExit
         exit 0
     }
@@ -1941,16 +1945,25 @@ try {
 
     Write-Section "Build"
     Set-Location $RepoRoot
-    & dotnet build $ControlPanelProject --nologo
-    if ($LASTEXITCODE -ne 0) { throw "Control panel build failed." }
+    if ($HasPublishedRuntime) {
+        Write-Step "Using published desktop runtime from $RuntimeRoot."
+    }
+    else {
+        & dotnet build $ControlPanelProject --nologo
+        if ($LASTEXITCODE -ne 0) { throw "Control panel build failed." }
 
-    & dotnet build $RecorderHostProject --nologo
-    if ($LASTEXITCODE -ne 0) { throw "Recorder host build failed." }
+        & dotnet build $RecorderHostProject --nologo
+        if ($LASTEXITCODE -ne 0) { throw "Recorder host build failed." }
 
-    & dotnet build $ProcessLoopbackProject -c Release --nologo
-    if ($LASTEXITCODE -ne 0) { throw "ProcessLoopback helper build failed." }
+        & dotnet build $ProcessLoopbackProject -c Release --nologo
+        if ($LASTEXITCODE -ne 0) { throw "ProcessLoopback helper build failed." }
+    }
 
     if (-not $SkipPluginDeploy) {
+        if (-not (Test-Path -LiteralPath $PluginProject -PathType Leaf)) {
+            throw "Worker plugin source was not found at $PluginProject. Reinstall the desktop package or run from a source checkout."
+        }
+
         & dotnet build $PluginProject --nologo -p:BeatSaberDir="$($instanceDirectories[0])"
         if ($LASTEXITCODE -ne 0) { throw "Plugin build failed." }
     }
@@ -1974,7 +1987,7 @@ try {
 
     if ($NoStart) {
         Write-Section "Done"
-        Write-Step "Install state is ready. Start later with start.bat."
+        Write-Step "Install state is ready. Start later with Replay Recorder.exe."
         exit 0
     }
 

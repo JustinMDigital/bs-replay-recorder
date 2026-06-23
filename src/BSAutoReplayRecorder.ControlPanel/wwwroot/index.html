@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Replay Recorder Control Panel</title>
   <link rel="icon" href="/assets/logo.png">
-  <link rel="stylesheet" href="/styles.css?v=provider-pills">
+  <link rel="stylesheet" href="/styles.css?v=timeline-rail-polish-1">
 </head>
 <body>
   <main class="shell dashboardShell">
-    <header class="appHeader commandBar">
+    <header class="appHeader commandBar guidedHeader">
       <div class="brandCluster">
         <img class="brandMark" src="/assets/logo.png" alt="" aria-hidden="true">
         <div class="titleBlock">
@@ -21,166 +21,281 @@
         </div>
       </div>
 
+      <div class="headerControls">
+        <nav class="viewTabs" aria-label="Control panel views">
+          <button class="viewTab active" type="button" data-view-target="run">Run</button>
+          <button class="viewTab" type="button" data-view-target="collections">Collections</button>
+          <button class="viewTab" type="button" data-view-target="settings">Setup</button>
+          <button class="viewTab" type="button" data-view-target="diagnostics">Diagnostics</button>
+        </nav>
+      </div>
+
       <div id="captureProfile" class="captureProfile">Loading capture profile</div>
 
       <label class="queueSearch commandSearch" for="queueSearchInput">
         <span class="searchIcon" aria-hidden="true">&#128269;&#65038;</span>
-        <input id="queueSearchInput" type="search" placeholder="Queue search/filter" aria-label="Search queue" autocomplete="off">
+        <input id="queueSearchInput" type="search" placeholder="Search queue" aria-label="Search queue" autocomplete="off">
       </label>
 
-      <div class="headerControls">
-        <nav class="viewTabs" aria-label="Control panel views">
-          <button class="viewTab active" type="button" data-view-target="run">Run</button>
-          <button class="viewTab" type="button" data-view-target="settings">Settings</button>
-          <button class="viewTab" type="button" data-view-target="diagnostics">Diagnostics</button>
-          <a class="viewTab" href="/file-settings.html">Files</a>
-        </nav>
+      <div class="headerRunControls">
         <div class="toolbar">
-          <button id="addReplays" class="secondaryButton" type="button">Import replays</button>
           <input id="queueReplayFiles" class="hiddenFileInput" type="file" multiple accept=".bsor,.dat">
-          <input id="replayReferenceInput" class="referenceInput" type="url" placeholder="Paste replay link" aria-label="Replay URL">
-          <button id="importReplayReference" class="secondaryButton" type="button">Import link</button>
-          <button id="launchGames" class="secondaryButton" type="button">Launch all</button>
+          <button id="launchGames" class="secondaryButton" type="button">Launch</button>
+          <button id="closeGamesAfterQueue" class="secondaryButton" type="button">Close after queue</button>
           <button id="startRun" class="primaryButton" type="button">Start run</button>
-          <button id="stopRun" class="secondaryButton" type="button">Stop</button>
-          <button id="quitApp" class="dangerButton" type="button">Quit</button>
+          <button id="stopRun" class="secondaryButton" type="button" hidden>Stop</button>
         </div>
       </div>
     </header>
 
-    <section class="statusStrip" aria-label="Run readiness">
-      <article class="statusChip">
-        <span id="queueChipDot" class="statusDot good" aria-hidden="true"></span>
-        <span class="chipLabel">Queue</span>
-        <strong><span id="pendingCount">0</span> pending</strong>
-        <span id="pendingSub">0 total</span>
-      </article>
-      <article class="statusChip">
-        <span id="activeChipDot" class="statusDot good" aria-hidden="true"></span>
-        <span class="chipLabel">Active</span>
-        <strong><span id="recordingCount">0</span> recording</strong>
-        <span id="activeSub">0 workers</span>
-      </article>
-      <article class="statusChip">
-        <span id="completeChipDot" class="statusDot good" aria-hidden="true"></span>
-        <span class="chipLabel">Complete</span>
-        <strong><span id="completedCount">0</span> done</strong>
-        <span id="completeSub">0% done</span>
-      </article>
-      <article class="statusChip">
-        <span id="failedChipDot" class="statusDot good" aria-hidden="true"></span>
-        <span class="chipLabel">Issues</span>
-        <strong><span id="failedCount">0</span> failed</strong>
-        <span id="failedSub">clear</span>
-      </article>
-      <article class="statusChip">
-        <span id="workerChipDot" class="statusDot warn" aria-hidden="true"></span>
-        <span class="chipLabel">Workers</span>
-        <strong id="workerCount">0/0</strong>
-        <span id="workerSub">configured</span>
-      </article>
-      <article class="statusChip">
-        <span id="mapsChipDot" class="statusDot warn" aria-hidden="true"></span>
-        <span class="chipLabel">Maps</span>
-        <strong id="mapsChip">0/0</strong>
-        <span id="mapsChipSub">unchecked</span>
-      </article>
-      <article class="statusChip">
-        <span id="syncChipDot" class="statusDot good" aria-hidden="true"></span>
-        <span class="chipLabel">Sync</span>
-        <strong id="syncChip">Waiting</strong>
-        <span id="syncChipSub">marker correction</span>
-      </article>
-      <article class="statusChip">
-        <span id="baselineChipDot" class="statusDot warn" aria-hidden="true"></span>
-        <span class="chipLabel">Baseline</span>
-        <strong id="baselineChip">Unchecked</strong>
-        <span id="baselineChipSub">instance check</span>
-      </article>
-      <article class="statusChip">
-        <span id="audioChipDot" class="statusDot good" aria-hidden="true"></span>
-        <span class="chipLabel">Audio</span>
-        <strong id="audioChip">Process Loopback</strong>
-        <span id="audioChipSub">active when workers connect</span>
-      </article>
-      <article class="statusChip">
-        <span id="diskChipDot" class="statusDot warn" aria-hidden="true"></span>
-        <span class="chipLabel">Disk</span>
-        <strong id="diskChip">Unchecked</strong>
-        <span id="diskChipSub">recording folder</span>
-      </article>
-    </section>
-
     <section class="viewPanel runView active" data-view-panel="run">
-      <div class="operationsGrid">
+      <div class="guidedRunLayout">
         <section class="panel queuePanel runPlanPanel">
-          <div class="panelHeader">
+          <div class="panelHeader guidedRunPanelHeader">
             <div class="panelTitleGroup">
-              <h2>Replay Queue</h2>
+              <h2>Run Plan</h2>
               <span id="queueSummary" class="muted"></span>
             </div>
             <div class="panelActions">
+              <button class="textButton" type="button" data-settings-target="gameSettings">Presentation</button>
+              <button id="exportQueue" class="textButton" type="button" hidden>Export list</button>
+              <button id="requeueAll" class="textButton" type="button" hidden>Requeue All</button>
               <button id="clearQueue" class="textButton dangerText" type="button" hidden>Clear queue</button>
             </div>
           </div>
           <div id="queueRows" class="queueList runPlanHost" aria-label="Replay queue"></div>
+          <div id="queueDetails" class="queueDetails inlineReplayDetails" aria-live="polite" hidden></div>
         </section>
 
+        <aside class="guidedAssistant" aria-label="Guided run assistant">
+          <section class="panel assistantCard nextActionCard">
+            <div class="assistantHeader">
+              <div>
+                <span class="assistantKicker">Next useful action</span>
+                <h2 id="guidedActionTitle">Loading</h2>
+              </div>
+              <span id="guidedActionTone" class="assistantTone">Ready</span>
+            </div>
+            <p id="guidedActionText">Checking queue and worker state.</p>
+            <div id="guidedActionButtons" class="assistantActions"></div>
+          </section>
+
+          <details class="panel assistantSection importAssistant" open>
+            <summary>
+              <span>Import and save</span>
+              <small>Replays, links, collections</small>
+            </summary>
+            <div class="assistantBody">
+              <div class="importStaging">
+                <label class="fileDrop">
+                  <input id="replayFiles" type="file" multiple accept=".bsor,.dat">
+                  <strong>Drop replay files</strong>
+                  <span id="fileSelection">No files selected</span>
+                </label>
+                <button id="uploadReplays" class="secondaryButton fullWidth" type="button">Import selected</button>
+              </div>
+              <label class="assistantField" for="replayReferenceInput">
+                <span>Replay link</span>
+                <input id="replayReferenceInput" class="referenceInput" type="url" placeholder="BeatLeader score or replay link" aria-label="BeatLeader or ScoreSaber replay URL">
+              </label>
+              <button id="importReplayReference" class="secondaryButton fullWidth" type="button">Import link</button>
+              <div class="collectionToolbar" aria-label="Saved queue collections">
+                <input id="collectionNameInput" class="collectionNameInput" type="text" placeholder="Collection name" aria-label="Collection name" autocomplete="off">
+                <button id="saveCollection" class="textButton" type="button">Save collection</button>
+                <select id="collectionSelect" class="collectionSelect" data-collection-select aria-label="Saved collections"></select>
+                <label class="collectionOverwrite">
+                  <input id="collectionOverwriteRecorded" type="checkbox">
+                  <span>Overwrite recorded</span>
+                </label>
+                <button id="loadCollection" class="textButton" type="button">Load</button>
+                <button id="exportCollectionCards" class="textButton" type="button">Export cards</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="panel assistantSection readinessAssistant">
+            <summary>
+              <span>Readiness</span>
+              <small id="readinessSummary">Checking</small>
+            </summary>
+            <section class="statusStrip" aria-label="Run readiness">
+              <article class="statusChip">
+                <span id="queueChipDot" class="statusDot good" aria-hidden="true"></span>
+                <span class="chipLabel">Queue</span>
+                <strong><span id="pendingCount">0</span> pending</strong>
+                <span id="pendingSub">0 total</span>
+              </article>
+              <article class="statusChip">
+                <span id="activeChipDot" class="statusDot good" aria-hidden="true"></span>
+                <span class="chipLabel">Active</span>
+                <strong><span id="recordingCount">0</span> recording</strong>
+                <span id="activeSub">0 workers</span>
+              </article>
+              <article class="statusChip">
+                <span id="completeChipDot" class="statusDot good" aria-hidden="true"></span>
+                <span class="chipLabel">Complete</span>
+                <strong><span id="completedCount">0</span> done</strong>
+                <span id="completeSub">0% done</span>
+              </article>
+              <article class="statusChip">
+                <span id="failedChipDot" class="statusDot good" aria-hidden="true"></span>
+                <span class="chipLabel">Issues</span>
+                <strong><span id="failedCount">0</span> failed</strong>
+                <span id="failedSub">clear</span>
+              </article>
+              <article class="statusChip">
+                <span id="workerChipDot" class="statusDot warn" aria-hidden="true"></span>
+                <span class="chipLabel">Workers</span>
+                <strong id="workerCount">0/0</strong>
+                <span id="workerSub">configured</span>
+              </article>
+              <article class="statusChip">
+                <span id="mapsChipDot" class="statusDot warn" aria-hidden="true"></span>
+                <span class="chipLabel">Maps</span>
+                <strong id="mapsChip">0/0</strong>
+                <span id="mapsChipSub">unchecked</span>
+              </article>
+              <article class="statusChip">
+                <span id="syncChipDot" class="statusDot good" aria-hidden="true"></span>
+                <span class="chipLabel">Sync</span>
+                <strong id="syncChip">Waiting</strong>
+                <span id="syncChipSub">marker correction</span>
+              </article>
+              <article class="statusChip">
+                <span id="baselineChipDot" class="statusDot warn" aria-hidden="true"></span>
+                <span class="chipLabel">Baseline</span>
+                <strong id="baselineChip">Unchecked</strong>
+                <span id="baselineChipSub">instance check</span>
+              </article>
+              <article class="statusChip">
+                <span id="audioChipDot" class="statusDot good" aria-hidden="true"></span>
+                <span class="chipLabel">Audio</span>
+                <strong id="audioChip">Process Loopback</strong>
+                <span id="audioChipSub">active when workers connect</span>
+              </article>
+              <article class="statusChip">
+                <span id="diskChipDot" class="statusDot warn" aria-hidden="true"></span>
+                <span class="chipLabel">Disk</span>
+                <strong id="diskChip">Unchecked</strong>
+                <span id="diskChipSub">recording folder</span>
+              </article>
+            </section>
+          </details>
+
+          <details class="panel assistantSection workersAssistant">
+            <summary>
+              <span>Workers</span>
+              <small id="lastUpdated">Waiting for state</small>
+            </summary>
+            <div class="assistantBody">
+              <div class="instanceCountControl" aria-label="Enabled instance count">
+                <button id="decreaseActiveInstances" class="iconButton countButton" type="button" aria-label="Disable the highest enabled instance">-</button>
+                <span id="activeInstanceCount" class="instanceCountText">0/0 enabled</span>
+                <button id="increaseActiveInstances" class="iconButton countButton" type="button" aria-label="Enable the next managed instance">+</button>
+              </div>
+              <div id="instances" class="workersList instanceLanes"></div>
+            </div>
+          </details>
+        </aside>
+      </div>
+
+      <section class="panel eventLogPanel runAttentionPanel">
+        <div class="attentionSummary">
+          <div>
+            <h2>Attention</h2>
+            <span><strong id="attentionCount">0</strong> items that may need a look</span>
+          </div>
+          <button class="textButton" type="button" data-view-target="diagnostics">View diagnostics</button>
+        </div>
+        <div id="attentionLog" class="attentionLog compactAttentionLog"></div>
+      </section>
+    </section>
+
+    <div class="legacyRunRegions" hidden aria-hidden="true">
+      <div class="operationsGrid">
         <aside class="panel controlsDrawer">
           <div class="drawerHeader">
             <h2>Controls</h2>
           </div>
-          <div id="queueDetails" class="queueDetails selectedReplayDrawer" aria-live="polite"></div>
-          <div class="drawerControlGrid" aria-label="Configuration shortcuts">
-            <button class="controlShortcut wide" type="button" data-settings-target="gameSettings">
-              <strong>Game Presentation</strong>
-              <span>HUD, sabers, player and environment toggles.</span>
-            </button>
+        </aside>
+        <section class="panel instancesPanel">
+        </section>
+      </div>
+    </div>
+
+    <section class="viewPanel collectionsView" data-view-panel="collections">
+      <div class="collectionsShell">
+        <aside class="panel collectionLibraryPanel">
+          <div class="collectionPageHeader">
+            <div>
+              <h2>Collections</h2>
+              <span id="collectionsPageSummary">Saved queues</span>
+            </div>
+            <button id="collectionPageAddReplays" class="iconButton" type="button" aria-label="Import replay files">+</button>
           </div>
-          <div class="importStaging" aria-hidden="true">
-            <label class="fileDrop">
-              <input id="replayFiles" type="file" multiple accept=".bsor,.dat" tabindex="-1">
-              <strong>Drop replay files</strong>
-              <span id="fileSelection">No files selected</span>
+          <div id="collectionsList" class="collectionsList" aria-label="Saved collections"></div>
+        </aside>
+
+        <section class="panel collectionPreviewPanel">
+          <div class="collectionPreviewHero">
+            <div>
+              <span class="assistantKicker">Selected collection</span>
+              <h2 id="collectionPreviewTitle">No collection selected</h2>
+              <p id="collectionPreviewMeta">Save the current queue or load a collection to begin.</p>
+            </div>
+            <div id="collectionPreviewStats" class="collectionPreviewStats"></div>
+          </div>
+          <div id="collectionPreviewTimeline" class="collectionPreviewTimeline"></div>
+          <div id="collectionPreviewItems" class="collectionPreviewItems"></div>
+        </section>
+
+        <aside class="panel collectionActionPanel">
+          <div class="collectionActionStack">
+            <label class="assistantField" for="collectionPageNameInput">
+              <span>Collection name</span>
+              <input id="collectionPageNameInput" class="collectionNameInput" type="text" placeholder="Collection name" autocomplete="off">
             </label>
-            <button id="uploadReplays" class="secondaryButton fullWidth" type="button" tabindex="-1">Import Replays</button>
+            <button id="collectionPageCreate" class="primaryButton fullWidth" type="button">Create collection</button>
+            <button id="collectionPageSave" class="secondaryButton fullWidth" type="button">Save current queue as collection</button>
+            <label class="assistantField" for="collectionPageSelect">
+              <span>Saved collection</span>
+              <select id="collectionPageSelect" class="collectionSelect" data-collection-select aria-label="Saved collection"></select>
+            </label>
+            <label class="collectionOverwrite collectionPageOverwrite">
+              <input id="collectionPageOverwriteRecorded" type="checkbox">
+              <span>Overwrite recorded outputs when loading</span>
+            </label>
+            <button id="collectionPageLoad" class="primaryButton fullWidth" type="button">Load collection</button>
+            <button id="collectionPageExportCards" class="secondaryButton fullWidth" type="button">Export map cards</button>
+            <button id="collectionPageDelete" class="textButton dangerText fullWidth" type="button">Delete collection</button>
           </div>
         </aside>
       </div>
 
-      <div class="runBottomGrid">
-        <section class="panel instancesPanel">
-          <div class="panelHeader">
-            <div class="panelTitleGroup">
-              <h2>Managed Beat Saber Instances</h2>
-              <span id="lastUpdated" class="muted">Waiting for state</span>
-            </div>
-            <div class="instanceCountControl" aria-label="Enabled instance count">
-              <button id="decreaseActiveInstances" class="iconButton countButton" type="button" aria-label="Disable the highest enabled instance">-</button>
-              <span id="activeInstanceCount" class="instanceCountText">0/0 enabled</span>
-              <button id="increaseActiveInstances" class="iconButton countButton" type="button" aria-label="Enable the next managed instance">+</button>
-            </div>
-          </div>
-          <div id="instances" class="workersList instanceLanes"></div>
-        </section>
-
-        <section class="panel eventLogPanel">
-          <div class="panelHeader">
-            <div class="panelTitleGroup">
-              <h2>Attention / Event Log</h2>
-              <span class="muted">Maps, sync, recording lifecycle</span>
-            </div>
-          </div>
-          <div id="attentionLog" class="attentionLog"></div>
-        </section>
-      </div>
+      <section class="panel collectionImportDock">
+        <div>
+          <h2>Add replays</h2>
+          <span>Drop replay files into the selected collection. Loading still skips already recorded maps unless overwrite is on.</span>
+        </div>
+        <label id="collectionDropTarget" class="collectionDropTarget">
+          <input id="collectionReplayFiles" class="hiddenFileInput" type="file" multiple accept=".bsor,.dat">
+          <strong>Drop into collection</strong>
+          <span id="collectionFileSelection">Create or select a collection first</span>
+        </label>
+        <button id="collectionPageImportFiles" class="secondaryButton" type="button">Choose .bsor</button>
+        <label class="assistantField collectionLinkField" for="collectionPageReplayReferenceInput">
+          <span>Replay link</span>
+          <input id="collectionPageReplayReferenceInput" type="url" placeholder="BeatLeader score or replay link" aria-label="Replay link for collection import">
+        </label>
+        <button id="collectionPageImportLink" class="primaryButton" type="button">Add link to collection</button>
+      </section>
     </section>
 
     <section class="viewPanel settingsView" data-view-panel="settings">
       <div class="settingsPageHeader">
         <div>
-          <h2>Settings</h2>
-          <span>Setup, recording, launch, game presentation, and run guards.</span>
+          <h2>Setup and Settings</h2>
+          <span>Setup assistant, recording profile, launch, game presentation, and run guards.</span>
         </div>
         <div class="panelActions">
           <span id="settingsDirtyBadge" class="muted">Saved</span>
@@ -209,6 +324,7 @@
               </label>
               <span id="selectedMonitorSummary" class="setupMonitorSummary">Detecting monitors...</span>
             </div>
+            <div id="setupMonitorGraphic" class="setupMonitorGraphic" aria-label="Detected recording monitors"></div>
             <div class="setupFeedHeading">
               <h3>Feed preset</h3>
               <span>Recommended choices are based on the selected monitor.</span>
@@ -220,6 +336,14 @@
           <div class="setupWizardColumn">
             <h3>Instances</h3>
             <div class="miniGrid setupWizardFields">
+              <div class="span2 setupPathField">
+                <label for="setupSourceBeatSaberPath">Beat Saber source folder</label>
+                <div class="setupPathInputRow">
+                  <input id="setupSourceBeatSaberPath" type="text" placeholder="C:\Program Files (x86)\Steam\steamapps\common\Beat Saber">
+                  <button id="setupUseDetectedSource" class="secondaryButton" type="button">Use Detected</button>
+                </div>
+                <span id="setupSourceBeatSaberHint" class="setupPathHint">Detecting Beat Saber source...</span>
+              </div>
               <label class="span2">Instances root <input id="beatSaberInstancesRoot" type="text"></label>
               <input id="instanceCount" type="hidden">
               <div class="setupInstanceManager span2" aria-label="Managed instances">
@@ -231,6 +355,7 @@
               </div>
             </div>
             <div class="setupWizardActions">
+              <button id="setupWizardRunSetup" class="primaryButton" type="button">Run Setup</button>
               <button id="setupWizardAddInstance" class="secondaryButton" type="button" hidden>+ Add Instance</button>
             </div>
           </div>
@@ -245,7 +370,7 @@
           </div>
           <div class="formGrid setupAdvancedGrid">
           <div class="formGroup span2">
-            <h3>Run</h3>
+            <h3>Recording</h3>
             <div class="miniGrid">
               <label class="span2">FPS <input id="targetFps" type="number" min="1" max="240"></label>
             </div>
@@ -254,6 +379,17 @@
           <div class="formGroup span2">
             <h3>Capture</h3>
             <div class="miniGrid">
+              <div class="span2 captureEngineField">
+                <label>Engine
+                  <select id="captureEngine">
+                    <option value="FFmpegDdagrab">FFmpeg ddagrab</option>
+                    <option value="WindowsGraphicsCapture">Windows Graphics Capture (experimental, buggy)</option>
+                  </select>
+                </label>
+                <p id="captureEngineWarning" class="captureEngineWarning" hidden>
+                  Experimental, buggy path. WGC can produce choppy video and audio sync drift; use FFmpeg ddagrab for normal queue runs.
+                </p>
+              </div>
               <label class="span2">Recording Resolution
                 <select id="resolutionPreset">
                   <option value="1280x720">720p (1280 x 720)</option>
@@ -293,7 +429,7 @@
           <div id="gameSettings" class="formGroup gameSettingsGroup setupGamePanel span4">
             <div class="gameSettingsTop">
               <div>
-                <h3>Game settings</h3>
+                <h3>Game presentation</h3>
                 <span class="gameSettingsMode">Replay display and player settings</span>
               </div>
               <span id="gamePresentationVersion" class="gameSettingsVersion">v1</span>
@@ -363,8 +499,10 @@
             </div>
 
             <div class="gameSettingsNotice" role="note" aria-label="Shared Beat Saber settings warning">
-              <strong>Shared Beat Saber user data</strong>
-              <span>The Player settings below are stored in Beat Saber's AppData profile and apply across ALL Beat Saber instances for this Windows user.</span>
+              <div class="gameSettingsNoticeText">
+                <strong>Shared Beat Saber user data</strong>
+                <span>The Player settings below are stored in Beat Saber's AppData profile and apply across ALL Beat Saber instances for this Windows user.</span>
+              </div>
             </div>
 
             <div class="gameSettingsSurface playerSettingsSurface" aria-label="Player settings">
@@ -480,6 +618,56 @@
                   </label>
                 </div>
               </div>
+
+              <div class="gameSettingsSection colorSettingsSection">
+                <div class="gameSectionHeading">
+                  <span class="gameSettingsSectionTitle">Colors</span>
+                  <span class="gameSectionHint">Saves Beat Saber's selected custom color scheme.</span>
+                </div>
+                <div class="colorPresetBar">
+                  <label class="gameSelectRow colorPresetSelectRow">
+                    <span>Preset</span>
+                    <select id="colorPresetSelect">
+                      <option value="">Loading presets...</option>
+                    </select>
+                  </label>
+                  <div class="colorPresetActions">
+                    <button id="applyColorPreset" class="secondaryButton miniButton" type="button">Apply</button>
+                    <button id="saveColorPreset" class="secondaryButton miniButton" type="button">Save current</button>
+                    <button id="deleteColorPreset" class="textButton dangerText miniButton" type="button" hidden>Delete</button>
+                  </div>
+                </div>
+                <div class="colorPickerGrid">
+                  <label class="gameColorRow">
+                    <span>Left saber</span>
+                    <input id="leftSaberColor" type="color">
+                  </label>
+                  <label class="gameColorRow">
+                    <span>Right saber</span>
+                    <input id="rightSaberColor" type="color">
+                  </label>
+                  <label class="gameColorRow">
+                    <span>Light A</span>
+                    <input id="lightColorA" type="color">
+                  </label>
+                  <label class="gameColorRow">
+                    <span>Light B</span>
+                    <input id="lightColorB" type="color">
+                  </label>
+                  <label class="gameColorRow">
+                    <span>Boost A</span>
+                    <input id="boostLightColorA" type="color">
+                  </label>
+                  <label class="gameColorRow">
+                    <span>Boost B</span>
+                    <input id="boostLightColorB" type="color">
+                  </label>
+                  <label class="gameColorRow span2">
+                    <span>Walls</span>
+                    <input id="wallColor" type="color">
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -546,6 +734,7 @@
           </div>
 
           <div class="formGroup span2 compactChecks">
+            <h3 class="settingsGuardTitle">Run guards</h3>
             <label class="checkboxLabel">
               <input id="requireAllWorkersReady" type="checkbox">
               <span>Require all workers</span>
@@ -580,7 +769,7 @@
       <div class="settingsPageHeader diagnosticsPageHeader">
         <div>
           <h2>Diagnostics</h2>
-          <span>Live readiness, worker evidence, sync, baseline, and recent run events.</span>
+          <span>Run blockers, worker evidence, sync, benchmark, and recent events.</span>
         </div>
         <div class="panelActions">
           <button class="textButton" type="button" data-settings-target="advancedSettingsDetails">Edit Settings</button>
@@ -604,14 +793,20 @@
           <div id="diagnosticsReadinessList" class="diagnosticChecklist"></div>
         </section>
 
-        <section class="panel diagnosticRuntimePanel diagnosticsWide">
+        <section class="panel benchmarkPanel diagnosticsWide">
           <div class="panelHeader">
             <div class="panelTitleGroup">
-              <h2>Runtime Snapshot</h2>
-              <span class="muted">Current /api/state readback</span>
+              <h2>Capacity Benchmark</h2>
+              <span class="muted">Real replay recordings, in-game FPS, output validation, and safe worker recommendation</span>
+            </div>
+            <div class="panelActions">
+              <button id="stopBenchmark" class="secondaryButton dangerText" type="button" hidden>Stop</button>
+              <button id="startBenchmark" class="primaryButton" type="button">Start Benchmark</button>
             </div>
           </div>
-          <div id="diagnosticsRuntimeGrid" class="diagnosticMetricGrid"></div>
+          <div id="benchmarkSummary" class="benchmarkSummary"></div>
+          <div id="benchmarkPassSelector" class="benchmarkPassSelector" aria-label="Benchmark concurrency levels"></div>
+          <div id="benchmarkPassList" class="benchmarkPassList"></div>
         </section>
 
         <section class="panel diagnosticWorkersPanel diagnosticsWide">
@@ -663,14 +858,74 @@
     <span>Settings not saved</span>
     <strong>Click here to Save</strong>
   </button>
+  <div id="queueExportModal" class="queueExportModal" role="dialog" aria-modal="true" aria-labelledby="queueExportTitle" hidden>
+    <div class="queueExportPanel">
+      <div class="queueExportHeader">
+        <div>
+          <span class="queueExportKicker">Queue Export</span>
+          <h2 id="queueExportTitle">Replay List</h2>
+        </div>
+        <button id="closeQueueExport" class="iconButton" type="button" aria-label="Close export list">&#215;</button>
+      </div>
+      <div class="queueExportControls">
+        <label>Format
+          <select id="queueExportFormat">
+            <option value="song-player">Song - Played By</option>
+            <option value="numbered-song-player">Numbered Song - Played By</option>
+            <option value="song-difficulty-player">Song [Difficulty] - Played By</option>
+            <option value="player-song">Player - Song</option>
+            <option value="song-mapper-player">Song - Mapper - Played By</option>
+            <option value="spreadsheet">Spreadsheet rows</option>
+            <option value="csv">CSV rows</option>
+          </select>
+        </label>
+        <span id="queueExportCount" class="muted"></span>
+      </div>
+      <textarea id="queueExportText" readonly spellcheck="false"></textarea>
+      <div class="queueExportActions">
+        <button id="copyQueueExport" class="primaryButton" type="button">Copy</button>
+        <button id="selectQueueExport" class="secondaryButton" type="button">Select all</button>
+      </div>
+    </div>
+  </div>
+  <div id="mapCardExportModal" class="mapCardExportModal" role="dialog" aria-modal="true" aria-labelledby="mapCardExportTitle" hidden>
+    <div class="mapCardExportPanel">
+      <div class="mapCardExportHeader">
+        <div>
+          <span class="queueExportKicker">Collection Export</span>
+          <h2 id="mapCardExportTitle">Map Cards</h2>
+        </div>
+        <button id="closeMapCardExport" class="iconButton" type="button" aria-label="Close map card export">&#215;</button>
+      </div>
+      <div class="mapCardExportControls">
+        <label>Set all category
+          <select id="mapCardDefaultCategory"></select>
+        </label>
+        <label class="mapCardCategoryToggle">
+          <input id="mapCardCategoriesEnabled" type="checkbox" checked>
+          <span>Show categories</span>
+        </label>
+        <div class="mapCardExportStatus">
+          <span id="mapCardExportCount" class="muted"></span>
+          <span id="mapCardCategorySaveStatus" class="muted"></span>
+        </div>
+      </div>
+      <div id="mapCardExportPreview" class="mapCardExportPreview" aria-live="polite"></div>
+      <div class="queueExportActions">
+        <button id="saveMapCardCategories" class="secondaryButton" type="button">Save Categories</button>
+        <button id="downloadMapCardGrid" class="secondaryButton" type="button">Export Grid PNG</button>
+        <button id="downloadMapCards" class="primaryButton" type="button">Export PNG Folder</button>
+      </div>
+    </div>
+  </div>
   <div id="shutdownModal" class="shutdownModal" role="alertdialog" aria-modal="true" aria-labelledby="shutdownModalTitle" tabindex="-1" hidden>
     <div class="shutdownModalPanel">
       <span class="shutdownModalKicker">Replay Recorder is off</span>
       <h2 id="shutdownModalTitle">Recorder stack has been shut down.</h2>
-      <p>Close this browser tab when you are ready. To start recording again, run <strong>start.bat</strong>.</p>
+      <p>Close this window when you are ready. To start recording again, open <strong>Replay Recorder.exe</strong>.</p>
     </div>
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=provider-pills"></script>
+  <script src="/app.js?v=run-timeline-controls-4"></script>
 </body>
 </html>

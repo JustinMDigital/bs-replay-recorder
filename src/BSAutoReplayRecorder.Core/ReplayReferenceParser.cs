@@ -12,6 +12,7 @@ public sealed class ReplayReferenceParser
         "www.beatleader.com",
         "replay.beatleader.com",
         "replay.beatleader.xyz",
+        "cdn.replays.beatleader.com",
         "cdn.replays.beatleader.xyz"
     };
 

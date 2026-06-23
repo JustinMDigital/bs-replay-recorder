@@ -84,7 +84,7 @@ The plugin stores a `WorkerId` after it registers for the first time. Leave that
 
 The current workflow supports BeatLeader `.bsor` files and ScoreSaber `.dat` replay files. BeatLeader playback uses the installed BeatLeader mod. ScoreSaber playback resolves ScoreSaber's replay loader at runtime and uses the same recorder start, sync marker, lag guard, stop, mux, and reporting path as BeatLeader.
 
-ScoreSaber 2 score/replay URLs are imported by the control panel, downloaded to local `.dat` files, and assigned to workers with provider metadata.
+BeatLeader score/replay URLs and ScoreSaber 2 score/replay URLs are imported by the control panel, downloaded to local replay files, and assigned to workers with provider metadata.
 
 ## Fail-Safe Behavior
 

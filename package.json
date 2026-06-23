@@ -1,0 +1,95 @@
+{
+  "name": "bs-replay-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop shell for Beat Saber Auto Replay Recorder.",
+  "main": "electron/main.js",
+  "scripts": {
+    "electron:dev": "electron .",
+    "runtime:publish": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package/Publish-DesktopRuntime.ps1",
+    "electron:pack": "npm run runtime:publish && electron-builder --dir && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package/Publish-RootLauncher.ps1",
+    "electron:dist": "npm run runtime:publish && electron-builder && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package/Publish-RootLauncher.ps1"
+  },
+  "devDependencies": {
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.2"
+  },
+  "build": {
+    "appId": "com.bsautoreplayrecorder.app",
+    "productName": "Replay Recorder",
+    "directories": {
+      "output": "dist/electron"
+    },
+    "asar": false,
+    "files": [
+      "electron/**/*",
+      "assets/logo.png",
+      "settings.example.json",
+      "Support/**/*",
+      "scripts/**/*",
+      "!scripts/diagnostics/tmp/**",
+      "!scripts/display/tmp/**",
+      {
+        "from": "dist/runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/BSAutoReplayRecorder.Plugin",
+        "to": "src/BSAutoReplayRecorder.Plugin",
+        "filter": [
+          "**/*",
+          "!**/bin/**",
+          "!**/obj/**",
+          "!**/tmp/**",
+          "!**/*.user",
+          "!**/*.log"
+        ]
+      },
+      {
+        "from": "src/BSAutoReplayRecorder.Core",
+        "to": "src/BSAutoReplayRecorder.Core",
+        "filter": [
+          "**/*",
+          "!**/bin/**",
+          "!**/obj/**",
+          "!**/tmp/**",
+          "!**/*.user",
+          "!**/*.log"
+        ]
+      },
+      {
+        "from": "tools/ProcessAudioCapture",
+        "to": "tools/ProcessAudioCapture",
+        "filter": [
+          "**/*",
+          "!**/bin/**",
+          "!**/obj/**",
+          "!**/tmp/**",
+          "!**/*.user",
+          "!**/*.log"
+        ]
+      },
+      {
+        "from": "tools/SetDpi",
+        "to": "tools/SetDpi",
+        "filter": [
+          "**/*"
+        ]
+      },
+      "Directory.Build.props",
+      "!**/bin/**",
+      "!**/obj/**",
+      "!**/tmp/**",
+      "!**/ControlPanelWorkspace/**",
+      "!**/*.user",
+      "!**/*.log"
+    ],
+    "win": {
+      "target": "dir",
+      "icon": "assets/logo.png"
+    }
+  }
+}

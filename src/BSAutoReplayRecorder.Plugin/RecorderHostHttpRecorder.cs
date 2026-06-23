@@ -83,6 +83,11 @@ public sealed class RecorderHostHttpRecorder : IRecordingBackend
             request["qualityMode"] = _settings.QualityMode.Trim();
         }
 
+        if (!string.IsNullOrWhiteSpace(_settings.CaptureEngine))
+        {
+            request["captureEngine"] = _settings.CaptureEngine.Trim();
+        }
+
         if (!string.IsNullOrWhiteSpace(_settings.AudioMode))
         {
             request["audioMode"] = _settings.AudioMode.Trim();

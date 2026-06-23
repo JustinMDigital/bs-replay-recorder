@@ -5,12 +5,16 @@ namespace BSAutoReplayRecorder.ControlPanel;
 
 public interface IWorkerPluginInstaller
 {
-    void Install(IReadOnlyList<WorkerInstanceRecord> instances, ControlPanelSettings settings);
+    void Install(
+        IReadOnlyList<WorkerInstanceRecord> instances,
+        ControlPanelSettings settings,
+        IReadOnlyList<WorkerInstanceRecord>? deployTargets = null);
 }
 
 internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
 {
     private const string PluginProjectRelativePath = "src/BSAutoReplayRecorder.Plugin/BSAutoReplayRecorder.Plugin.csproj";
+    private const string BeatLeaderPluginRelativePath = "Plugins/BeatLeader.dll";
 
     private static readonly string[] StalePluginRelativePaths =
     {
@@ -26,9 +30,18 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         "Plugins/.cache/BSAutoReplayRecorder.Plugin.pdb"
     };
 
-    public void Install(IReadOnlyList<WorkerInstanceRecord> instances, ControlPanelSettings settings)
+    public void Install(
+        IReadOnlyList<WorkerInstanceRecord> instances,
+        ControlPanelSettings settings,
+        IReadOnlyList<WorkerInstanceRecord>? deployTargets = null)
     {
         if (instances.Count == 0)
+        {
+            return;
+        }
+
+        deployTargets ??= instances;
+        if (deployTargets.Count == 0)
         {
             return;
         }
@@ -37,6 +50,17 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         if (!File.Exists(Path.Combine(baselineDirectory, "Beat Saber.exe")))
         {
             throw new InvalidOperationException("Cannot build the worker plugin because instance 1 is missing Beat Saber.exe.");
+        }
+
+        var beatLeaderPath = Path.Combine(
+            baselineDirectory,
+            BeatLeaderPluginRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(beatLeaderPath))
+        {
+            throw new InvalidOperationException(
+                "Cannot build the worker plugin because instance 1 is missing " +
+                BeatLeaderPluginRelativePath +
+                ". Install BeatLeader in the managed baseline instance or reprovision workers from a Beat Saber folder that already has BeatLeader installed.");
         }
 
         var pluginProjectPath = ResolvePluginProjectPath()
@@ -57,7 +81,7 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         var columns = enabledInstanceCount == 1 ? 1 : 2;
         var rows = enabledInstanceCount == 1 ? 1 : 2;
 
-        foreach (var instance in instances.OrderBy(instance => instance.Index))
+        foreach (var instance in deployTargets.OrderBy(instance => instance.Index))
         {
             DeployPluginToInstance(instance, settings, outputDirectory, columns, rows);
         }
@@ -156,7 +180,11 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         var displayIndex = instance.Index + 1;
         return new Dictionary<string, object?>
         {
+            ["DisableScoreSubmissions"] = true,
+            ["SuppressScoreSaberReplayUi"] = true,
             ["RequirePreflightReplayValidation"] = true,
+            ["RefreshSongCoreBeforeReplayValidation"] = true,
+            ["SongCoreRefreshTimeoutSeconds"] = 45,
             ["RecordingOutputDirectory"] = "UserData/BSAutoReplayRecorder/Recordings",
             ["ReplayFinishTimeoutPaddingSeconds"] = 30,
             ["LagSpikeDetectionEnabled"] = true,
@@ -181,6 +209,7 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
                 ["OutputFormat"] = "",
                 ["MonitorIndex"] = null,
                 ["QualityMode"] = "",
+                ["CaptureEngine"] = "",
                 ["AudioMode"] = "",
                 ["AudioDeviceName"] = "",
                 ["AudioBitrateKbps"] = null,

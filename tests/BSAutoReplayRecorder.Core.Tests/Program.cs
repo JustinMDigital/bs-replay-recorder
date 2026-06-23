@@ -57,6 +57,17 @@ try
     AssertEqual(ReplayProvider.BeatLeader, beatLeaderReference.Provider, "beatleader url provider");
     AssertEqual("9280912", beatLeaderReference.ScoreId, "beatleader score id");
 
+    var beatLeaderScorePageReference = referenceParser.Parse("https://beatleader.com/score/30643468");
+    AssertEqual(ReplayProvider.BeatLeader, beatLeaderScorePageReference.Provider, "beatleader score page provider");
+    AssertEqual(ReplayReferenceKind.BeatLeaderScoreUrl, beatLeaderScorePageReference.Kind, "beatleader score page kind");
+    AssertEqual("30643468", beatLeaderScorePageReference.ScoreId, "beatleader score page score id");
+
+    var beatLeaderCdnComReference = referenceParser.Parse(
+        "https://cdn.replays.beatleader.com/30643468-76561199081029968-ExpertPlus-Standard-D790917A21934DC957352377B204E9C57D97D386.bsor");
+    AssertEqual(ReplayProvider.BeatLeader, beatLeaderCdnComReference.Provider, "beatleader cdn com provider");
+    AssertEqual(ReplayReferenceKind.BeatLeaderCdnBsorUrl, beatLeaderCdnComReference.Kind, "beatleader cdn com kind");
+    AssertEqual("30643468", beatLeaderCdnComReference.ScoreId, "beatleader cdn com score id");
+
     var scoreSaber2Reference = referenceParser.Parse("https://new.scoresaber.com/scores/123456");
     AssertEqual(ReplayProvider.ScoreSaber2, scoreSaber2Reference.Provider, "scoresaber 2 provider");
     AssertEqual("123456", scoreSaber2Reference.ScoreId, "scoresaber 2 score id");
@@ -87,8 +98,8 @@ try
     var namedScoreSaberInfo = new ScoreSaberReplayInfoReader().Read(namedScoreSaberReplay);
     AssertEqual("88905556", namedScoreSaberInfo.ScoreId, "scoresaber score id");
     AssertEqual("Lunaticon", namedScoreSaberInfo.PlayerName, "scoresaber player");
-    AssertEqual("", namedScoreSaberInfo.SongName, "scoresaber parsed song");
-    AssertEqual(TimeSpan.FromSeconds(209), namedScoreSaberInfo.ReplayLength, "scoresaber parsed duration");
+    AssertEqual("3-29", namedScoreSaberInfo.SongName, "scoresaber parsed song");
+    AssertEqual(TimeSpan.FromSeconds(180), namedScoreSaberInfo.ReplayLength, "scoresaber parsed duration");
 
     var legacyNamedScoreSaberReplay = Path.Combine(
         tempDir,

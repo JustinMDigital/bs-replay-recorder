@@ -14,6 +14,16 @@ internal sealed class ControlPanelWorkerRegisterRequest
     public string? GameDirectory { get; set; }
 
     public string? PluginVersion { get; set; }
+
+    public bool ReplayProviderStatusReported { get; set; }
+
+    public bool BeatLeaderReady { get; set; }
+
+    public string? BeatLeaderStatus { get; set; }
+
+    public bool ScoreSaberReady { get; set; }
+
+    public string? ScoreSaberStatus { get; set; }
 }
 
 internal sealed class ControlPanelWorkerRegisterResponse
@@ -37,11 +47,27 @@ internal sealed class ControlPanelWorkerHeartbeatRequest
 
     public string? CurrentReplayId { get; set; }
 
+    public double? FramesPerSecond { get; set; }
+
+    public double? AverageFramesPerSecond { get; set; }
+
+    public int SampledFrameCount { get; set; }
+
     public int AppliedGamePresentationSettingsVersion { get; set; }
 
     public string? GamePresentationSyncStatus { get; set; }
 
     public string? GamePresentationSyncError { get; set; }
+
+    public bool ReplayProviderStatusReported { get; set; }
+
+    public bool BeatLeaderReady { get; set; }
+
+    public string? BeatLeaderStatus { get; set; }
+
+    public bool ScoreSaberReady { get; set; }
+
+    public string? ScoreSaberStatus { get; set; }
 }
 
 internal sealed class ControlPanelWorkerHeartbeatResponse
@@ -49,6 +75,8 @@ internal sealed class ControlPanelWorkerHeartbeatResponse
     public bool ShouldCancelAssignment { get; set; }
 
     public string? CancellationReason { get; set; }
+
+    public bool CancellationFailsAssignment { get; set; }
 
     public bool ShouldOpenPauseMenu { get; set; }
 
@@ -124,6 +152,8 @@ internal sealed class ControlPanelWorkerAssignmentResponse
     public int MonitorIndex { get; set; }
 
     public string QualityMode { get; set; } = "";
+
+    public string CaptureEngine { get; set; } = "";
 
     public string AudioMode { get; set; } = "";
 
@@ -205,6 +235,8 @@ internal sealed class ControlPanelSettingsSnapshot
     public int MonitorIndex { get; set; }
 
     public string QualityMode { get; set; } = "";
+
+    public string CaptureEngine { get; set; } = "";
 
     public string AudioMode { get; set; } = "";
 

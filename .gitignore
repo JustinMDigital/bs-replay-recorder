@@ -1,10 +1,24 @@
+# .NET build output.
 bin/
 obj/
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# Node and Electron packaging output.
+node_modules/
+dist/
+Replay Recorder.exe
+
+# IDE and OS metadata.
 .vs/
 .vscode/
+.idea/
 *.user
 *.suo
-TestResults/
+.DS_Store
+Thumbs.db
 
 # Local environment and secrets.
 .env
@@ -16,22 +30,44 @@ TestResults/
 
 # Local Codex/agent workspace metadata.
 .agents/
+.codex/
 skills-lock.json
 
 # Runtime output and logs.
 *.log
-dist/
+*.pid
 tmp/
 scripts/diagnostics/tmp/
 scripts/display/tmp/
 recorder-host.settings.json
 recorder-host-*.settings.json
-Recordings/
-src/BSAutoReplayRecorder.RecorderHost/Recordings/
 ControlPanelWorkspace/
 src/BSAutoReplayRecorder.ControlPanel/ControlPanelWorkspace/
+Recordings/
+
+# Local Beat Saber worker folders and shared libraries.
 BeatSaberInstances/
 **/BeatSaberInstances/
+SharedSongs/
+**/SharedSongs/
+SharedContent/
+**/SharedContent/
+**/Beat Saber_Data/CustomLevels/
+**/Beat Saber_Data/CustomWIPLevels/
+**/Beat Saber_Data/CustomLevels.local-*/
+**/Beat Saber_Data/CustomWIPLevels.local-*/
+**/CustomSabers/
+**/CustomNotes/
+**/CustomPlatforms/
+**/CustomAvatars/
+**/CustomWalls/
+**/CustomBombs/
+**/CustomSabers.local-*/
+**/CustomNotes.local-*/
+**/CustomPlatforms.local-*/
+**/CustomAvatars.local-*/
+**/CustomWalls.local-*/
+**/CustomBombs.local-*/
 
 # Local replay inputs and generated recording artifacts.
 *.bsor
@@ -54,23 +90,3 @@ src/BSAutoReplayRecorder.RecorderHost/samples/
 
 # Local display helper binary; scripts can also use BSARR_SETDPI_PATH.
 tools/SetDpi/SetDpi.exe
-
-# Local Beat Saber song libraries managed by the control panel.
-SharedSongs/
-**/SharedSongs/
-**/Beat Saber_Data/CustomLevels/
-**/Beat Saber_Data/CustomWIPLevels/
-**/Beat Saber_Data/CustomLevels.local-*/
-**/Beat Saber_Data/CustomWIPLevels.local-*/
-**/CustomSabers/
-**/CustomNotes/
-**/CustomPlatforms/
-**/CustomAvatars/
-**/CustomWalls/
-**/CustomBombs/
-**/CustomSabers.local-*/
-**/CustomNotes.local-*/
-**/CustomPlatforms.local-*/
-**/CustomAvatars.local-*/
-**/CustomWalls.local-*/
-**/CustomBombs.local-*/

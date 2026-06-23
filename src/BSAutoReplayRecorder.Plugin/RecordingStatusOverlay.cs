@@ -13,6 +13,7 @@ public sealed class RecordingStatusOverlay : MonoBehaviour
     private static RecordingStatusOverlay? _instance;
     private static OverlayState _state = OverlayState.Hidden();
     private static bool _statusPanelVisible;
+    private static DateTimeOffset? _suppressRoutineStatusUntilUtc;
 
     private GUIStyle? _boxStyle;
     private GUIStyle? _headerStyle;
@@ -58,17 +59,31 @@ public sealed class RecordingStatusOverlay : MonoBehaviour
 
     public static void ShowConnected(string detail)
     {
+        lock (Gate)
+        {
+            if (_suppressRoutineStatusUntilUtc.HasValue &&
+                DateTimeOffset.UtcNow < _suppressRoutineStatusUntilUtc.Value)
+            {
+                return;
+            }
+        }
+
         SetState(new OverlayState("Worker connected", detail, "Idle", false, null));
     }
 
     public static void ShowToast(string header, string detail, TimeSpan duration, bool isError = false)
     {
+        var expiresAtUtc = DateTimeOffset.UtcNow + duration;
         SetState(new OverlayState(
             header,
             detail,
             isError ? "Check the log for details" : "",
             isError,
-            DateTimeOffset.UtcNow + duration));
+            expiresAtUtc));
+        lock (Gate)
+        {
+            _suppressRoutineStatusUntilUtc = expiresAtUtc;
+        }
     }
 
     public static void SetStatusPanelVisible(bool visible)
@@ -95,6 +110,7 @@ public sealed class RecordingStatusOverlay : MonoBehaviour
             if (_state.ExpiresAtUtc.HasValue && DateTimeOffset.UtcNow >= _state.ExpiresAtUtc.Value)
             {
                 _state = OverlayState.Hidden();
+                _suppressRoutineStatusUntilUtc = null;
             }
         }
     }

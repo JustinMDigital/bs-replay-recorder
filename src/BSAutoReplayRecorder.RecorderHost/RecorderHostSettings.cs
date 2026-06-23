@@ -14,11 +14,15 @@ public sealed class RecorderHostSettings
 
     public string ProcessLoopbackCapturePath { get; set; } = "";
 
+    public string WindowsGraphicsCapturePath { get; set; } = "";
+
     public string OutputDirectory { get; set; } = "Recordings";
 
     public string OutputExtension { get; set; } = ".mkv";
 
     public bool OverwriteExisting { get; set; }
+
+    public bool PreserveProcessLoopbackSidecars { get; set; }
 
     public double StopTimeoutSeconds { get; set; } = 30;
 
@@ -39,6 +43,8 @@ public sealed class RecorderHostSettings
     public int DefaultMonitorIndex { get; set; } = 1;
 
     public string DefaultQualityMode { get; set; } = "Balanced";
+
+    public string DefaultCaptureEngine { get; set; } = "FFmpegDdagrab";
 
     public string DefaultAudioMode { get; set; } = "None";
 
@@ -109,6 +115,7 @@ public sealed class RecorderHostSettings
         }
 
         ProcessLoopbackCapturePath = ProcessLoopbackCapturePath?.Trim() ?? "";
+        WindowsGraphicsCapturePath = WindowsGraphicsCapturePath?.Trim() ?? "";
 
         if (string.IsNullOrWhiteSpace(OutputDirectory))
         {
@@ -158,6 +165,7 @@ public sealed class RecorderHostSettings
             DefaultQualityMode = "Balanced";
         }
 
+        DefaultCaptureEngine = NormalizeCaptureEngine(DefaultCaptureEngine);
         DefaultAudioMode = NormalizeAudioMode(DefaultAudioMode);
         DefaultAudioDeviceName = DefaultAudioDeviceName?.Trim() ?? "";
         DefaultAudioBitrateKbps = Math.Clamp(DefaultAudioBitrateKbps, 64, 1024);
@@ -237,6 +245,18 @@ public sealed class RecorderHostSettings
         return string.Equals(trimmed, "ProcessLoopback", StringComparison.OrdinalIgnoreCase)
             ? "ProcessLoopback"
             : "None";
+    }
+
+    internal static string NormalizeCaptureEngine(string? value)
+    {
+        var trimmed = value?.Trim();
+        if (string.Equals(trimmed, "WindowsGraphicsCapture", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "WGC", StringComparison.OrdinalIgnoreCase))
+        {
+            return "WindowsGraphicsCapture";
+        }
+
+        return "FFmpegDdagrab";
     }
 
     private static string NormalizeAudioLevelMode(string? value)

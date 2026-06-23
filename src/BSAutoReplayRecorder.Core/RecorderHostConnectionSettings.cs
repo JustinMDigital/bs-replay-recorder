@@ -24,6 +24,8 @@ public sealed class RecorderHostConnectionSettings
 
     public string QualityMode { get; set; } = "";
 
+    public string CaptureEngine { get; set; } = "";
+
     public string AudioMode { get; set; } = "";
 
     public string AudioDeviceName { get; set; } = "";

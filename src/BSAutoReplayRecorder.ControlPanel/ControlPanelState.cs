@@ -10,6 +10,8 @@ public sealed class ControlPanelState
 
     public List<ReplayQueueRecord> Queue { get; set; } = new List<ReplayQueueRecord>();
 
+    public List<MapCollectionRecord> Collections { get; set; } = new List<MapCollectionRecord>();
+
     public List<WorkerInstanceRecord> Instances { get; set; } = new List<WorkerInstanceRecord>();
 
     public InstanceProvisionReport InstanceProvision { get; set; } = new InstanceProvisionReport();
@@ -23,6 +25,8 @@ public sealed class ControlPanelState
     public List<ControlPanelEventRecord> Events { get; set; } = new List<ControlPanelEventRecord>();
 
     public RunState Run { get; set; } = new RunState();
+
+    public BenchmarkState Benchmark { get; set; } = new BenchmarkState();
 }
 
 public sealed class ReplayQueueRecord
@@ -75,6 +79,8 @@ public sealed class ReplayQueueRecord
 
     public DateTimeOffset? AssignedAtUtc { get; set; }
 
+    public DateTimeOffset? RecordingStartedAtUtc { get; set; }
+
     public DateTimeOffset? CompletedAtUtc { get; set; }
 
     public string? OutputPath { get; set; }
@@ -94,6 +100,62 @@ public sealed class ReplayQueueRecord
     public ReplayCalibrationRecord Calibration { get; set; } = new ReplayCalibrationRecord();
 
     public bool IsMetadataEdited { get; set; }
+}
+
+public sealed class MapCollectionRecord
+{
+    public string Id { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+
+    public DateTimeOffset UpdatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+
+    public List<MapCollectionItemRecord> Items { get; set; } = new List<MapCollectionItemRecord>();
+}
+
+public sealed class MapCollectionItemRecord
+{
+    public string Id { get; set; } = "";
+
+    public int SequenceNumber { get; set; }
+
+    public ReplayProvider Provider { get; set; } = ReplayProvider.BeatLeader;
+
+    public ReplayReferenceKind ReferenceKind { get; set; } = ReplayReferenceKind.LocalBsorFile;
+
+    public string ReplayFormat { get; set; } = "BSOR";
+
+    public string SourceUrl { get; set; } = "";
+
+    public string ScoreId { get; set; } = "";
+
+    public string FileName { get; set; } = "";
+
+    public string Path { get; set; } = "";
+
+    public string SongName { get; set; } = "";
+
+    public string Mapper { get; set; } = "";
+
+    public string PlayerName { get; set; } = "";
+
+    public string Difficulty { get; set; } = "";
+
+    public string Mode { get; set; } = "";
+
+    public string LevelHash { get; set; } = "";
+
+    public string CoverArtUrl { get; set; } = "";
+
+    public string MapCardCategory { get; set; } = "";
+
+    public double EstimatedSeconds { get; set; }
+
+    public string? CompletedOutputPath { get; set; }
+
+    public DateTimeOffset? CompletedAtUtc { get; set; }
 }
 
 public sealed class ReplayCalibrationRecord
@@ -153,6 +215,26 @@ public sealed class WorkerInstanceRecord
 
     public DateTimeOffset? LastHeartbeatUtc { get; set; }
 
+    public double? LastReportedFramesPerSecond { get; set; }
+
+    public double? LastReportedAverageFramesPerSecond { get; set; }
+
+    public int LastReportedFrameSampleCount { get; set; }
+
+    public int ConsecutiveLowFpsRecordingHeartbeatCount { get; set; }
+
+    public DateTimeOffset? LowFpsRecordingStartedAtUtc { get; set; }
+
+    public bool ReplayProviderStatusReported { get; set; }
+
+    public bool BeatLeaderReady { get; set; }
+
+    public string BeatLeaderStatus { get; set; } = "Not reported";
+
+    public bool ScoreSaberReady { get; set; }
+
+    public string ScoreSaberStatus { get; set; } = "Not reported";
+
     public string? ActiveAssignmentId { get; set; }
 
     public int LastForceStopCommandId { get; set; }
@@ -172,9 +254,15 @@ public sealed class RunState
 
     public string? CancellationReason { get; set; }
 
+    public bool CloseGamesWhenFinishedRequested { get; set; }
+
     public DateTimeOffset? StartedAtUtc { get; set; }
 
     public DateTimeOffset? FinishedAtUtc { get; set; }
+
+    public string RecordingOutputDirectory { get; set; } = "";
+
+    public string CollectionName { get; set; } = "";
 
     public int CompletedCount { get; set; }
 
@@ -183,6 +271,12 @@ public sealed class RunState
     public string Status { get; set; } = "Idle";
 
     public int ForceStopCommandId { get; set; }
+
+    public bool DisplayScaleRestorePending { get; set; }
+
+    public int DisplayScaleRestorePercent { get; set; }
+
+    public int DisplayScaleMonitorIndex { get; set; }
 }
 
 public sealed class DiskSpaceReport
@@ -315,6 +409,8 @@ public sealed class SettingsUpdateRequest
 
     public string QualityMode { get; set; } = "";
 
+    public string CaptureEngine { get; set; } = "";
+
     public string AudioMode { get; set; } = "";
 
     public bool RequireAudioForRun { get; set; }
@@ -334,6 +430,8 @@ public sealed class SettingsUpdateRequest
     public double AudioTargetLevelDb { get; set; }
 
     public string BeatSaberInstancesRoot { get; set; } = "";
+
+    public string SourceBeatSaberPath { get; set; } = "";
 
     public string BeatSaberInstanceNamePrefix { get; set; } = "";
 
@@ -395,9 +493,36 @@ public sealed class InstanceProvisionRequest
     public bool CreateMissingOnly { get; set; }
 }
 
+public sealed class SetupSourcePathReport
+{
+    public string Status { get; set; } = "Missing";
+
+    public string Summary { get; set; } = "Choose the Beat Saber folder that contains Beat Saber.exe.";
+
+    public string ConfiguredSourceBeatSaberPath { get; set; } = "";
+
+    public string DetectedSourceBeatSaberPath { get; set; } = "";
+
+    public string EffectiveSourceBeatSaberPath { get; set; } = "";
+
+    public bool ConfiguredSourceReady { get; set; }
+
+    public bool DetectedSourceReady { get; set; }
+}
+
 public sealed class InstanceEnabledRequest
 {
     public bool Enabled { get; set; } = true;
+}
+
+public sealed class ActiveInstanceCountRequest
+{
+    public int Count { get; set; }
+}
+
+public sealed class CloseGamesWhenFinishedRequest
+{
+    public bool Enabled { get; set; }
 }
 
 public sealed class SongFolderLinkReport
@@ -452,4 +577,63 @@ public sealed class ReplayCalibrationRequest
     public double? TrimStartSeconds { get; set; }
 
     public string? Notes { get; set; }
+}
+
+public sealed class SaveMapCollectionRequest
+{
+    public string Name { get; set; } = "";
+
+    public List<string> ReplayIds { get; set; } = new List<string>();
+
+    public bool CreateEmpty { get; set; }
+}
+
+public sealed class LoadMapCollectionRequest
+{
+    public bool OverwriteRecorded { get; set; }
+}
+
+public sealed class StartRunRequest
+{
+    public string? CollectionName { get; set; }
+}
+
+public sealed class UpdateMapCollectionCardCategoriesRequest
+{
+    public List<MapCollectionCardCategoryUpdate> Items { get; set; } = new List<MapCollectionCardCategoryUpdate>();
+}
+
+public sealed class MapCollectionCardCategoryUpdate
+{
+    public string ItemId { get; set; } = "";
+
+    public string Category { get; set; } = "";
+}
+
+public sealed class MapCollectionLoadResult
+{
+    public ControlPanelState State { get; set; } = new ControlPanelState();
+
+    public string CollectionId { get; set; } = "";
+
+    public string CollectionName { get; set; } = "";
+
+    public int LoadedCount { get; set; }
+
+    public int RequeuedCount { get; set; }
+
+    public int SkippedRecordedCount { get; set; }
+
+    public int MissingCount { get; set; }
+}
+
+public sealed class MapCollectionImportResult
+{
+    public ControlPanelState State { get; set; } = new ControlPanelState();
+
+    public MapCollectionRecord Collection { get; set; } = new MapCollectionRecord();
+
+    public int ImportedCount { get; set; }
+
+    public int SkippedCount { get; set; }
 }

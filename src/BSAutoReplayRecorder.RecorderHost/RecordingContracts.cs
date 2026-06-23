@@ -26,6 +26,8 @@ public sealed class StartRecordingRequest
 
     public string? QualityMode { get; set; }
 
+    public string? CaptureEngine { get; set; }
+
     public string? AudioMode { get; set; }
 
     public string? AudioDeviceName { get; set; }
@@ -86,6 +88,8 @@ public sealed class RecordingStatusResponse
 
     public string? EncoderPreset { get; set; }
 
+    public string? CaptureEngine { get; set; }
+
     public string? AudioMode { get; set; }
 
     public string? AudioDeviceName { get; set; }
@@ -124,6 +128,39 @@ public sealed class RecordingStoppedResponse
     public double? TrimStartSeconds { get; set; }
 
     public string SyncReportPath { get; set; } = "";
+}
+
+public sealed class RecorderHostCapabilitiesResponse
+{
+    public string Status { get; set; } = "ok";
+
+    public List<CaptureEngineCapability> CaptureEngines { get; set; } = new List<CaptureEngineCapability>();
+
+    public List<AudioModeCapability> AudioModes { get; set; } = new List<AudioModeCapability>();
+
+    public string FfmpegPath { get; set; } = "";
+
+    public string ProcessLoopbackCapturePath { get; set; } = "";
+
+    public string WindowsGraphicsCapturePath { get; set; } = "";
+}
+
+public sealed class CaptureEngineCapability
+{
+    public string Name { get; set; } = "";
+
+    public bool Supported { get; set; }
+
+    public string Status { get; set; } = "";
+}
+
+public sealed class AudioModeCapability
+{
+    public string Name { get; set; } = "";
+
+    public bool Supported { get; set; }
+
+    public string Status { get; set; } = "";
 }
 
 public sealed class ErrorResponse

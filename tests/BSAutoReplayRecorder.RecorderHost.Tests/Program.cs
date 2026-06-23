@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using BSAutoReplayRecorder.Core;
 using BSAutoReplayRecorder.RecorderHost;
@@ -10,15 +11,20 @@ try
 {
     RunCursorSuppressionNormalizationCheck();
     RunNoAudioArgumentsCheck(tempRoot);
+    RunWindowsGraphicsCaptureOptionsCheck(tempRoot);
     RunProcessLoopbackArgumentsCheck(tempRoot);
     RunProcessLoopbackRequiresTargetProcessCheck(tempRoot);
     RunProcessLoopbackMuxArgumentsCheck(tempRoot);
+    RunProcessLoopbackMuxDelayedAudioArgumentsCheck(tempRoot);
     RunSyncMarkerZeroOffsetCheck();
     RunSyncMarkerPositiveOffsetCheck();
     RunSyncMarkerNegativeOffsetCheck();
+    RunSyncMarkerBrightBackgroundCheck();
+    RunSyncMarkerSingleVisualPulseCheck();
     RunSyncMarkerMissingAudioPulseCheck();
     RunSyncMarkerMissingVisualPulseCheck();
     RunSyncMarkerInconsistentPulseSpacingCheck();
+    RunCaptureStartupTimestampCheck();
     RunProcessLoopbackStartupTimestampCheck();
     RunProcessLoopbackAudioOffsetCheck();
     Console.WriteLine("All recorder host checks passed.");
@@ -47,6 +53,36 @@ static void RunNoAudioArgumentsCheck(string tempRoot)
     AssertDoesNotContain("-map 1:a:0", arguments, "disabled audio map");
     AssertDoesNotContain("-c:a aac", arguments, "disabled audio encoder");
     AssertDoesNotContain("-movflags +faststart", arguments, "mkv container flags");
+}
+
+static void RunWindowsGraphicsCaptureOptionsCheck(string tempRoot)
+{
+    var recorder = CreateRecorder();
+    var request = new StartRecordingRequest
+    {
+        WindowTitle = "Beat Saber",
+        OutputFormat = "mkv",
+        CaptureEngine = "WindowsGraphicsCapture",
+        AudioMode = "ProcessLoopback",
+        TargetProcessId = 1234
+    };
+
+    var options = ResolveRecordingOptions(recorder, request);
+    AssertEqual("WindowsGraphicsCapture", ReadStringProperty(options, "CaptureEngine"), "wgc capture engine");
+    AssertEqual("ProcessLoopback", ReadStringProperty(options, "AudioMode"), "wgc audio mode");
+    AssertEqual(true, ReadBoolProperty(options, "UsesProcessLoopback"), "wgc process loopback enabled");
+    AssertEqual(true, ReadBoolProperty(options, "UsesWindowsGraphicsCapture"), "wgc video enabled");
+
+    var startInfo = CreateWindowsGraphicsCaptureStartInfo(
+        recorder,
+        "WindowsGraphicsCapture.exe",
+        "ffmpeg.exe",
+        Path.Combine(tempRoot, "wgc.mkv"),
+        request,
+        options);
+    var arguments = string.Join(" ", startInfo.ArgumentList);
+    AssertContains("--window-title Beat Saber", arguments, "wgc window title argument");
+    AssertContains("--process-id 1234", arguments, "wgc process id argument");
 }
 
 static void RunCursorSuppressionNormalizationCheck()
@@ -160,14 +196,44 @@ static void RunProcessLoopbackMuxArgumentsCheck(string tempRoot)
         TimeSpan.FromMilliseconds(50),
         TimeSpan.FromMilliseconds(1250));
 
-    AssertContains("-i \"" + videoPath + "\" -itsoffset 0.05 -i \"" + audioPath + "\"", arguments, "mux inputs");
-    AssertContains("-ss 1.25", arguments, "exact trim");
-    AssertContains("-map 0:v:0 -map 1:a:0 -c:v", arguments, "mux maps");
+    AssertContains("-i \"" + videoPath + "\" -i \"" + audioPath + "\"", arguments, "mux inputs");
+    AssertContains(
+        "-filter_complex \"[0:v]trim=start=1.25,setpts=PTS-STARTPTS[v];[1:a]atrim=start=1.2,asetpts=PTS-STARTPTS,volume=-4dB[a]\"",
+        arguments,
+        "exact mux filter");
+    AssertContains("-map [v] -map [a] -c:v", arguments, "mux maps");
     AssertDoesNotContain("-c:v copy", arguments, "exact mux re-encodes video");
+    AssertDoesNotContain("-itsoffset", arguments, "exact mux avoids input timestamp offset");
+    AssertDoesNotContain(" -ss ", arguments, "exact mux avoids output timestamp trim");
     AssertContains("-pix_fmt yuv420p", arguments, "mux pixel format");
-    AssertContains("-af volume=-4dB -c:a aac -b:a 256k -ar 48000 -ac 2", arguments, "mux audio encode");
+    AssertContains("-c:a aac -b:a 256k -ar 48000 -ac 2", arguments, "mux audio encode");
     AssertContains("-shortest", arguments, "mux shortest");
     AssertContains("\"" + outputPath + "\"", arguments, "mux output");
+}
+
+static void RunProcessLoopbackMuxDelayedAudioArgumentsCheck(string tempRoot)
+{
+    var recorder = CreateRecorder();
+    var request = new StartRecordingRequest
+    {
+        AudioMode = "ProcessLoopback",
+        TargetProcessId = 1234,
+        AudioLevelMode = "Off"
+    };
+
+    var options = ResolveRecordingOptions(recorder, request);
+    var arguments = BuildExactMuxArguments(
+        Path.Combine(tempRoot, "delayed.video.mkv"),
+        Path.Combine(tempRoot, "delayed.process-loopback.wav"),
+        Path.Combine(tempRoot, "delayed.mkv"),
+        options,
+        TimeSpan.FromMilliseconds(2000),
+        TimeSpan.FromMilliseconds(1250));
+
+    AssertContains(
+        "-filter_complex \"[0:v]trim=start=1.25,setpts=PTS-STARTPTS[v];[1:a]atrim=start=0,asetpts=PTS-STARTPTS,adelay=750:all=1[a]\"",
+        arguments,
+        "delayed audio exact mux filter");
 }
 
 static void RunSyncMarkerZeroOffsetCheck()
@@ -190,6 +256,42 @@ static void RunSyncMarkerNegativeOffsetCheck()
     var result = AnalyzeSyntheticMarker(offsetSeconds: -0.04);
     AssertEqual(-0.04, Math.Round(result.AudioOffsetSeconds, 3), "negative sync offset");
     AssertEqual(-40.0, result.SyncCorrectionMilliseconds, "negative sync correction ms");
+}
+
+static void RunSyncMarkerBrightBackgroundCheck()
+{
+    var samples = CreateSyntheticMarkerSamples(offsetSeconds: 0.03);
+    for (var index = 0; index < samples.Video.Length; index++)
+    {
+        samples.Video[index] = Math.Max(samples.Video[index], 0.78);
+    }
+
+    var result = SyncMarkerAnalyzer.AnalyzeSamples(
+        samples.Video,
+        samples.SampleRate,
+        samples.Audio,
+        samples.SampleRate);
+    AssertEqual(0.03, Math.Round(result.AudioOffsetSeconds, 3), "bright background sync offset");
+    AssertEqual(RecordingSyncMarker.PulseCount, result.VideoPulseTimesSeconds.Count, "bright background visual pulse count");
+    AssertEqual(RecordingSyncMarker.PulseCount, result.AudioPulseTimesSeconds.Count, "bright background audio pulse count");
+}
+
+static void RunSyncMarkerSingleVisualPulseCheck()
+{
+    var sampleRate = 1000;
+    var video = new double[2000];
+    var audio = new double[2000];
+    AddVisualPulse(video, sampleRate, 0.20);
+    for (var index = 0; index < RecordingSyncMarker.PulseCount; index++)
+    {
+        var visualTime = 0.20 + index * RecordingSyncMarker.PulseSpacingSeconds;
+        AddAudioPulse(audio, sampleRate, visualTime - 0.06);
+    }
+
+    var result = SyncMarkerAnalyzer.AnalyzeSamples(video, sampleRate, audio, sampleRate);
+    AssertEqual(0.06, Math.Round(result.AudioOffsetSeconds, 3), "single visual sync offset");
+    AssertEqual(RecordingSyncMarker.PulseCount, result.VideoPulseTimesSeconds.Count, "single visual reconstructed count");
+    AssertEqual(RecordingSyncMarker.PulseCount, result.AudioPulseTimesSeconds.Count, "single visual audio pulse count");
 }
 
 static void RunSyncMarkerMissingAudioPulseCheck()
@@ -250,6 +352,18 @@ static void RunProcessLoopbackStartupTimestampCheck()
     AssertEqual(false, parsed, "non-startup line ignored");
 }
 
+static void RunCaptureStartupTimestampCheck()
+{
+    var timestamp = DateTimeOffset.Parse("2026-06-04T16:35:41.1234567+00:00");
+    var parsed = ParseCaptureStartedAt("CaptureStartedUtc=" + timestamp.ToString("O"), out var startedAtUtc);
+
+    AssertEqual(true, parsed, "capture startup timestamp parsed");
+    AssertEqual(timestamp.ToUniversalTime(), startedAtUtc, "capture startup timestamp value");
+
+    parsed = ParseCaptureStartedAt("CaptureSize=1920x1080", out _);
+    AssertEqual(false, parsed, "non-startup capture line ignored");
+}
+
 static void RunProcessLoopbackAudioOffsetCheck()
 {
     var videoStarted = DateTimeOffset.Parse("2026-06-04T16:35:41.0000000+00:00");
@@ -293,6 +407,39 @@ static object ResolveRecordingOptions(FfmpegProcessRecorder recorder, StartRecor
         ?? throw new MissingMethodException(recorderType.FullName, "ResolveRecordingOptions");
     return resolveMethod.Invoke(recorder, new object[] { request })
            ?? throw new InvalidOperationException("ResolveRecordingOptions returned null.");
+}
+
+static string ReadStringProperty(object target, string propertyName)
+{
+    var property = target.GetType().GetProperty(propertyName)
+                   ?? throw new MissingMemberException(target.GetType().FullName, propertyName);
+    return (string?)property.GetValue(target) ?? "";
+}
+
+static bool ReadBoolProperty(object target, string propertyName)
+{
+    var property = target.GetType().GetProperty(propertyName)
+                   ?? throw new MissingMemberException(target.GetType().FullName, propertyName);
+    return (bool)(property.GetValue(target) ?? false);
+}
+
+static ProcessStartInfo CreateWindowsGraphicsCaptureStartInfo(
+    FfmpegProcessRecorder recorder,
+    string executablePath,
+    string ffmpegPath,
+    string outputPath,
+    StartRecordingRequest request,
+    object options)
+{
+    var recorderType = typeof(FfmpegProcessRecorder);
+    var buildMethod = recorderType.GetMethod(
+        "CreateWindowsGraphicsCaptureStartInfo",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new MissingMethodException(recorderType.FullName, "CreateWindowsGraphicsCaptureStartInfo");
+    return (ProcessStartInfo)(buildMethod.Invoke(
+                                  recorder,
+                                  new[] { executablePath, ffmpegPath, outputPath, request, options })
+                              ?? throw new InvalidOperationException("CreateWindowsGraphicsCaptureStartInfo returned null."));
 }
 
 static string BuildExactMuxArguments(
@@ -356,6 +503,19 @@ static bool ParseProcessLoopbackStartedAt(string line, out DateTimeOffset starte
         "TryParseProcessLoopbackStartedAt",
         BindingFlags.Static | BindingFlags.NonPublic)
         ?? throw new MissingMethodException(recorderType.FullName, "TryParseProcessLoopbackStartedAt");
+    var args = new object?[] { line, null };
+    var parsed = (bool)(parseMethod.Invoke(null, args) ?? false);
+    startedAtUtc = parsed ? (DateTimeOffset)args[1]! : default;
+    return parsed;
+}
+
+static bool ParseCaptureStartedAt(string line, out DateTimeOffset startedAtUtc)
+{
+    var recorderType = typeof(FfmpegProcessRecorder);
+    var parseMethod = recorderType.GetMethod(
+        "TryParseCaptureStartedAt",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new MissingMethodException(recorderType.FullName, "TryParseCaptureStartedAt");
     var args = new object?[] { line, null };
     var parsed = (bool)(parseMethod.Invoke(null, args) ?? false);
     startedAtUtc = parsed ? (DateTimeOffset)args[1]! : default;

@@ -45,6 +45,8 @@ static async Task RunServerAsync(CommandLineOptions options)
 
     var app = builder.Build();
     app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+    app.MapGet("/capabilities", (RecorderHostSettings recorderHostSettings) =>
+        Results.Ok(RecorderHostCapabilities.Create(recorderHostSettings)));
     app.MapGet("/status", (FfmpegProcessRecorder recorder) => Results.Ok(recorder.GetStatus()));
     app.MapPost(
         "/recordings/start",
@@ -76,6 +78,7 @@ static void RunProbe(CommandLineOptions options)
     }
 
     Console.WriteLine("ArgumentTemplate: " + settings.ArgumentTemplate);
+    Console.WriteLine("DefaultCaptureEngine: " + settings.DefaultCaptureEngine);
     Console.WriteLine("DefaultWindowTitle: " + settings.DefaultWindowTitle);
     Console.WriteLine("StartupProbeMilliseconds: " + settings.StartupProbeMilliseconds);
 

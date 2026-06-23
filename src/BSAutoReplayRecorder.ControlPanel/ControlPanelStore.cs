@@ -17,7 +17,10 @@ public sealed class ControlPanelStore
     private const string BeatSaberExecutableName = "Beat Saber.exe";
     private const string BeatSaberProcessName = "Beat Saber";
     private const string BeatSaberSteamAppId = "620980";
-    private const int DefaultRestoreDisplayScalePercent = 150;
+    private const double LagSpikeFramesPerSecondThreshold = 50;
+    private const double MinimumRecordingLagSpikeStartupGraceSeconds = 12;
+    private static readonly TimeSpan LagSpikeLowFpsDurationThreshold = TimeSpan.FromSeconds(10);
+    private const int BenchmarkMaximumConcurrency = 4;
     private static readonly string[] BeatSaberSettingsIniRelativePaths =
     {
         "settings.ini",
@@ -47,13 +50,15 @@ public sealed class ControlPanelStore
     private readonly object _sync = new object();
     private readonly string _statePath;
     private readonly string _queueDirectory;
+    private readonly string _collectionsDirectory;
     private readonly IRecordingAudioVerifier _recordingAudioVerifier;
+    private readonly IRecordingChapterEmbedder _recordingChapterEmbedder;
     private readonly IRecorderHostHealthChecker _recorderHostHealthChecker;
     private readonly IBeatSaverMapDownloader _mapDownloader;
     private readonly IWorkerPluginInstaller _workerPluginInstaller;
+    private readonly IBeatLeaderReplayDownloader _beatLeaderReplayDownloader;
     private readonly IScoreSaberReplayDownloader _scoreSaberReplayDownloader;
     private readonly ControlPanelState _state;
-    private bool _taskbarHiddenForRun;
     private int? _detectedRestoreDisplayScalePercent;
 
     public ControlPanelStore(
@@ -62,7 +67,9 @@ public sealed class ControlPanelStore
         IRecorderHostHealthChecker? recorderHostHealthChecker = null,
         IBeatSaverMapDownloader? mapDownloader = null,
         IWorkerPluginInstaller? workerPluginInstaller = null,
-        IScoreSaberReplayDownloader? scoreSaberReplayDownloader = null)
+        IBeatLeaderReplayDownloader? beatLeaderReplayDownloader = null,
+        IScoreSaberReplayDownloader? scoreSaberReplayDownloader = null,
+        IRecordingChapterEmbedder? recordingChapterEmbedder = null)
     {
         settings.Normalize();
         var workspaceDirectory = Path.GetFullPath(settings.WorkspaceDirectory);
@@ -70,17 +77,20 @@ public sealed class ControlPanelStore
 
         _statePath = Path.Combine(workspaceDirectory, "control-panel-state.json");
         _queueDirectory = Path.Combine(workspaceDirectory, "Queue");
+        _collectionsDirectory = Path.Combine(workspaceDirectory, "Collections");
         _recordingAudioVerifier = recordingAudioVerifier ?? new FfprobeRecordingAudioVerifier();
+        _recordingChapterEmbedder = recordingChapterEmbedder ?? new FfmpegRecordingChapterEmbedder();
         _recorderHostHealthChecker = recorderHostHealthChecker ?? new HttpRecorderHostHealthChecker();
         _mapDownloader = mapDownloader ?? new BeatSaverMapDownloader(new HttpClient());
         _workerPluginInstaller = workerPluginInstaller ?? new DotNetWorkerPluginInstaller();
+        _beatLeaderReplayDownloader = beatLeaderReplayDownloader ?? new BeatLeaderReplayDownloader(new HttpClient());
         _scoreSaberReplayDownloader = scoreSaberReplayDownloader ?? new ScoreSaberReplayDownloader(new HttpClient());
         Directory.CreateDirectory(_queueDirectory);
+        Directory.CreateDirectory(_collectionsDirectory);
 
         _state = LoadState(settings);
         _state.LastActivityUtc = DateTimeOffset.UtcNow;
         TaskbarVisibilityController.Restore();
-        _taskbarHiddenForRun = false;
         EnsureInstancesNoLock();
         RedistributeQueuedReplayPlansNoLock();
         SynchronizeMaxConcurrentRecordingsNoLock();
@@ -105,12 +115,75 @@ public sealed class ControlPanelStore
             changed |= SynchronizeMaxConcurrentRecordingsNoLock();
             changed |= RefreshDiskSpaceNoLock();
             changed |= NormalizeRunSummaryNoLock();
+            changed |= NormalizeBenchmarkNoLock(DateTimeOffset.UtcNow);
             if (changed)
             {
                 SaveNoLock();
             }
 
             return Clone(_state);
+        }
+    }
+
+    public GameColorPresetCatalog GetGameColorPresets()
+    {
+        lock (_sync)
+        {
+            _state.Settings.Normalize();
+            return GameColorPresetCatalogReader.Create(_state.Settings);
+        }
+    }
+
+    public SetupSourcePathReport GetSetupSourcePath()
+    {
+        lock (_sync)
+        {
+            _state.Settings.Normalize();
+            return SetupSourcePathDetector.Detect(_state.Settings.SourceBeatSaberPath);
+        }
+    }
+
+    public GameColorPresetCatalog SaveGameColorPreset(SaveGameColorPresetRequest request)
+    {
+        if (request == null)
+        {
+            throw new InvalidOperationException("Color preset request is required.");
+        }
+
+        lock (_sync)
+        {
+            var name = NormalizeNullable(request.Name) ?? "Color preset";
+            var preset = GameColorPresetCatalogReader.CreateSavedPreset(name, request.Colors ?? new GamePresentationSettings());
+            _state.Settings.GameColorPresets ??= new List<GameColorPreset>();
+            _state.Settings.GameColorPresets.Add(preset);
+            _state.Settings.Normalize();
+            AddEventNoLock("Info", "Colors", "Saved color preset: " + preset.Name + ".");
+            SaveNoLock();
+            return GameColorPresetCatalogReader.Create(_state.Settings);
+        }
+    }
+
+    public GameColorPresetCatalog DeleteGameColorPreset(string id)
+    {
+        lock (_sync)
+        {
+            var normalizedId = NormalizeNullable(id);
+            if (normalizedId == null)
+            {
+                throw new InvalidOperationException("Color preset id is required.");
+            }
+
+            _state.Settings.GameColorPresets ??= new List<GameColorPreset>();
+            var removed = _state.Settings.GameColorPresets.RemoveAll(preset =>
+                string.Equals(preset.Id, normalizedId, StringComparison.OrdinalIgnoreCase));
+            if (removed == 0)
+            {
+                throw new InvalidOperationException("Saved color preset was not found.");
+            }
+
+            AddEventNoLock("Warn", "Colors", "Deleted saved color preset.");
+            SaveNoLock();
+            return GameColorPresetCatalogReader.Create(_state.Settings);
         }
     }
 
@@ -142,6 +215,11 @@ public sealed class ControlPanelStore
             _state.Settings.OutputFormat = request.OutputFormat;
             _state.Settings.MonitorIndex = request.MonitorIndex;
             _state.Settings.QualityMode = request.QualityMode;
+            if (!string.IsNullOrWhiteSpace(request.CaptureEngine))
+            {
+                _state.Settings.CaptureEngine = request.CaptureEngine;
+            }
+
             _state.Settings.AudioMode = request.AudioMode;
 
             _state.Settings.RequireAudioForRun = request.RequireAudioForRun;
@@ -165,6 +243,7 @@ public sealed class ControlPanelStore
             _state.Settings.ShareCustomBombs = request.ShareCustomBombs;
             _state.Settings.SharedCustomBombsDirectory = request.SharedCustomBombsDirectory;
             _state.Settings.BeatSaberInstancesRoot = request.BeatSaberInstancesRoot;
+            _state.Settings.SourceBeatSaberPath = request.SourceBeatSaberPath;
             _state.Settings.BeatSaberInstanceNamePrefix = request.BeatSaberInstanceNamePrefix;
             _state.Settings.BeatSaberLaunchPreset = request.BeatSaberLaunchPreset;
             _state.Settings.BeatSaberLaunchArguments = request.BeatSaberLaunchArguments;
@@ -259,15 +338,228 @@ public sealed class ControlPanelStore
         ReplayReferenceImportRequest request,
         CancellationToken cancellationToken)
     {
+        var import = await DownloadReferenceImportsAsync(
+            request,
+            _queueDirectory,
+            CreateImportPath,
+            cancellationToken).ConfigureAwait(false);
+
+        lock (_sync)
+        {
+            var imported = new List<ReplayQueueRecord>();
+            if (import.ImportedPaths.Count > 0)
+            {
+                var importedSet = new HashSet<string>(import.ImportedPaths, StringComparer.OrdinalIgnoreCase);
+                ReloadQueueNoLock();
+                RedistributeQueuedReplayPlansNoLock();
+                imported.AddRange(_state.Queue.Where(item => importedSet.Contains(Path.GetFullPath(item.Path))));
+                RefreshQueueMapAvailabilityNoLock(allowDownload: true, imported.Select(item => item.Id));
+                AddEventNoLock(
+                    "Info",
+                    "Import",
+                    "Imported " + imported.Count + " linked replay" + (imported.Count == 1 ? "" : "s") + ".");
+            }
+
+            if (import.Failures.Count > 0)
+            {
+                AddEventNoLock(
+                    imported.Count > 0 ? "Warn" : "Error",
+                    "Import",
+                    "Replay link import skipped " + import.Failures.Count + ": " + string.Join("; ", import.Failures.Take(3)) +
+                    (import.Failures.Count > 3 ? "; and " + (import.Failures.Count - 3) + " more." : ""));
+            }
+
+            SaveNoLock();
+            return imported;
+        }
+    }
+
+    public async Task<MapCollectionImportResult> ImportReferencesToMapCollectionAsync(
+        string id,
+        ReplayReferenceImportRequest request,
+        CancellationToken cancellationToken)
+    {
+        string collectionDirectory;
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(id);
+            collectionDirectory = Path.Combine(_collectionsDirectory, collection.Id);
+            Directory.CreateDirectory(collectionDirectory);
+        }
+
+        var import = await DownloadReferenceImportsAsync(
+            request,
+            collectionDirectory,
+            fileName => CreateUniqueFilePath(collectionDirectory, fileName),
+            cancellationToken).ConfigureAwait(false);
+
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(id);
+            return AddImportedReplayPathsToMapCollectionNoLock(
+                collection,
+                collectionDirectory,
+                import.ImportedPaths,
+                0,
+                import.Failures);
+        }
+    }
+
+    public IReadOnlyList<MapCollectionRecord> GetMapCollections()
+    {
+        lock (_sync)
+        {
+            return Clone(_state).Collections;
+        }
+    }
+
+    public MapCollectionRecord SaveMapCollection(SaveMapCollectionRequest request)
+    {
+        if (request == null)
+        {
+            throw new InvalidOperationException("Collection request is required.");
+        }
+
+        lock (_sync)
+        {
+            var name = NormalizeNullable(request.Name);
+            if (name == null)
+            {
+                throw new InvalidOperationException("Collection name is required.");
+            }
+
+            var selectedIds = new HashSet<string>(
+                (request.ReplayIds ?? new List<string>())
+                .Select(value => NormalizeNullable(value))
+                .Where(value => value != null)
+                .Select(value => value!),
+                StringComparer.OrdinalIgnoreCase);
+            var replays = request.CreateEmpty
+                ? new List<ReplayQueueRecord>()
+                : _state.Queue
+                    .Where(replay => selectedIds.Count == 0 || selectedIds.Contains(replay.Id))
+                    .OrderBy(replay => replay.SequenceNumber)
+                    .ToList();
+            if (replays.Count == 0 && !request.CreateEmpty)
+            {
+                throw new InvalidOperationException("Import replays before saving a collection.");
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var collectionId = "collection-" + Guid.NewGuid().ToString("N").Substring(0, 12);
+            var collectionDirectory = Path.Combine(_collectionsDirectory, collectionId);
+            Directory.CreateDirectory(collectionDirectory);
+
+            try
+            {
+                var items = new List<MapCollectionItemRecord>();
+                foreach (var replay in replays)
+                {
+                    if (!File.Exists(replay.Path))
+                    {
+                        throw new InvalidOperationException(
+                            "Cannot save collection because a replay file is missing: " + replay.FileName + ".");
+                    }
+
+                    var collectionReplayPath = CreateUniqueFilePath(collectionDirectory, replay.FileName);
+                    File.Copy(replay.Path, collectionReplayPath);
+                    WriteReplaySidecar(collectionReplayPath, CreateReplaySidecar(replay, collectionReplayPath));
+                    items.Add(CreateMapCollectionItem(replay, collectionReplayPath, items.Count + 1));
+                }
+
+                var collection = new MapCollectionRecord
+                {
+                    Id = collectionId,
+                    Name = name,
+                    CreatedAtUtc = now,
+                    UpdatedAtUtc = now,
+                    Items = items
+                };
+                _state.Collections.Add(collection);
+                AddEventNoLock(
+                    "Info",
+                    "Collections",
+                    (items.Count == 0 ? "Created collection: " : "Saved collection: ") +
+                    name + " (" + items.Count + " replay" + (items.Count == 1 ? "" : "s") + ").");
+                SaveNoLock();
+                return CloneMapCollection(collection);
+            }
+            catch
+            {
+                try
+                {
+                    if (Directory.Exists(collectionDirectory))
+                    {
+                        Directory.Delete(collectionDirectory, recursive: true);
+                    }
+                }
+                catch
+                {
+                }
+
+                throw;
+            }
+        }
+    }
+
+    public MapCollectionImportResult ImportFilesToMapCollection(string id, IFormFileCollection files)
+    {
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(id);
+            var collectionDirectory = Path.Combine(_collectionsDirectory, collection.Id);
+            Directory.CreateDirectory(collectionDirectory);
+
+            var copiedPaths = new List<string>();
+            var skippedCount = 0;
+            if (files == null || files.Count == 0)
+            {
+                return new MapCollectionImportResult
+                {
+                    State = Clone(_state),
+                    Collection = CloneMapCollection(collection)
+                };
+            }
+
+            foreach (var file in files)
+            {
+                if (file.Length <= 0 || !IsSupportedReplayFileName(file.FileName))
+                {
+                    skippedCount++;
+                    continue;
+                }
+
+                var targetPath = CreateUniqueFilePath(collectionDirectory, file.FileName);
+                using (var stream = File.Create(targetPath))
+                {
+                    file.CopyTo(stream);
+                }
+
+                copiedPaths.Add(Path.GetFullPath(targetPath));
+            }
+
+            return AddImportedReplayPathsToMapCollectionNoLock(
+                collection,
+                collectionDirectory,
+                copiedPaths,
+                skippedCount,
+                new List<string>());
+        }
+    }
+
+    private async Task<ReferenceImportDownloadResult> DownloadReferenceImportsAsync(
+        ReplayReferenceImportRequest request,
+        string targetDirectory,
+        Func<string, string> createImportPath,
+        CancellationToken cancellationToken)
+    {
+        var result = new ReferenceImportDownloadResult();
         if (request == null || request.References == null || request.References.Count == 0)
         {
-            return Array.Empty<ReplayQueueRecord>();
+            return result;
         }
 
         var parser = new ReplayReferenceParser();
-        var importedPaths = new List<string>();
-        var failures = new List<string>();
-
         foreach (var value in request.References)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -282,57 +574,282 @@ public sealed class ControlPanelStore
             }
             catch (Exception ex)
             {
-                failures.Add(value + ": " + ex.Message);
-                continue;
-            }
-
-            if (reference.Provider != ReplayProvider.ScoreSaber2)
-            {
-                failures.Add(value + ": only ScoreSaber 2 replay URLs are supported by link import right now.");
+                result.Failures.Add(value + ": " + ex.Message);
                 continue;
             }
 
             try
             {
-                var download = await _scoreSaberReplayDownloader
-                    .DownloadAsync(reference, _queueDirectory, CreateImportPath, cancellationToken)
-                    .ConfigureAwait(false);
-                WriteReplaySidecar(download.LocalPath, download.Metadata);
-                importedPaths.Add(Path.GetFullPath(download.LocalPath));
+                switch (reference.Provider)
+                {
+                    case ReplayProvider.BeatLeader:
+                    {
+                        var download = await _beatLeaderReplayDownloader
+                            .DownloadAsync(reference, targetDirectory, createImportPath, cancellationToken)
+                            .ConfigureAwait(false);
+                        WriteReplaySidecar(download.LocalPath, download.Metadata);
+                        result.ImportedPaths.Add(Path.GetFullPath(download.LocalPath));
+                        break;
+                    }
+                    case ReplayProvider.ScoreSaber2:
+                    {
+                        var download = await _scoreSaberReplayDownloader
+                            .DownloadAsync(reference, targetDirectory, createImportPath, cancellationToken)
+                            .ConfigureAwait(false);
+                        WriteReplaySidecar(download.LocalPath, download.Metadata);
+                        result.ImportedPaths.Add(Path.GetFullPath(download.LocalPath));
+                        break;
+                    }
+                    default:
+                        result.Failures.Add(value + ": only BeatLeader and ScoreSaber 2 replay links are supported.");
+                        break;
+                }
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or HttpRequestException or TaskCanceledException)
             {
-                failures.Add(value + ": " + ex.Message);
+                result.Failures.Add(value + ": " + ex.Message);
             }
         }
 
+        return result;
+    }
+
+    private MapCollectionImportResult AddImportedReplayPathsToMapCollectionNoLock(
+        MapCollectionRecord collection,
+        string collectionDirectory,
+        IReadOnlyList<string> importedPaths,
+        int skippedCount,
+        IReadOnlyList<string> failures)
+    {
+        var importedCount = 0;
+        if (importedPaths.Count > 0)
+        {
+            var importedSet = new HashSet<string>(importedPaths, StringComparer.OrdinalIgnoreCase);
+            var loadedReplays = new ReplayQueue()
+                .Load(new ReplayQueueOptions
+                {
+                    InputDirectory = collectionDirectory,
+                    SkipInvalidReplays = true
+                })
+                .Items
+                .ToDictionary(item => Path.GetFullPath(item.ReplayPath), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var path in importedPaths)
+            {
+                if (!loadedReplays.TryGetValue(Path.GetFullPath(path), out var loadedReplay))
+                {
+                    skippedCount++;
+                    TryDeleteFile(path);
+                    continue;
+                }
+
+                var replay = CreateReplayRecordFromQueueItemNoLock(loadedReplay);
+                WriteReplaySidecar(path, CreateReplaySidecar(replay, path));
+                collection.Items.Add(CreateMapCollectionItem(replay, path, collection.Items.Count + 1));
+                importedCount++;
+            }
+
+            foreach (var path in importedSet)
+            {
+                if (!loadedReplays.ContainsKey(Path.GetFullPath(path)) && File.Exists(path))
+                {
+                    TryDeleteFile(path);
+                }
+            }
+        }
+
+        if (importedCount > 0)
+        {
+            collection.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            AddEventNoLock(
+                "Info",
+                "Collections",
+                "Added " + importedCount + " replay" + (importedCount == 1 ? "" : "s") +
+                " to collection: " + collection.Name + ".");
+        }
+
+        if (failures.Count > 0)
+        {
+            AddEventNoLock(
+                importedCount > 0 ? "Warn" : "Error",
+                "Collections",
+                "Collection link import skipped " + failures.Count + ": " + string.Join("; ", failures.Take(3)) +
+                (failures.Count > 3 ? "; and " + (failures.Count - 3) + " more." : ""));
+        }
+
+        SaveNoLock();
+        return new MapCollectionImportResult
+        {
+            State = Clone(_state),
+            Collection = CloneMapCollection(collection),
+            ImportedCount = importedCount,
+            SkippedCount = skippedCount + failures.Count
+        };
+    }
+
+    public MapCollectionLoadResult LoadMapCollection(string id, LoadMapCollectionRequest request)
+    {
         lock (_sync)
         {
-            var imported = new List<ReplayQueueRecord>();
-            if (importedPaths.Count > 0)
+            EnsureQueueCanLoadCollectionNoLock();
+            var collection = FindMapCollectionNoLock(id);
+            var overwriteRecorded = request?.OverwriteRecorded == true;
+            var copiedPaths = new List<string>();
+            var changedReplayIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var loadedCount = 0;
+            var requeuedCount = 0;
+            var skippedRecordedCount = 0;
+            var missingCount = 0;
+
+            foreach (var item in collection.Items.OrderBy(item => item.SequenceNumber))
             {
-                var importedSet = new HashSet<string>(importedPaths, StringComparer.OrdinalIgnoreCase);
+                var existing = FindMatchingQueueItemNoLock(item);
+                if (existing != null)
+                {
+                    if (IsRecordedReplay(existing) && !overwriteRecorded)
+                    {
+                        skippedRecordedCount++;
+                        continue;
+                    }
+
+                    if (!string.Equals(existing.Status, "Queued", StringComparison.OrdinalIgnoreCase))
+                    {
+                        RequeueReplayNoLock(existing);
+                        requeuedCount++;
+                    }
+
+                    changedReplayIds.Add(existing.Id);
+                    loadedCount++;
+                    continue;
+                }
+
+                if (IsRecordedCollectionItem(item) && !overwriteRecorded)
+                {
+                    skippedRecordedCount++;
+                    continue;
+                }
+
+                if (!File.Exists(item.Path))
+                {
+                    missingCount++;
+                    continue;
+                }
+
+                var importPath = CreateImportPath(item.FileName);
+                File.Copy(item.Path, importPath);
+                WriteReplaySidecar(importPath, CreateReplaySidecar(item, importPath));
+                copiedPaths.Add(Path.GetFullPath(importPath));
+                loadedCount++;
+            }
+
+            if (copiedPaths.Count > 0)
+            {
                 ReloadQueueNoLock();
-                RedistributeQueuedReplayPlansNoLock();
-                imported.AddRange(_state.Queue.Where(item => importedSet.Contains(Path.GetFullPath(item.Path))));
-                RefreshQueueMapAvailabilityNoLock(allowDownload: true, imported.Select(item => item.Id));
-                AddEventNoLock(
-                    "Info",
-                    "Import",
-                    "Imported " + imported.Count + " linked replay" + (imported.Count == 1 ? "" : "s") + ".");
+                ApplyCollectionImportOrderNoLock(copiedPaths);
+                foreach (var path in copiedPaths)
+                {
+                    var replay = _state.Queue.FirstOrDefault(item =>
+                        string.Equals(Path.GetFullPath(item.Path), path, StringComparison.OrdinalIgnoreCase));
+                    if (replay != null)
+                    {
+                        changedReplayIds.Add(replay.Id);
+                    }
+                }
             }
 
-            if (failures.Count > 0)
+            if (changedReplayIds.Count > 0)
             {
-                AddEventNoLock(
-                    imported.Count > 0 ? "Warn" : "Error",
-                    "Import",
-                    "Replay link import skipped " + failures.Count + ": " + string.Join("; ", failures.Take(3)) +
-                    (failures.Count > 3 ? "; and " + (failures.Count - 3) + " more." : ""));
+                RefreshQueueMapAvailabilityNoLock(allowDownload: true, changedReplayIds);
             }
 
+            RecalculateRunCountsNoLock();
+            RedistributeQueuedReplayPlansNoLock();
+            AddEventNoLock(
+                "Info",
+                "Collections",
+                "Loaded collection: " + collection.Name + " (" + loadedCount + " queued, " +
+                skippedRecordedCount + " skipped recorded" +
+                (missingCount > 0 ? ", " + missingCount + " missing" : "") + ").");
             SaveNoLock();
-            return imported;
+            return new MapCollectionLoadResult
+            {
+                State = Clone(_state),
+                CollectionId = collection.Id,
+                CollectionName = collection.Name,
+                LoadedCount = loadedCount,
+                RequeuedCount = requeuedCount,
+                SkippedRecordedCount = skippedRecordedCount,
+                MissingCount = missingCount
+            };
+        }
+    }
+
+    public ControlPanelState DeleteMapCollection(string id)
+    {
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(id);
+            _state.Collections.Remove(collection);
+            var collectionDirectory = Path.Combine(_collectionsDirectory, collection.Id);
+            if (Directory.Exists(collectionDirectory) &&
+                IsPathInsideDirectory(Path.GetFullPath(collectionDirectory), _collectionsDirectory))
+            {
+                Directory.Delete(collectionDirectory, recursive: true);
+            }
+
+            AddEventNoLock("Warn", "Collections", "Deleted collection: " + collection.Name + ".");
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
+    public MapCardExport GetMapCardExport(string id)
+    {
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(id);
+            return CreateMapCardExportNoLock(collection);
+        }
+    }
+
+    public MapCardExport UpdateMapCardCategories(string id, UpdateMapCollectionCardCategoriesRequest request)
+    {
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(id);
+            foreach (var update in request.Items ?? new List<MapCollectionCardCategoryUpdate>())
+            {
+                var normalizedItemId = NormalizeNullable(update.ItemId);
+                if (normalizedItemId == null)
+                {
+                    continue;
+                }
+
+                var item = collection.Items.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Id, normalizedItemId, StringComparison.OrdinalIgnoreCase));
+                if (item == null)
+                {
+                    continue;
+                }
+
+                item.MapCardCategory = NormalizeMapCardCategory(update.Category);
+            }
+
+            collection.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            SaveNoLock();
+            return CreateMapCardExportNoLock(collection);
+        }
+    }
+
+    public string GetCollectionItemCoverPath(string collectionId, string itemId)
+    {
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(collectionId);
+            var item = FindMapCollectionItemNoLock(collection, itemId);
+            var replay = CreateReplayRecordForMapLookup(item);
+            return ResolveCoverArtPathNoLock(replay)
+                   ?? throw new InvalidOperationException("No cover art was found for " + item.FileName + ".");
         }
     }
 
@@ -552,18 +1069,42 @@ public sealed class ControlPanelStore
             var replay = FindQueueItemNoLock(id);
             EnsureQueueItemCanChangeNoLock(replay, "requeue");
 
-            replay.Status = "Queued";
-            replay.AssignedInstance = null;
-            replay.AssignmentId = null;
-            replay.AssignedAtUtc = null;
-            replay.CompletedAtUtc = null;
-            replay.OutputPath = null;
-            replay.Error = null;
-            replay.Warning = null;
+            RequeueReplayNoLock(replay);
             RecalculateRunCountsNoLock();
             RedistributeQueuedReplayPlansNoLock();
 
             AddEventNoLock("Info", "Queue", "Replay requeued: " + CreateReplayLabel(replay), replay.Id);
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
+    public ControlPanelState RequeueAllQueueItems()
+    {
+        lock (_sync)
+        {
+            ExpireStaleWorkersNoLock(DateTimeOffset.UtcNow);
+            var replays = _state.Queue
+                .Where(IsRequeueableReplay)
+                .ToList();
+            if (replays.Count == 0)
+            {
+                return Clone(_state);
+            }
+
+            foreach (var replay in replays)
+            {
+                RequeueReplayNoLock(replay);
+            }
+
+            RecalculateRunCountsNoLock();
+            RedistributeQueuedReplayPlansNoLock();
+
+            AddEventNoLock(
+                "Info",
+                "Queue",
+                "Requeued " + replays.Count + " replay" + (replays.Count == 1 ? "" : "s") + ".",
+                null);
             SaveNoLock();
             return Clone(_state);
         }
@@ -621,12 +1162,17 @@ public sealed class ControlPanelStore
         }
     }
 
-    public ControlPanelState StartRun()
+    public ControlPanelState StartRun(StartRunRequest? request = null)
     {
         lock (_sync)
         {
             var now = DateTimeOffset.UtcNow;
             ExpireStaleWorkersNoLock(now);
+            if (_state.Benchmark.IsRunning || _state.Benchmark.CancellationRequested)
+            {
+                throw new InvalidOperationException("Stop the active benchmark before starting the queue.");
+            }
+
             if (_state.Settings.RequireAllWorkersReady)
             {
                 var runInstances = GetRunInstancesNoLock();
@@ -644,9 +1190,16 @@ public sealed class ControlPanelStore
 
             ValidateInstanceBaselineForRunNoLock();
             ValidateQueueMapsForRunNoLock();
+            ValidateReplayProviderReadinessForRunNoLock(now);
             ValidateAudioSettingsForRunNoLock();
             ValidateRecorderHostsForRunNoLock();
+            ApplyRecordingDisplayScaleNoLock();
             ApplyTaskbarVisibilityForRunNoLock();
+
+            var collectionName = NormalizeNullable(request?.CollectionName) ??
+                                 ResolveCurrentQueueCollectionNameNoLock();
+            var runOutputDirectory = CreateRunRecordingOutputDirectoryNoLock(now, collectionName);
+            Directory.CreateDirectory(runOutputDirectory);
 
             ResetAssignmentsNoLock();
             _state.Run.IsRunning = true;
@@ -654,6 +1207,8 @@ public sealed class ControlPanelStore
             _state.Run.CancellationReason = null;
             _state.Run.StartedAtUtc = now;
             _state.Run.FinishedAtUtc = null;
+            _state.Run.RecordingOutputDirectory = runOutputDirectory;
+            _state.Run.CollectionName = collectionName ?? "";
             _state.Run.CompletedCount = 0;
             _state.Run.FailedCount = 0;
             _state.Run.Status = "Running";
@@ -670,7 +1225,11 @@ public sealed class ControlPanelStore
                 instance.Status = string.IsNullOrWhiteSpace(instance.WorkerId) ? "Idle" : "Online";
             }
 
-            AddEventNoLock("Info", "Run", "Run started with " + _state.Queue.Count + " replay" + (_state.Queue.Count == 1 ? "" : "s") + ".");
+            AddEventNoLock(
+                "Info",
+                "Run",
+                "Run started with " + _state.Queue.Count + " replay" + (_state.Queue.Count == 1 ? "" : "s") +
+                " in " + Path.GetFileName(runOutputDirectory) + ".");
             SaveNoLock();
             return Clone(_state);
         }
@@ -682,9 +1241,137 @@ public sealed class ControlPanelStore
         {
             EnsureInstancesNoLock();
             _state.Run.ForceStopCommandId++;
+            _state.Run.CloseGamesWhenFinishedRequested = false;
             RequestRunCancellationNoLock("Stopped by operator.", failQueued: false);
             TryFinalizeCanceledRunNoLock(DateTimeOffset.UtcNow);
             AddEventNoLock("Warn", "Run", "Run stop requested.");
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
+    public ControlPanelState StartBenchmark(BenchmarkStartRequest? request = null)
+    {
+        lock (_sync)
+        {
+            var now = DateTimeOffset.UtcNow;
+            ExpireStaleWorkersNoLock(now);
+            RefreshLaunchProcessesNoLock();
+            EnsureInstancesNoLock();
+
+            if (_state.Run.IsRunning || _state.Run.CancellationRequested)
+            {
+                throw new InvalidOperationException("Stop the current run before starting a benchmark.");
+            }
+
+            if (_state.Benchmark.IsRunning || _state.Benchmark.CancellationRequested)
+            {
+                throw new InvalidOperationException("A benchmark is already running.");
+            }
+
+            RefreshQueueMapAvailabilityNoLock(allowDownload: false);
+            var sourceReplays = GetBenchmarkSourceReplaysNoLock();
+            if (sourceReplays.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "No benchmark-ready queue replays were found. Import at least one replay with a local replay file and an available song folder.");
+            }
+
+            var readyInstances = GetBenchmarkReadyInstancesNoLock(now);
+            if (readyInstances.Count == 0)
+            {
+                throw new InvalidOperationException("No enabled online workers are available for benchmarking.");
+            }
+
+            var maxConcurrency = Math.Min(BenchmarkMaximumConcurrency, readyInstances.Count);
+            var selectedConcurrencies = NormalizeBenchmarkConcurrencyLevels(request?.ConcurrencyLevels, maxConcurrency);
+            ValidateInstanceBaselineForRunNoLock();
+            ValidateReplayProviderReadinessForBenchmarkNoLock(sourceReplays, readyInstances, now);
+            ValidateAudioSettingsForBenchmarkNoLock(readyInstances);
+            ValidateRecorderHostsForBenchmarkNoLock(readyInstances);
+
+            var runId = "benchmark-" + now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            var outputDirectory = Path.Combine(Path.GetDirectoryName(_statePath)!, "Benchmarks", runId);
+            Directory.CreateDirectory(outputDirectory);
+
+            _state.Benchmark = new BenchmarkState
+            {
+                IsRunning = true,
+                CancellationRequested = false,
+                Status = "Running",
+                RunId = runId,
+                StartedAtUtc = now,
+                FinishedAtUtc = null,
+                ActiveConcurrency = 0,
+                MaxConcurrency = maxConcurrency,
+                SelectedConcurrencies = selectedConcurrencies,
+                RecommendedWorkerCount = null,
+                FailureReason = "",
+                OutputDirectory = outputDirectory,
+                ReportPath = Path.Combine(outputDirectory, "benchmark-report.json"),
+                SourceQueueItemIds = sourceReplays.Select(replay => replay.Id).ToList(),
+                SettingsSnapshot = CreateBenchmarkSettingsSnapshotNoLock(readyInstances.Count)
+            };
+
+            StartNextBenchmarkPassNoLock(now);
+            AddEventNoLock(
+                "Info",
+                "Benchmark",
+                "Benchmark started with " + sourceReplays.Count + " source replay" +
+                (sourceReplays.Count == 1 ? "" : "s") +
+                " and " + selectedConcurrencies.Count + " selected pass" +
+                (selectedConcurrencies.Count == 1 ? "" : "es") + ".");
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
+    public ControlPanelState StopBenchmark()
+    {
+        lock (_sync)
+        {
+            EnsureInstancesNoLock();
+            var now = DateTimeOffset.UtcNow;
+            if (!_state.Benchmark.IsRunning && !_state.Benchmark.CancellationRequested)
+            {
+                return Clone(_state);
+            }
+
+            _state.Run.ForceStopCommandId++;
+            _state.Benchmark.IsRunning = false;
+            _state.Benchmark.CancellationRequested = true;
+            _state.Benchmark.Status = "Stopping";
+            _state.Benchmark.FailureReason = "Stopped by operator.";
+
+            foreach (var assignment in EnumerateActiveBenchmarkAssignmentsNoLock())
+            {
+                if (string.Equals(assignment.Status, "Queued", StringComparison.OrdinalIgnoreCase))
+                {
+                    assignment.Status = "Stopped";
+                    assignment.Error = "Stopped by operator.";
+                    assignment.CompletedAtUtc = now;
+                }
+            }
+
+            TryAdvanceBenchmarkNoLock(now);
+            AddEventNoLock("Warn", "Benchmark", "Benchmark stop requested.");
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
+    public ControlPanelState SetCloseGamesWhenFinished(bool enabled)
+    {
+        lock (_sync)
+        {
+            EnsureInstancesNoLock();
+            _state.Run.CloseGamesWhenFinishedRequested = enabled;
+            AddEventNoLock(
+                enabled ? "Info" : "Warn",
+                "Run",
+                enabled
+                    ? "Managed games will close when the queue finishes."
+                    : "Close games after queue was canceled.");
             SaveNoLock();
             return Clone(_state);
         }
@@ -782,6 +1469,7 @@ public sealed class ControlPanelStore
             else
             {
                 sourceDirectory = ResolveProvisionSourceDirectory(request.SourceBeatSaberPath);
+                _state.Settings.SourceBeatSaberPath = sourceDirectory;
                 ValidateProvisionSourceAndTargets(sourceDirectory, targetRootDirectory, targets, request.OverwriteExisting);
 
                 CopyManagedInstanceDirectory(
@@ -993,7 +1681,11 @@ public sealed class ControlPanelStore
                 throw new InvalidOperationException("Enable " + instance.Name + " before launching it.");
             }
 
-            _workerPluginInstaller.Install(_state.Instances, _state.Settings);
+            if (!FindBeatSaberProcessIdForInstance(instance).HasValue)
+            {
+                _workerPluginInstaller.Install(_state.Instances, _state.Settings, new[] { instance });
+            }
+
             LaunchInstanceNoLock(instance);
             if (!string.Equals(instance.GameLaunchStatus, "Failed", StringComparison.OrdinalIgnoreCase))
             {
@@ -1029,6 +1721,25 @@ public sealed class ControlPanelStore
                     ? "Quit requested for " + instance.Name + "."
                     : "No running game was found for " + instance.Name + ".",
                 instanceIndex: instance.Index);
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
+    public ControlPanelState QuitAllInstances()
+    {
+        lock (_sync)
+        {
+            if (_state.Run.IsRunning || _state.Run.CancellationRequested)
+            {
+                throw new InvalidOperationException("Stop the current run or use close after queue before closing all games.");
+            }
+
+            ExpireStaleWorkersNoLock(DateTimeOffset.UtcNow);
+            RefreshLaunchProcessesNoLock();
+            EnsureInstancesNoLock();
+            var result = CloseAllGamesNoLock();
+            AddCloseAllGamesEventNoLock("Close requested for all games", result);
             SaveNoLock();
             return Clone(_state);
         }
@@ -1080,6 +1791,84 @@ public sealed class ControlPanelStore
                 "Instance",
                 instance.Name + (enabled ? " enabled for scheduling." : " disabled for scheduling."),
                 instanceIndex: instance.Index);
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
+    public ControlPanelState SetActiveInstanceCount(int count)
+    {
+        lock (_sync)
+        {
+            ExpireStaleWorkersNoLock(DateTimeOffset.UtcNow);
+            EnsureInstancesNoLock();
+
+            if (count < ControlPanelSettings.MinimumManagedInstanceCount ||
+                count > ControlPanelSettings.MaximumManagedInstanceCount)
+            {
+                throw new InvalidOperationException(
+                    "Active instance count must be between " +
+                    ControlPanelSettings.MinimumManagedInstanceCount +
+                    " and " +
+                    ControlPanelSettings.MaximumManagedInstanceCount +
+                    ".");
+            }
+
+            var availableCount = GetAvailableManagedInstanceCountNoLock();
+            if (count > availableCount)
+            {
+                throw new InvalidOperationException(
+                    "Only " + availableCount + " managed instance" +
+                    (availableCount == 1 ? " is" : "s are") +
+                    " available. Create the missing instance before enabling " + count + " active lanes.");
+            }
+
+            if (count > _state.Settings.InstanceCount)
+            {
+                _state.Settings.InstanceCount = count;
+                _state.Settings.Normalize();
+                EnsureInstancesNoLock();
+            }
+
+            var configured = GetConfiguredInstancesNoLock();
+            foreach (var instance in configured.Where(instance => instance.Index >= count && instance.Enabled))
+            {
+                var activeReplay = FindActiveReplayNoLock(instance);
+                if (activeReplay != null || IsActiveReplayStatus(instance.Status) || IsRecordingStatus(instance.Status))
+                {
+                    throw new InvalidOperationException("Cannot disable " + instance.Name + " while it is recording.");
+                }
+            }
+
+            var changed = false;
+            foreach (var instance in configured)
+            {
+                var shouldEnable = instance.Index < count;
+                if (instance.Enabled == shouldEnable)
+                {
+                    continue;
+                }
+
+                instance.Enabled = shouldEnable;
+                changed = true;
+                if (!shouldEnable)
+                {
+                    ReleaseActiveAssignmentNoLock(instance, "Queued");
+                    instance.Status = string.IsNullOrWhiteSpace(instance.WorkerId) ? "Idle" : "Online";
+                }
+            }
+
+            RedistributeQueuedReplayPlansNoLock();
+            SynchronizeMaxConcurrentRecordingsNoLock();
+            RefreshInstanceProvisionCountsNoLock();
+            if (changed)
+            {
+                AddEventNoLock(
+                    "Info",
+                    "Instance",
+                    "Active recording instances set to " + count + ". Queue plan redistributed.");
+            }
+
             SaveNoLock();
             return Clone(_state);
         }
@@ -1153,8 +1942,12 @@ public sealed class ControlPanelStore
             ExpireStaleWorkersNoLock(DateTimeOffset.UtcNow);
             RefreshLaunchProcessesNoLock();
             EnsureInstancesNoLock();
-            _workerPluginInstaller.Install(_state.Instances, _state.Settings);
-            foreach (var instance in GetRunInstancesNoLock())
+            var instances = GetRunInstancesNoLock().ToList();
+            var deployTargets = instances
+                .Where(instance => !FindBeatSaberProcessIdForInstance(instance).HasValue)
+                .ToList();
+            _workerPluginInstaller.Install(_state.Instances, _state.Settings, deployTargets);
+            foreach (var instance in instances)
             {
                 LaunchInstanceNoLock(instance);
             }
@@ -1187,10 +1980,12 @@ public sealed class ControlPanelStore
             {
                 ReleaseActiveAssignmentNoLock(instance, "Queued");
                 instance.RegisteredAtUtc = now;
+                instance.LastReportedFramesPerSecond = null;
                 instance.LastForceStopCommandId = _state.Run.ForceStopCommandId;
                 instance.AppliedGamePresentationSettingsVersion = 0;
                 instance.GamePresentationSyncStatus = "Pending";
                 instance.GamePresentationSyncError = "";
+                ResetReplayProviderStatusNoLock(instance);
             }
             else
             {
@@ -1204,6 +1999,13 @@ public sealed class ControlPanelStore
             instance.GameLaunchStatus = "Worker online";
             instance.GameLaunchError = null;
             instance.PluginVersion = NormalizeNullable(request.PluginVersion);
+            UpdateReplayProviderStatusNoLock(
+                instance,
+                request.ReplayProviderStatusReported,
+                request.BeatLeaderReady,
+                request.BeatLeaderStatus,
+                request.ScoreSaberReady,
+                request.ScoreSaberStatus);
 
             var workerName = NormalizeNullable(request.WorkerName);
             if (workerName != null)
@@ -1238,6 +2040,9 @@ public sealed class ControlPanelStore
             instance.LastHeartbeatUtc = now;
             instance.Status = NormalizeStatus(request.Status, "Online");
             instance.CurrentReplayId = NormalizeNullable(request.CurrentReplayId);
+            instance.LastReportedFramesPerSecond = NormalizeFramesPerSecond(request.FramesPerSecond);
+            instance.LastReportedAverageFramesPerSecond = NormalizeFramesPerSecond(request.AverageFramesPerSecond);
+            instance.LastReportedFrameSampleCount = Math.Max(0, request.SampledFrameCount);
             if (request.AppliedGamePresentationSettingsVersion > 0)
             {
                 instance.AppliedGamePresentationSettingsVersion = request.AppliedGamePresentationSettingsVersion;
@@ -1246,11 +2051,30 @@ public sealed class ControlPanelStore
             instance.GamePresentationSyncStatus =
                 NormalizeNullable(request.GamePresentationSyncStatus) ?? instance.GamePresentationSyncStatus;
             instance.GamePresentationSyncError = NormalizeNullable(request.GamePresentationSyncError) ?? "";
+            UpdateReplayProviderStatusNoLock(
+                instance,
+                request.ReplayProviderStatusReported,
+                request.BeatLeaderReady,
+                request.BeatLeaderStatus,
+                request.ScoreSaberReady,
+                request.ScoreSaberStatus);
 
             var replay = FindActiveReplayNoLock(instance);
+            var benchmarkAssignment = FindActiveBenchmarkAssignmentNoLock(instance);
             if (replay != null && IsRecordingStatus(instance.Status))
             {
+                if (!string.Equals(replay.Status, "Recording", StringComparison.OrdinalIgnoreCase) ||
+                    !replay.RecordingStartedAtUtc.HasValue)
+                {
+                    replay.RecordingStartedAtUtc = now;
+                }
+
                 replay.Status = "Recording";
+            }
+
+            if (benchmarkAssignment != null)
+            {
+                UpdateBenchmarkAssignmentHeartbeatNoLock(benchmarkAssignment, instance, now);
             }
 
             var shouldOpenPauseMenu = _state.Run.ForceStopCommandId > instance.LastForceStopCommandId;
@@ -1259,18 +2083,42 @@ public sealed class ControlPanelStore
                 instance.LastForceStopCommandId = _state.Run.ForceStopCommandId;
             }
 
+            var lagSpikeCancellationReason = replay == null
+                ? null
+                : CreateHeartbeatLagSpikeCancellationReasonNoLock(
+                    instance,
+                    replay,
+                    now,
+                    _state.Settings.LagSpikeStartupGraceSeconds);
+            var benchmarkLagSpikeCancellationReason = CreateBenchmarkHeartbeatLagSpikeCancellationReasonNoLock(
+                instance,
+                benchmarkAssignment,
+                now);
+            var benchmarkCancellationReason = _state.Benchmark.CancellationRequested && benchmarkAssignment != null
+                ? NormalizeNullable(_state.Benchmark.FailureReason) ?? "Benchmark stopped by operator."
+                : null;
             SaveNoLock();
             return new WorkerHeartbeatResponse
             {
                 ShouldCancelAssignment =
+                    lagSpikeCancellationReason != null ||
+                    benchmarkLagSpikeCancellationReason != null ||
+                    benchmarkCancellationReason != null ||
                     (_state.Run.CancellationRequested &&
                      (!string.IsNullOrWhiteSpace(instance.ActiveAssignmentId) ||
                       !string.IsNullOrWhiteSpace(request.CurrentReplayId))),
-                CancellationReason = _state.Run.CancellationReason,
+                CancellationReason =
+                    lagSpikeCancellationReason ??
+                    benchmarkLagSpikeCancellationReason ??
+                    benchmarkCancellationReason ??
+                    _state.Run.CancellationReason,
+                CancellationFailsAssignment =
+                    lagSpikeCancellationReason != null ||
+                    benchmarkLagSpikeCancellationReason != null,
                 ShouldOpenPauseMenu = shouldOpenPauseMenu,
                 GamePresentationSettingsVersion = _state.Settings.GamePresentationSettingsVersion,
                 GamePresentation = CloneGamePresentationSettings(_state.Settings.GamePresentation),
-                Progress = CreateRunProgressNoLock()
+                Progress = CreateWorkerProgressNoLock()
             };
         }
     }
@@ -1290,6 +2138,40 @@ public sealed class ControlPanelStore
                 RedistributeQueuedReplayPlansNoLock();
                 SaveNoLock();
                 return CreateEmptyAssignment(instance);
+            }
+
+            var activeBenchmarkAssignment = FindActiveBenchmarkAssignmentNoLock(instance);
+            if (activeBenchmarkAssignment != null)
+            {
+                instance.Status = "Assigned";
+                SaveNoLock();
+                return CreateBenchmarkAssignmentResponse(activeBenchmarkAssignment, instance);
+            }
+
+            if (_state.Benchmark.IsRunning && !_state.Benchmark.CancellationRequested)
+            {
+                var benchmarkAssignment = FindQueuedBenchmarkAssignmentForInstanceNoLock(instance);
+                if (benchmarkAssignment != null)
+                {
+                    benchmarkAssignment.Status = "Assigned";
+                    benchmarkAssignment.AssignedAtUtc = now;
+                    benchmarkAssignment.WorkerId = instance.WorkerId ?? "";
+                    benchmarkAssignment.InstanceName = CreateManagedInstanceName(instance.Index);
+                    instance.ActiveAssignmentId = benchmarkAssignment.AssignmentId;
+                    instance.CurrentReplayId = benchmarkAssignment.SourceReplayId;
+                    instance.Status = "Assigned";
+                    ResetRecordingLagSpikeTrackerNoLock(instance);
+
+                    AddEventNoLock(
+                        "Info",
+                        "Benchmark",
+                        "Benchmark recording started: " + benchmarkAssignment.ReplayLabel +
+                        " on " + CreateManagedInstanceName(instance.Index),
+                        benchmarkAssignment.SourceReplayId,
+                        instance.Index);
+                    SaveNoLock();
+                    return CreateBenchmarkAssignmentResponse(benchmarkAssignment, instance);
+                }
             }
 
             if (!_state.Run.IsRunning)
@@ -1330,6 +2212,7 @@ public sealed class ControlPanelStore
             var assignmentId = CreateAssignmentId();
             replay.AssignmentId = assignmentId;
             replay.AssignedAtUtc = now;
+            replay.RecordingStartedAtUtc = null;
             replay.CompletedAtUtc = null;
             replay.AssignedInstance = instance.Index;
             replay.Status = "Assigned";
@@ -1340,6 +2223,7 @@ public sealed class ControlPanelStore
             instance.ActiveAssignmentId = assignmentId;
             instance.CurrentReplayId = replay.Id;
             instance.Status = "Assigned";
+            ResetRecordingLagSpikeTrackerNoLock(instance);
 
             AddEventNoLock(
                 "Info",
@@ -1363,11 +2247,19 @@ public sealed class ControlPanelStore
         {
             var now = DateTimeOffset.UtcNow;
             var instance = FindWorkerNoLock(request.WorkerId);
-            var replay = _state.Queue.FirstOrDefault(item =>
-                string.Equals(item.AssignmentId, request.AssignmentId, StringComparison.OrdinalIgnoreCase));
             var status = NormalizeReplayStatus(request.Status);
             instance.LastHeartbeatUtc = now;
 
+            var benchmarkAssignment = FindBenchmarkAssignmentByIdNoLock(request.AssignmentId);
+            if (benchmarkAssignment != null)
+            {
+                ReportBenchmarkAssignmentNoLock(request, status, instance, benchmarkAssignment, now);
+                SaveNoLock();
+                return Clone(_state);
+            }
+
+            var replay = _state.Queue.FirstOrDefault(item =>
+                string.Equals(item.AssignmentId, request.AssignmentId, StringComparison.OrdinalIgnoreCase));
             if (replay == null)
             {
                 throw new InvalidOperationException("Assignment was not found: " + request.AssignmentId);
@@ -1380,7 +2272,18 @@ public sealed class ControlPanelStore
                 var audioVerification = VerifyCompletedRecordingAudioNoLock(outputPath);
                 var syncVerification = VerifyCompletedRecordingSyncNoLock(request);
                 var warning = NormalizeNullable(request.Warning);
-                replay.Status = audioVerification.HasAudio && syncVerification.Verified ? "Completed" : "Failed";
+                var verified = audioVerification.HasAudio && syncVerification.Verified;
+                var chapterEmbedding = verified
+                    ? TryEmbedRecordingChaptersNoLock(replay, outputPath)
+                    : RecordingChapterEmbedResult.Skip();
+                if (!chapterEmbedding.Succeeded)
+                {
+                    warning = CombineWarnings(
+                        warning,
+                        "Bookmark chapters were not embedded: " + chapterEmbedding.Error);
+                }
+
+                replay.Status = verified ? "Completed" : "Failed";
                 replay.OutputPath = outputPath;
                 replay.Error = audioVerification.HasAudio
                     ? syncVerification.Error
@@ -1401,6 +2304,10 @@ public sealed class ControlPanelStore
                         : "Recording failed: " + CreateReplayLabel(replay) + " - " + replay.Error,
                     replay.Id,
                     instance.Index);
+                if (replay.Status == "Completed")
+                {
+                    UpdateMatchingCollectionCompletionNoLock(replay, now);
+                }
             }
             else if (status == "Failed" || status == "Stopped")
             {
@@ -1503,6 +2410,111 @@ public sealed class ControlPanelStore
         return new RecordingSyncVerificationResult { Verified = true };
     }
 
+    private RecordingChapterEmbedResult TryEmbedRecordingChaptersNoLock(ReplayQueueRecord replay, string? outputPath)
+    {
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            return RecordingChapterEmbedResult.Skip("Completed recording did not include an output path.");
+        }
+
+        try
+        {
+            var levelDirectory = ResolveLevelDirectoryNoLock(replay);
+            if (string.IsNullOrWhiteSpace(levelDirectory))
+            {
+                return RecordingChapterEmbedResult.Skip("No matching song folder was found for bookmark chapters.");
+            }
+
+            var bookmarks = BeatmapBookmarkReader.TryRead(levelDirectory, replay.Difficulty, replay.Mode);
+            if (bookmarks.Count == 0)
+            {
+                return RecordingChapterEmbedResult.Skip("No beatmap bookmarks were found.");
+            }
+
+            var replayInfo = ReadReplayInfoForChapters(replay);
+            var chapters = RecordingChapterPlanner.Create(bookmarks, replay, replayInfo);
+            if (chapters.Count == 0)
+            {
+                return RecordingChapterEmbedResult.Skip("Beatmap bookmarks were outside the recorded replay range.");
+            }
+
+            var result = _recordingChapterEmbedder.Embed(outputPath, chapters);
+            if (result.Succeeded && !result.Skipped)
+            {
+                AddEventNoLock(
+                    "Good",
+                    "Chapters",
+                    "Embedded " + result.ChapterCount + " bookmark chapter" + (result.ChapterCount == 1 ? "" : "s") +
+                    ": " + CreateReplayLabel(replay),
+                    replay.Id);
+            }
+            else if (!result.Succeeded)
+            {
+                AddEventNoLock(
+                    "Warn",
+                    "Chapters",
+                    "Bookmark chapters were not embedded for " + CreateReplayLabel(replay) + ": " + result.Error,
+                    replay.Id);
+            }
+
+            return result;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            var error = "bookmark chapter planning failed: " + ex.Message;
+            AddEventNoLock(
+                "Warn",
+                "Chapters",
+                "Bookmark chapters were not embedded for " + CreateReplayLabel(replay) + ": " + error,
+                replay.Id);
+            return RecordingChapterEmbedResult.Failure(error);
+        }
+    }
+
+    private static BsorInfo ReadReplayInfoForChapters(ReplayQueueRecord replay)
+    {
+        if (!string.IsNullOrWhiteSpace(replay.Path) && File.Exists(replay.Path))
+        {
+            if (IsScoreSaberReplayForChapters(replay))
+            {
+                try
+                {
+                    return new ScoreSaberReplayInfoReader().Read(replay.Path);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException)
+                {
+                    return CreateReplayInfoFallback(replay);
+                }
+            }
+
+            try
+            {
+                return new BsorInfoReader().Read(replay.Path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException)
+            {
+                return CreateReplayInfoFallback(replay);
+            }
+        }
+
+        return CreateReplayInfoFallback(replay);
+    }
+
+    private static BsorInfo CreateReplayInfoFallback(ReplayQueueRecord replay)
+    {
+        return new BsorInfo
+        {
+            Speed = 1,
+            LastFrameTime = (float)Math.Max(0, replay.EstimatedSeconds)
+        };
+    }
+
+    private static bool IsScoreSaberReplayForChapters(ReplayQueueRecord replay)
+    {
+        return string.Equals(Path.GetExtension(replay.Path), ".dat", StringComparison.OrdinalIgnoreCase) ||
+               replay.ReplayFormat.Contains("ScoreSaber", StringComparison.OrdinalIgnoreCase);
+    }
+
     private bool ShouldVerifyCompletedRecordingAudioNoLock()
     {
         return _state.Settings.RequireAudioForRun &&
@@ -1520,9 +2532,15 @@ public sealed class ControlPanelStore
         var state = JsonSerializer.Deserialize<ControlPanelState>(json, JsonOptions.Default)
                     ?? new ControlPanelState();
         state.Settings ??= settings;
+        if (string.IsNullOrWhiteSpace(state.Settings.SourceBeatSaberPath))
+        {
+            state.Settings.SourceBeatSaberPath = settings.SourceBeatSaberPath;
+        }
+
         state.Settings.LagSpikeStartupGraceSeconds = settings.LagSpikeStartupGraceSeconds;
         state.Settings.Normalize();
         state.Queue ??= new List<ReplayQueueRecord>();
+        state.Collections ??= new List<MapCollectionRecord>();
         state.Instances ??= new List<WorkerInstanceRecord>();
         state.InstanceProvision ??= new InstanceProvisionReport();
         state.InstanceBaseline ??= new InstanceBaselineReport();
@@ -1530,13 +2548,59 @@ public sealed class ControlPanelStore
         state.DiskSpace ??= new DiskSpaceReport();
         state.Events ??= new List<ControlPanelEventRecord>();
         state.Run ??= new RunState();
+        NormalizeLoadedRunState(state);
         foreach (var replay in state.Queue)
         {
             replay.Calibration ??= new ReplayCalibrationRecord();
             NormalizeReplayProviderFields(replay);
         }
 
+        foreach (var collection in state.Collections)
+        {
+            collection.Items ??= new List<MapCollectionItemRecord>();
+            for (var index = 0; index < collection.Items.Count; index++)
+            {
+                var item = collection.Items[index];
+                if (string.IsNullOrWhiteSpace(item.Id))
+                {
+                    item.Id = CreateStableId(collection.Id + ":" + index.ToString(CultureInfo.InvariantCulture));
+                }
+
+                if (item.SequenceNumber < 1)
+                {
+                    item.SequenceNumber = index + 1;
+                }
+
+                NormalizeMapCollectionItemProviderFields(item);
+                item.MapCardCategory = NormalizeMapCardCategory(item.MapCardCategory);
+            }
+        }
+
         return state;
+    }
+
+    private static void NormalizeLoadedRunState(ControlPanelState state)
+    {
+        if (!state.Run.CancellationRequested)
+        {
+            return;
+        }
+
+        var hasActiveAssignment = state.Instances.Any(instance =>
+            !string.IsNullOrWhiteSpace(instance.ActiveAssignmentId));
+        if (hasActiveAssignment)
+        {
+            return;
+        }
+
+        state.Run.IsRunning = false;
+        state.Run.CancellationRequested = false;
+        state.Run.FinishedAtUtc ??= DateTimeOffset.UtcNow;
+        state.Run.Status = state.Run.FailedCount > 0 ? "Stopped with errors" : "Stopped";
+        foreach (var instance in state.Instances)
+        {
+            instance.Status = string.IsNullOrWhiteSpace(instance.WorkerId) ? "Idle" : "Online";
+        }
     }
 
     private void ReloadQueueNoLock()
@@ -1595,6 +2659,7 @@ public sealed class ControlPanelStore
                 AssignedInstance = existing?.AssignedInstance,
                 AssignmentId = existing?.AssignmentId,
                 AssignedAtUtc = existing?.AssignedAtUtc,
+                RecordingStartedAtUtc = existing?.RecordingStartedAtUtc,
                 CompletedAtUtc = existing?.CompletedAtUtc,
                 OutputPath = existing?.OutputPath,
                 Error = existing?.Error,
@@ -1613,6 +2678,44 @@ public sealed class ControlPanelStore
             .ThenBy(item => item.SequenceNumber)
             .ToList();
         ResequenceQueueNoLock();
+    }
+
+    private ReplayQueueRecord CreateReplayRecordFromQueueItemNoLock(ReplayQueueItem item)
+    {
+        var sidecar = ReadReplaySidecar(item.ReplayPath) ??
+                      TryReadOrDownloadScoreSaberReplayMetadata(
+                          item.ReplayPath,
+                          item.ScoreId,
+                          item.ReplayInfo.PlayerId,
+                          item.ReplayInfo.PlayerName,
+                          item.ReplayInfo.LevelHash);
+        var recordId = CreateStableId(Path.GetFullPath(item.ReplayPath));
+        return new ReplayQueueRecord
+        {
+            Id = recordId,
+            SequenceNumber = item.SequenceNumber,
+            Provider = ResolveProvider(null, sidecar, item),
+            ReferenceKind = ResolveReferenceKind(null, sidecar, item),
+            ReplayFormat = ResolveReplayFormat(null, sidecar, item),
+            SourceUrl = sidecar?.SourceUrl ?? item.SourceUrl ?? "",
+            ScoreId = sidecar?.ScoreId ?? item.ScoreId ?? "",
+            FileName = Path.GetFileName(item.ReplayPath),
+            Path = item.ReplayPath,
+            SongName = Prefer(sidecar?.SongName, item.ReplayInfo.SongName),
+            Mapper = Prefer(sidecar?.Mapper, item.ReplayInfo.Mapper),
+            PlayerName = Prefer(sidecar?.PlayerName, ResolveReplayPlayerName(
+                item.ReplayInfo.PlayerName,
+                item.ReplayInfo.PlayerId,
+                item.ReplayPath)),
+            Difficulty = Prefer(sidecar?.Difficulty, item.ReplayInfo.Difficulty),
+            Mode = Prefer(sidecar?.Mode, item.ReplayInfo.Mode),
+            LevelHash = Prefer(sidecar?.LevelHash, item.ReplayInfo.LevelHash),
+            CoverArtUrl = "",
+            MapStatus = "Unchecked",
+            EstimatedSeconds = Math.Round(ResolveEstimatedSeconds(sidecar, item.EstimatedPlaybackLength.TotalSeconds), 2),
+            Status = "Queued",
+            Calibration = new ReplayCalibrationRecord()
+        };
     }
 
     private bool RefreshQueueMetadataNoLock()
@@ -2071,6 +3174,30 @@ public sealed class ControlPanelStore
             .ToList();
     }
 
+    private int GetAvailableManagedInstanceCountNoLock()
+    {
+        var availableCount = Math.Clamp(
+            _state.Settings.InstanceCount,
+            ControlPanelSettings.MinimumManagedInstanceCount,
+            ControlPanelSettings.MaximumManagedInstanceCount);
+        for (var index = 0; index < ControlPanelSettings.MaximumManagedInstanceCount; index++)
+        {
+            var instance = _state.Instances.FirstOrDefault(item => item.Index == index) ?? new WorkerInstanceRecord
+            {
+                Index = index,
+                Name = CreateManagedInstanceName(index),
+                RecorderHostUrl = "http://127.0.0.1:" + (5757 + index)
+            };
+            var launchDirectory = ResolveManagedLaunchDirectory(instance, index);
+            if (IsManagedInstanceReady(launchDirectory))
+            {
+                availableCount = Math.Max(availableCount, index + 1);
+            }
+        }
+
+        return availableCount;
+    }
+
     private List<WorkerInstanceRecord> GetRunInstancesNoLock()
     {
         var enabledConfigured = GetEnabledConfiguredInstancesNoLock();
@@ -2271,6 +3398,37 @@ public sealed class ControlPanelStore
             ". Check Baseline and fix instance drift before starting.");
     }
 
+    private static void ResetReplayProviderStatusNoLock(WorkerInstanceRecord instance)
+    {
+        instance.ReplayProviderStatusReported = false;
+        instance.BeatLeaderReady = false;
+        instance.BeatLeaderStatus = "Not reported";
+        instance.ScoreSaberReady = false;
+        instance.ScoreSaberStatus = "Not reported";
+    }
+
+    private static void UpdateReplayProviderStatusNoLock(
+        WorkerInstanceRecord instance,
+        bool statusReported,
+        bool beatLeaderReady,
+        string? beatLeaderStatus,
+        bool scoreSaberReady,
+        string? scoreSaberStatus)
+    {
+        if (!statusReported)
+        {
+            return;
+        }
+
+        instance.ReplayProviderStatusReported = true;
+        instance.BeatLeaderReady = beatLeaderReady;
+        instance.BeatLeaderStatus = NormalizeNullable(beatLeaderStatus) ??
+                                    (beatLeaderReady ? "Ready" : "Not ready");
+        instance.ScoreSaberReady = scoreSaberReady;
+        instance.ScoreSaberStatus = NormalizeNullable(scoreSaberStatus) ??
+                                    (scoreSaberReady ? "Ready" : "Not ready");
+    }
+
     private SongFolderLinkReport ScanSongFolderLinksNoLock()
     {
         var links = new List<SongFolderLinkRecord>();
@@ -2449,40 +3607,7 @@ public sealed class ControlPanelStore
 
     private IReadOnlyList<SharedFolderDefinition> CreateSharedFolderDefinitionsNoLock()
     {
-        var definitions = new List<SharedFolderDefinition>
-        {
-            new SharedFolderDefinition(
-                "CustomLevels",
-                Path.Combine("Beat Saber_Data", "CustomLevels"),
-                _state.Settings.SharedCustomLevelsDirectory),
-            new SharedFolderDefinition(
-                "CustomWIPLevels",
-                Path.Combine("Beat Saber_Data", "CustomWIPLevels"),
-                _state.Settings.SharedCustomWipLevelsDirectory)
-        };
-
-        AddOptionalSharedFolder(definitions, _state.Settings.ShareCustomSabers, "CustomSabers", "CustomSabers", _state.Settings.SharedCustomSabersDirectory);
-        AddOptionalSharedFolder(definitions, _state.Settings.ShareCustomNotes, "CustomNotes", "CustomNotes", _state.Settings.SharedCustomNotesDirectory);
-        AddOptionalSharedFolder(definitions, _state.Settings.ShareCustomPlatforms, "CustomPlatforms", "CustomPlatforms", _state.Settings.SharedCustomPlatformsDirectory);
-        AddOptionalSharedFolder(definitions, _state.Settings.ShareCustomAvatars, "CustomAvatars", "CustomAvatars", _state.Settings.SharedCustomAvatarsDirectory);
-        AddOptionalSharedFolder(definitions, _state.Settings.ShareCustomWalls, "CustomWalls", "CustomWalls", _state.Settings.SharedCustomWallsDirectory);
-        AddOptionalSharedFolder(definitions, _state.Settings.ShareCustomBombs, "CustomBombs", "CustomBombs", _state.Settings.SharedCustomBombsDirectory);
-        return definitions;
-    }
-
-    private static void AddOptionalSharedFolder(
-        List<SharedFolderDefinition> definitions,
-        bool enabled,
-        string displayName,
-        string instanceRelativePath,
-        string sharedFolderPath)
-    {
-        if (!enabled)
-        {
-            return;
-        }
-
-        definitions.Add(new SharedFolderDefinition(displayName, instanceRelativePath, sharedFolderPath));
+        return ModIntegrationCatalog.CreateSharedFolderDefinitions(_state.Settings);
     }
 
     private static string GetInstanceSongFolderPath(WorkerInstanceRecord instance, string relativePath)
@@ -2871,7 +3996,6 @@ public sealed class ControlPanelStore
                 UseShellExecute = false
             };
 
-            ApplyRecordingDisplayScaleNoLock();
             ApplyBeatSaberWindowedRegistryState(_state.Settings.BeatSaberLaunchArguments);
             startInfo.Environment["SteamAppId"] = BeatSaberSteamAppId;
             startInfo.Environment["SteamOverlayGameId"] = BeatSaberSteamAppId;
@@ -2948,6 +4072,93 @@ public sealed class ControlPanelStore
 
         MarkInstanceGameExitedNoLock(instance);
         return true;
+    }
+
+    private (int ClosedCount, int ClearedCount, int FailedCount) CloseAllGamesNoLock()
+    {
+        var closedCount = 0;
+        var clearedCount = 0;
+        var failedCount = 0;
+        foreach (var instance in _state.Instances.Where(ShouldCloseInstanceNoLock))
+        {
+            var hadKnownRuntime = HasKnownGameRuntime(instance);
+            try
+            {
+                if (QuitInstanceProcessNoLock(instance))
+                {
+                    closedCount++;
+                }
+                else if (hadKnownRuntime)
+                {
+                    clearedCount++;
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                failedCount++;
+                instance.GameLaunchStatus = "Failed";
+                instance.GameLaunchError = ex.Message;
+                AddEventNoLock("Bad", "Instance", ex.Message, instanceIndex: instance.Index);
+            }
+        }
+
+        return (closedCount, clearedCount, failedCount);
+    }
+
+    private void TryCloseGamesWhenFinishedNoLock()
+    {
+        if (!_state.Run.CloseGamesWhenFinishedRequested)
+        {
+            return;
+        }
+
+        _state.Run.CloseGamesWhenFinishedRequested = false;
+        var result = CloseAllGamesNoLock();
+        AddCloseAllGamesEventNoLock("Queue finished; close requested for all games", result);
+    }
+
+    private void AddCloseAllGamesEventNoLock(
+        string prefix,
+        (int ClosedCount, int ClearedCount, int FailedCount) result)
+    {
+        var affectedCount = result.ClosedCount + result.ClearedCount;
+        var text = prefix + ": " +
+                   (affectedCount == 0
+                       ? "no running games were found"
+                       : affectedCount.ToString(CultureInfo.InvariantCulture) +
+                         " game" +
+                         (affectedCount == 1 ? "" : "s") +
+                         " closed or cleared");
+        if (result.FailedCount > 0)
+        {
+            text += "; " +
+                    result.FailedCount.ToString(CultureInfo.InvariantCulture) +
+                    " failed.";
+        }
+        else
+        {
+            text += ".";
+        }
+
+        AddEventNoLock(
+            result.FailedCount > 0 ? "Bad" : affectedCount > 0 ? "Warn" : "Info",
+            "Instance",
+            text);
+    }
+
+    private static bool ShouldCloseInstanceNoLock(WorkerInstanceRecord instance)
+    {
+        return instance.Enabled ||
+               instance.GameProcessId.HasValue ||
+               !string.IsNullOrWhiteSpace(instance.WorkerId);
+    }
+
+    private static bool HasKnownGameRuntime(WorkerInstanceRecord instance)
+    {
+        return instance.GameProcessId.HasValue ||
+               !string.IsNullOrWhiteSpace(instance.WorkerId) ||
+               !string.IsNullOrWhiteSpace(instance.CurrentReplayId) ||
+               !string.IsNullOrWhiteSpace(instance.ActiveAssignmentId);
     }
 
     private void MarkInstanceGameExitedNoLock(WorkerInstanceRecord instance)
@@ -3295,6 +4506,71 @@ public sealed class ControlPanelStore
         return index;
     }
 
+    private MapCollectionRecord FindMapCollectionNoLock(string id)
+    {
+        var normalizedId = NormalizeNullable(id);
+        if (normalizedId == null)
+        {
+            throw new InvalidOperationException("Collection id is required.");
+        }
+
+        var collection = _state.Collections.FirstOrDefault(item =>
+            string.Equals(item.Id, normalizedId, StringComparison.OrdinalIgnoreCase));
+        if (collection == null)
+        {
+            throw new InvalidOperationException("Collection was not found: " + normalizedId);
+        }
+
+        return collection;
+    }
+
+    private static MapCollectionItemRecord FindMapCollectionItemNoLock(MapCollectionRecord collection, string id)
+    {
+        var normalizedId = NormalizeNullable(id);
+        if (normalizedId == null)
+        {
+            throw new InvalidOperationException("Collection item id is required.");
+        }
+
+        var item = collection.Items.FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, normalizedId, StringComparison.OrdinalIgnoreCase));
+        if (item == null)
+        {
+            throw new InvalidOperationException("Collection item was not found: " + normalizedId);
+        }
+
+        return item;
+    }
+
+    private MapCardExport CreateMapCardExportNoLock(MapCollectionRecord collection)
+    {
+        return new MapCardExport
+        {
+            CollectionId = collection.Id,
+            CollectionName = collection.Name,
+            Items = collection.Items
+                .OrderBy(item => item.SequenceNumber)
+                .Select(item => CreateMapCardExportItemNoLock(collection, item))
+                .ToList()
+        };
+    }
+
+    private void EnsureQueueCanLoadCollectionNoLock()
+    {
+        if (_state.Run.IsRunning || _state.Run.CancellationRequested ||
+            _state.Queue.Any(replay => IsActiveReplayStatus(replay.Status)))
+        {
+            throw new InvalidOperationException("Stop the current run before loading a collection.");
+        }
+    }
+
+    private ReplayQueueRecord? FindMatchingQueueItemNoLock(MapCollectionItemRecord item)
+    {
+        var targetKey = CreateReplayTargetKey(item);
+        return _state.Queue.FirstOrDefault(replay =>
+            string.Equals(CreateReplayTargetKey(replay), targetKey, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static void EnsureQueueItemCanChangeNoLock(ReplayQueueRecord replay, string action)
     {
         if (IsActiveReplayStatus(replay.Status))
@@ -3315,6 +4591,98 @@ public sealed class ControlPanelStore
             string.Equals(item.AssignmentId, instance.ActiveAssignmentId, StringComparison.OrdinalIgnoreCase));
     }
 
+    private static string? CreateHeartbeatLagSpikeCancellationReasonNoLock(
+        WorkerInstanceRecord instance,
+        ReplayQueueRecord? replay,
+        DateTimeOffset now,
+        double startupGraceSeconds)
+    {
+        var framesPerSecond = GetLagGuardFramesPerSecondNoLock(instance, out var fpsMetricLabel);
+        if (replay == null ||
+            !framesPerSecond.HasValue ||
+            !IsRecordingStatus(instance.Status) ||
+            IsWithinHeartbeatLagSpikeStartupGrace(replay, now, startupGraceSeconds))
+        {
+            ResetRecordingLagSpikeTrackerNoLock(instance);
+            return null;
+        }
+
+        if (framesPerSecond.Value >= LagSpikeFramesPerSecondThreshold)
+        {
+            ResetRecordingLagSpikeTrackerNoLock(instance);
+            return null;
+        }
+
+        instance.LowFpsRecordingStartedAtUtc ??= now;
+        instance.ConsecutiveLowFpsRecordingHeartbeatCount++;
+        var lowFpsDuration = now - instance.LowFpsRecordingStartedAtUtc.Value;
+        if (lowFpsDuration < LagSpikeLowFpsDurationThreshold)
+        {
+            return null;
+        }
+
+        return "Lag spike detected during replay recording: worker " +
+               fpsMetricLabel +
+               " FPS " +
+               FormatFramesPerSecond(framesPerSecond.Value) +
+               " stayed below " +
+               LagSpikeFramesPerSecondThreshold.ToString("0", CultureInfo.InvariantCulture) +
+               " FPS for " +
+               FormatDurationSeconds(lowFpsDuration) +
+               ". Recording is invalid.";
+    }
+
+    private static void ResetRecordingLagSpikeTrackerNoLock(WorkerInstanceRecord instance)
+    {
+        instance.ConsecutiveLowFpsRecordingHeartbeatCount = 0;
+        instance.LowFpsRecordingStartedAtUtc = null;
+    }
+
+    private static double? GetLagGuardFramesPerSecondNoLock(
+        WorkerInstanceRecord instance,
+        out string metricLabel)
+    {
+        if (instance.LastReportedFrameSampleCount > 0 &&
+            instance.LastReportedAverageFramesPerSecond.HasValue)
+        {
+            metricLabel = "average";
+            return instance.LastReportedAverageFramesPerSecond;
+        }
+
+        metricLabel = "minimum";
+        return instance.LastReportedFramesPerSecond;
+    }
+
+    private static string FormatDurationSeconds(TimeSpan duration)
+    {
+        return Math.Max(0, duration.TotalSeconds).ToString("0.0", CultureInfo.InvariantCulture) + " seconds";
+    }
+
+    private static bool IsWithinHeartbeatLagSpikeStartupGrace(
+        ReplayQueueRecord replay,
+        DateTimeOffset now,
+        double startupGraceSeconds)
+    {
+        var graceAnchor = replay.RecordingStartedAtUtc ?? replay.AssignedAtUtc;
+        if (!graceAnchor.HasValue)
+        {
+            return false;
+        }
+
+        var gracePeriod = TimeSpan.FromSeconds(ResolveEffectiveLagSpikeStartupGraceSeconds(startupGraceSeconds));
+        return now - graceAnchor.Value < gracePeriod;
+    }
+
+    private static double ResolveEffectiveLagSpikeStartupGraceSeconds(double startupGraceSeconds)
+    {
+        if (double.IsNaN(startupGraceSeconds) || double.IsInfinity(startupGraceSeconds))
+        {
+            return MinimumRecordingLagSpikeStartupGraceSeconds;
+        }
+
+        return Math.Min(30, Math.Max(MinimumRecordingLagSpikeStartupGraceSeconds, startupGraceSeconds));
+    }
+
     private void ResetAssignmentsNoLock()
     {
         foreach (var replay in _state.Queue)
@@ -3322,6 +4690,7 @@ public sealed class ControlPanelStore
             replay.AssignedInstance = null;
             replay.AssignmentId = null;
             replay.AssignedAtUtc = null;
+            replay.RecordingStartedAtUtc = null;
             replay.CompletedAtUtc = null;
             replay.OutputPath = null;
             replay.Error = null;
@@ -3338,6 +4707,15 @@ public sealed class ControlPanelStore
 
     private void ReleaseActiveAssignmentNoLock(WorkerInstanceRecord instance, string replayStatus)
     {
+        var benchmarkAssignment = FindActiveBenchmarkAssignmentNoLock(instance);
+        if (benchmarkAssignment != null && IsPendingReplayStatus(benchmarkAssignment.Status))
+        {
+            benchmarkAssignment.Status = "Failed";
+            benchmarkAssignment.Passed = false;
+            benchmarkAssignment.Error = "Worker disconnected before the benchmark assignment finished.";
+            benchmarkAssignment.CompletedAtUtc = DateTimeOffset.UtcNow;
+        }
+
         var replay = FindActiveReplayNoLock(instance);
         if (replay != null && IsPendingReplayStatus(replay.Status))
         {
@@ -3345,6 +4723,7 @@ public sealed class ControlPanelStore
             replay.AssignedInstance = null;
             replay.AssignmentId = null;
             replay.AssignedAtUtc = null;
+            replay.RecordingStartedAtUtc = null;
         }
 
         ClearWorkerAssignmentNoLock(instance);
@@ -3354,6 +4733,26 @@ public sealed class ControlPanelStore
     {
         instance.ActiveAssignmentId = null;
         instance.CurrentReplayId = null;
+        ResetRecordingLagSpikeTrackerNoLock(instance);
+    }
+
+    private static bool IsRequeueableReplay(ReplayQueueRecord replay)
+    {
+        return !IsActiveReplayStatus(replay.Status) &&
+               !string.Equals(replay.Status, "Queued", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void RequeueReplayNoLock(ReplayQueueRecord replay)
+    {
+        replay.Status = "Queued";
+        replay.AssignedInstance = null;
+        replay.AssignmentId = null;
+        replay.AssignedAtUtc = null;
+        replay.RecordingStartedAtUtc = null;
+        replay.CompletedAtUtc = null;
+        replay.OutputPath = null;
+        replay.Error = null;
+        replay.Warning = null;
     }
 
     private void ResequenceQueueNoLock()
@@ -3400,6 +4799,12 @@ public sealed class ControlPanelStore
             if (replay.AssignedAtUtc != null)
             {
                 replay.AssignedAtUtc = null;
+                changed = true;
+            }
+
+            if (replay.RecordingStartedAtUtc != null)
+            {
+                replay.RecordingStartedAtUtc = null;
                 changed = true;
             }
         }
@@ -3499,6 +4904,7 @@ public sealed class ControlPanelStore
         _state.Run.FinishedAtUtc = now;
         _state.Run.Status = _state.Run.FailedCount > 0 ? "Stopped with errors" : "Stopped";
         _state.Run.CancellationRequested = false;
+        _state.Run.CloseGamesWhenFinishedRequested = false;
 
         foreach (var instance in _state.Instances)
         {
@@ -3506,6 +4912,7 @@ public sealed class ControlPanelStore
         }
 
         RestoreTaskbarVisibilityNoLock();
+        RestoreDisplayScaleNoLock();
     }
 
     private void TryCompleteRunNoLock(DateTimeOffset now)
@@ -3531,6 +4938,8 @@ public sealed class ControlPanelStore
         }
 
         RestoreTaskbarVisibilityNoLock();
+        RestoreDisplayScaleNoLock();
+        TryCloseGamesWhenFinishedNoLock();
     }
 
     private void RequestRunCancellationIfAllConcurrentInstancesFailedNoLock(DateTimeOffset now)
@@ -3585,79 +4994,190 @@ public sealed class ControlPanelStore
         if (_state.Settings.HideTaskbarDuringRun)
         {
             TaskbarVisibilityController.Hide();
-            _taskbarHiddenForRun = true;
         }
     }
 
     private void RestoreTaskbarVisibilityNoLock()
     {
-        if (_taskbarHiddenForRun)
-        {
-            TaskbarVisibilityController.Restore();
-            _taskbarHiddenForRun = false;
-        }
+        TaskbarVisibilityController.Restore();
     }
 
     private void ValidateRecorderHostsForRunNoLock()
     {
-        var unhealthy = GetRunInstancesNoLock()
+        var runInstances = GetRunInstancesNoLock();
+        var unhealthy = runInstances
             .Where(instance => !_recorderHostHealthChecker.IsHealthy(instance.RecorderHostUrl))
             .Select(instance => (instance.Index + 1) + " (" + instance.RecorderHostUrl + ")")
             .ToList();
-        if (unhealthy.Count == 0)
+        if (unhealthy.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "These recorder hosts are not ready: " + string.Join(", ", unhealthy) +
+                ". Start the recorder stack again before starting the queue.");
+        }
+
+        var captureEngine = ControlPanelSettings.NormalizeCaptureEngine(_state.Settings.CaptureEngine);
+        var audioMode = string.Equals(_state.Settings.AudioMode, "ProcessLoopback", StringComparison.OrdinalIgnoreCase)
+            ? "ProcessLoopback"
+            : "None";
+        var unsupported = new List<string>();
+        foreach (var instance in runInstances)
+        {
+            var capabilities = _recorderHostHealthChecker.GetCapabilities(instance.RecorderHostUrl);
+            if (!capabilities.SupportsCaptureEngine(captureEngine))
+            {
+                unsupported.Add(
+                    CreateManagedInstanceName(instance.Index) + " capture " + captureEngine + ": " +
+                    (NormalizeNullable(capabilities.DescribeCaptureEngine(captureEngine)) ??
+                     NormalizeNullable(capabilities.Detail) ??
+                     "not supported"));
+            }
+
+            if (!capabilities.SupportsAudioMode(audioMode))
+            {
+                unsupported.Add(
+                    CreateManagedInstanceName(instance.Index) + " audio " + audioMode + ": " +
+                    (NormalizeNullable(capabilities.DescribeAudioMode(audioMode)) ??
+                     NormalizeNullable(capabilities.Detail) ??
+                     "not supported"));
+            }
+        }
+
+        if (unsupported.Count == 0)
         {
             return;
         }
 
         throw new InvalidOperationException(
-            "These recorder hosts are not ready: " + string.Join(", ", unhealthy) +
-            ". Start the recorder stack again before starting the queue.");
+            "Recorder host capabilities do not match the selected recording settings. " +
+            string.Join("; ", unsupported.Take(5)) +
+            (unsupported.Count > 5 ? "; and " + (unsupported.Count - 5) + " more" : "") + ".");
+    }
+
+    private void ValidateReplayProviderReadinessForRunNoLock(DateTimeOffset now)
+    {
+        var queuedProviders = _state.Queue
+            .Where(replay =>
+                !string.Equals(replay.Status, "Completed", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(replay.Status, "Failed", StringComparison.OrdinalIgnoreCase))
+            .Select(replay => replay.Provider == ReplayProvider.Unknown ? ReplayProvider.BeatLeader : replay.Provider)
+            .Distinct()
+            .ToHashSet();
+        if (queuedProviders.Count == 0)
+        {
+            return;
+        }
+
+        var runInstances = GetRunInstancesNoLock()
+            .Where(instance =>
+                !string.IsNullOrWhiteSpace(instance.WorkerId) &&
+                !IsWorkerStale(instance, now) &&
+                instance.ReplayProviderStatusReported)
+            .ToList();
+        if (runInstances.Count == 0)
+        {
+            return;
+        }
+
+        var issues = new List<string>();
+        if (queuedProviders.Contains(ReplayProvider.BeatLeader))
+        {
+            issues.AddRange(runInstances
+                .Where(instance => !instance.BeatLeaderReady)
+                .Select(instance =>
+                    CreateManagedInstanceName(instance.Index) + " BeatLeader: " +
+                    (NormalizeNullable(instance.BeatLeaderStatus) ?? "not ready")));
+        }
+
+        if (queuedProviders.Contains(ReplayProvider.ScoreSaber2))
+        {
+            issues.AddRange(runInstances
+                .Where(instance => !instance.ScoreSaberReady)
+                .Select(instance =>
+                    CreateManagedInstanceName(instance.Index) + " ScoreSaber: " +
+                    (NormalizeNullable(instance.ScoreSaberStatus) ?? "not ready")));
+        }
+
+        if (issues.Count == 0)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "Replay provider readiness failed. " + string.Join("; ", issues.Take(5)) +
+            (issues.Count > 5 ? "; and " + (issues.Count - 5) + " more" : "") + ".");
     }
 
     private void ApplyRecordingDisplayScaleNoLock()
     {
-        CaptureRestoreDisplayScaleNoLock();
-        ApplyDisplayScaleNoLock(_state.Settings.RecordingDisplayScalePercent, throwOnFailure: true);
+        if (!CaptureRestoreDisplayScaleNoLock())
+        {
+            return;
+        }
+
+        ApplyDisplayScaleNoLock(
+            _state.Settings.RecordingDisplayScalePercent,
+            _state.Settings.MonitorIndex,
+            throwOnFailure: true);
     }
 
     private void RestoreDisplayScaleNoLock()
     {
         try
         {
-            var restoreScalePercent =
-                _detectedRestoreDisplayScalePercent ?? _state.Settings.RestoreDisplayScalePercent;
-            ApplyDisplayScaleNoLock(restoreScalePercent, throwOnFailure: false);
+            if (!_state.Run.DisplayScaleRestorePending && !_detectedRestoreDisplayScalePercent.HasValue)
+            {
+                return;
+            }
+
+            var restoreScalePercent = _state.Run.DisplayScaleRestorePending && _state.Run.DisplayScaleRestorePercent > 0
+                ? _state.Run.DisplayScaleRestorePercent
+                : _detectedRestoreDisplayScalePercent ?? _state.Settings.RestoreDisplayScalePercent;
+            var monitorIndex = _state.Run.DisplayScaleRestorePending
+                ? _state.Run.DisplayScaleMonitorIndex
+                : _state.Settings.MonitorIndex;
+            ApplyDisplayScaleNoLock(restoreScalePercent, monitorIndex, throwOnFailure: false);
         }
         finally
         {
             _detectedRestoreDisplayScalePercent = null;
+            _state.Run.DisplayScaleRestorePending = false;
+            _state.Run.DisplayScaleRestorePercent = 0;
+            _state.Run.DisplayScaleMonitorIndex = 0;
         }
     }
 
-    private void CaptureRestoreDisplayScaleNoLock()
+    private bool CaptureRestoreDisplayScaleNoLock()
     {
-        if (!_state.Settings.ManageDisplayScale || _detectedRestoreDisplayScalePercent.HasValue)
+        if (!_state.Settings.ManageDisplayScale)
         {
-            return;
+            return false;
+        }
+
+        if (_detectedRestoreDisplayScalePercent.HasValue || _state.Run.DisplayScaleRestorePending)
+        {
+            return true;
         }
 
         var scalePercent = ReadDisplayScaleNoLock(throwOnFailure: true);
         if (!scalePercent.HasValue)
         {
-            return;
+            return false;
         }
 
         var restoreScalePercent = scalePercent.Value;
         if (restoreScalePercent == _state.Settings.RecordingDisplayScalePercent)
         {
-            restoreScalePercent = _state.Settings.RestoreDisplayScalePercent != _state.Settings.RecordingDisplayScalePercent
-                ? _state.Settings.RestoreDisplayScalePercent
-                : DefaultRestoreDisplayScalePercent;
+            return false;
         }
 
         _detectedRestoreDisplayScalePercent = restoreScalePercent;
+        _state.Run.DisplayScaleRestorePending = true;
+        _state.Run.DisplayScaleRestorePercent = restoreScalePercent;
+        _state.Run.DisplayScaleMonitorIndex = _state.Settings.MonitorIndex;
         _state.Settings.RestoreDisplayScalePercent = restoreScalePercent;
         SaveNoLock();
+        return true;
     }
 
     private int? ReadDisplayScaleNoLock(bool throwOnFailure)
@@ -3728,7 +5248,7 @@ public sealed class ControlPanelStore
         }
     }
 
-    private void ApplyDisplayScaleNoLock(int scalePercent, bool throwOnFailure)
+    private void ApplyDisplayScaleNoLock(int scalePercent, int monitorIndex, bool throwOnFailure)
     {
         if (!_state.Settings.ManageDisplayScale)
         {
@@ -3742,7 +5262,7 @@ public sealed class ControlPanelStore
             return;
         }
 
-        var monitorNumber = _state.Settings.MonitorIndex + 1;
+        var monitorNumber = Math.Clamp(monitorIndex, 0, 16) + 1;
         var startInfo = new ProcessStartInfo
         {
             FileName = toolPath,
@@ -3787,9 +5307,9 @@ public sealed class ControlPanelStore
     private static string? ResolveSetDpiToolPath()
     {
         var configuredPath = NormalizeNullable(Environment.GetEnvironmentVariable("BSARR_SETDPI_PATH"));
-        if (configuredPath != null && File.Exists(configuredPath))
+        if (configuredPath != null)
         {
-            return configuredPath;
+            return File.Exists(configuredPath) ? configuredPath : null;
         }
 
         var directory = new DirectoryInfo(Directory.GetCurrentDirectory());
@@ -3849,9 +5369,900 @@ public sealed class ControlPanelStore
         };
     }
 
+    private string CreateRunRecordingOutputDirectoryNoLock(DateTimeOffset startedAtUtc, string? collectionName)
+    {
+        var recordingRoot = Path.GetFullPath(_state.Settings.RecordingOutputDirectory);
+        var folderName = startedAtUtc
+            .ToLocalTime()
+            .ToString("MM-dd-yyyy HH-mm-ss", CultureInfo.InvariantCulture);
+        var normalizedCollectionName = NormalizeNullable(collectionName);
+        if (normalizedCollectionName != null)
+        {
+            folderName += " - " + normalizedCollectionName;
+        }
+
+        return CreateUniqueDirectoryPath(
+            recordingRoot,
+            FileNameSanitizer.SanitizeBaseName(folderName));
+    }
+
+    private string? ResolveCurrentQueueCollectionNameNoLock()
+    {
+        var queue = _state.Queue
+            .OrderBy(replay => replay.SequenceNumber)
+            .ToList();
+        if (queue.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var collection in _state.Collections.OrderByDescending(item => item.UpdatedAtUtc))
+        {
+            var items = collection.Items
+                .OrderBy(item => item.SequenceNumber)
+                .ToList();
+            if (items.Count != queue.Count)
+            {
+                continue;
+            }
+
+            var matches = true;
+            for (var index = 0; index < queue.Count; index++)
+            {
+                if (!string.Equals(
+                        CreateReplayTargetKey(queue[index]),
+                        CreateReplayTargetKey(items[index]),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+            {
+                return NormalizeNullable(collection.Name);
+            }
+        }
+
+        return null;
+    }
+
+    private static string CreateUniqueDirectoryPath(string directory, string folderName)
+    {
+        var baseDirectory = Path.GetFullPath(directory);
+        var safeFolderName = FileNameSanitizer.SanitizeBaseName(folderName);
+        var candidate = Path.Combine(baseDirectory, safeFolderName);
+        if (!Directory.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        for (var index = 2; index < 10_000; index++)
+        {
+            candidate = Path.Combine(
+                baseDirectory,
+                safeFolderName + " (" + index.ToString(CultureInfo.InvariantCulture) + ")");
+            if (!Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new InvalidOperationException("Could not find an available recording folder for " + safeFolderName + ".");
+    }
+
+    private bool NormalizeBenchmarkNoLock(DateTimeOffset now)
+    {
+        _state.Benchmark ??= new BenchmarkState();
+        _state.Benchmark.SourceQueueItemIds ??= new List<string>();
+        _state.Benchmark.SelectedConcurrencies ??= new List<int>();
+        _state.Benchmark.Passes ??= new List<BenchmarkPassResult>();
+        _state.Benchmark.SettingsSnapshot ??= new BenchmarkSettingsSnapshot();
+        foreach (var pass in _state.Benchmark.Passes)
+        {
+            pass.Assignments ??= new List<BenchmarkAssignmentResult>();
+        }
+
+        if (!_state.Benchmark.IsRunning && !_state.Benchmark.CancellationRequested)
+        {
+            return false;
+        }
+
+        var beforeStatus = _state.Benchmark.Status;
+        TryAdvanceBenchmarkNoLock(now);
+        return !string.Equals(beforeStatus, _state.Benchmark.Status, StringComparison.Ordinal);
+    }
+
+    private List<ReplayQueueRecord> GetBenchmarkSourceReplaysNoLock()
+    {
+        return _state.Queue
+            .Where(IsBenchmarkReadyReplay)
+            .OrderBy(replay => replay.SequenceNumber)
+            .ToList();
+    }
+
+    private static bool IsBenchmarkReadyReplay(ReplayQueueRecord replay)
+    {
+        if (string.IsNullOrWhiteSpace(replay.Path) || !File.Exists(replay.Path))
+        {
+            return false;
+        }
+
+        return string.Equals(replay.MapStatus, "Found", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(replay.MapStatus, "Downloaded", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private List<WorkerInstanceRecord> GetBenchmarkReadyInstancesNoLock(DateTimeOffset now)
+    {
+        return GetRunInstancesNoLock()
+            .Where(instance =>
+                instance.Enabled &&
+                !string.IsNullOrWhiteSpace(instance.WorkerId) &&
+                !IsWorkerStale(instance, now))
+            .OrderBy(instance => instance.Index)
+            .Take(BenchmarkMaximumConcurrency)
+            .ToList();
+    }
+
+    private BenchmarkSettingsSnapshot CreateBenchmarkSettingsSnapshotNoLock(int enabledWorkerCount)
+    {
+        return new BenchmarkSettingsSnapshot
+        {
+            EnabledWorkerCount = enabledWorkerCount,
+            TargetFps = _state.Settings.TargetFps,
+            CaptureWidth = _state.Settings.CaptureWidth,
+            CaptureHeight = _state.Settings.CaptureHeight,
+            Encoder = _state.Settings.Encoder,
+            VideoBitrateKbps = _state.Settings.VideoBitrateKbps,
+            OutputFormat = _state.Settings.OutputFormat,
+            MonitorIndex = _state.Settings.MonitorIndex,
+            QualityMode = _state.Settings.QualityMode,
+            CaptureEngine = _state.Settings.CaptureEngine,
+            AudioMode = _state.Settings.AudioMode,
+            RequireAudioForRun = _state.Settings.RequireAudioForRun,
+            AudioBitrateKbps = _state.Settings.AudioBitrateKbps,
+            AudioSampleRate = _state.Settings.AudioSampleRate,
+            AudioChannels = _state.Settings.AudioChannels,
+            AudioLevelMode = _state.Settings.AudioLevelMode,
+            AudioTargetLevelDb = _state.Settings.AudioTargetLevelDb,
+            LagSpikeStartupGraceSeconds = ResolveEffectiveLagSpikeStartupGraceSeconds(_state.Settings.LagSpikeStartupGraceSeconds),
+            DelayBetweenRecordingsSeconds = _state.Settings.DelayBetweenRecordingsSeconds
+        };
+    }
+
+    private static List<int> NormalizeBenchmarkConcurrencyLevels(
+        IReadOnlyList<int>? requestedLevels,
+        int maxConcurrency)
+    {
+        if (maxConcurrency <= 0)
+        {
+            return new List<int>();
+        }
+
+        if (requestedLevels == null || requestedLevels.Count == 0)
+        {
+            return Enumerable.Range(1, maxConcurrency).ToList();
+        }
+
+        var selected = requestedLevels
+            .Distinct()
+            .OrderBy(level => level)
+            .ToList();
+        if (selected.Count == 0)
+        {
+            throw new InvalidOperationException("Select at least one benchmark concurrency level.");
+        }
+
+        var invalidLevel = selected.FirstOrDefault(level => level < 1 || level > BenchmarkMaximumConcurrency);
+        if (invalidLevel != 0)
+        {
+            throw new InvalidOperationException(
+                "Benchmark concurrency levels must be between 1 and " +
+                BenchmarkMaximumConcurrency.ToString(CultureInfo.InvariantCulture) + ".");
+        }
+
+        var unavailableLevel = selected.FirstOrDefault(level => level > maxConcurrency);
+        if (unavailableLevel != 0)
+        {
+            throw new InvalidOperationException(
+                "Cannot benchmark " +
+                unavailableLevel.ToString(CultureInfo.InvariantCulture) +
+                " workers because only " +
+                maxConcurrency.ToString(CultureInfo.InvariantCulture) +
+                " enabled online worker" + (maxConcurrency == 1 ? " is" : "s are") +
+                " available.");
+        }
+
+        return selected;
+    }
+
+    private List<int> GetSelectedBenchmarkConcurrenciesNoLock()
+    {
+        if (_state.Benchmark.SelectedConcurrencies != null &&
+            _state.Benchmark.SelectedConcurrencies.Count > 0)
+        {
+            return _state.Benchmark.SelectedConcurrencies
+                .Where(level => level >= 1 && level <= Math.Max(1, _state.Benchmark.MaxConcurrency))
+                .Distinct()
+                .OrderBy(level => level)
+                .ToList();
+        }
+
+        var maxConcurrency = Math.Max(0, _state.Benchmark.MaxConcurrency);
+        return maxConcurrency <= 0
+            ? new List<int>()
+            : Enumerable.Range(1, maxConcurrency).ToList();
+    }
+
+    private void ValidateReplayProviderReadinessForBenchmarkNoLock(
+        IReadOnlyList<ReplayQueueRecord> sourceReplays,
+        IReadOnlyList<WorkerInstanceRecord> readyInstances,
+        DateTimeOffset now)
+    {
+        var providers = sourceReplays
+            .Select(replay => replay.Provider == ReplayProvider.Unknown ? ReplayProvider.BeatLeader : replay.Provider)
+            .Distinct()
+            .ToHashSet();
+        var reportedInstances = readyInstances
+            .Where(instance => instance.ReplayProviderStatusReported && !IsWorkerStale(instance, now))
+            .ToList();
+        if (providers.Count == 0 || reportedInstances.Count == 0)
+        {
+            return;
+        }
+
+        var issues = new List<string>();
+        if (providers.Contains(ReplayProvider.BeatLeader))
+        {
+            issues.AddRange(reportedInstances
+                .Where(instance => !instance.BeatLeaderReady)
+                .Select(instance =>
+                    CreateManagedInstanceName(instance.Index) + " BeatLeader: " +
+                    (NormalizeNullable(instance.BeatLeaderStatus) ?? "not ready")));
+        }
+
+        if (providers.Contains(ReplayProvider.ScoreSaber2))
+        {
+            issues.AddRange(reportedInstances
+                .Where(instance => !instance.ScoreSaberReady)
+                .Select(instance =>
+                    CreateManagedInstanceName(instance.Index) + " ScoreSaber: " +
+                    (NormalizeNullable(instance.ScoreSaberStatus) ?? "not ready")));
+        }
+
+        if (issues.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Benchmark replay provider readiness failed. " + string.Join("; ", issues.Take(5)) +
+                (issues.Count > 5 ? "; and " + (issues.Count - 5) + " more" : "") + ".");
+        }
+    }
+
+    private void ValidateAudioSettingsForBenchmarkNoLock(IReadOnlyList<WorkerInstanceRecord> readyInstances)
+    {
+        if (string.Equals(_state.Settings.AudioMode, "ProcessLoopback", StringComparison.OrdinalIgnoreCase))
+        {
+            RefreshLaunchProcessesNoLock();
+            var missingProcessIndexes = readyInstances
+                .Where(instance => !instance.GameProcessId.HasValue)
+                .Select(instance => instance.Index + 1)
+                .ToList();
+            if (missingProcessIndexes.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "Benchmark audio mode is ProcessLoopback, but these instances do not have known Beat Saber process IDs: " +
+                    string.Join(", ", missingProcessIndexes) +
+                    ". Use Launch Games or wait for the workers to reconnect before benchmarking.");
+            }
+
+            return;
+        }
+
+        if (_state.Settings.RequireAudioForRun)
+        {
+            throw new InvalidOperationException(
+                "Benchmark audio is required, but Audio mode is None. Use ProcessLoopback or turn off Require audio.");
+        }
+    }
+
+    private void ValidateRecorderHostsForBenchmarkNoLock(IReadOnlyList<WorkerInstanceRecord> readyInstances)
+    {
+        var unhealthy = readyInstances
+            .Where(instance => !_recorderHostHealthChecker.IsHealthy(instance.RecorderHostUrl))
+            .Select(instance => (instance.Index + 1) + " (" + instance.RecorderHostUrl + ")")
+            .ToList();
+        if (unhealthy.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "These recorder hosts are not ready for benchmarking: " + string.Join(", ", unhealthy) +
+                ". Start the recorder stack again before benchmarking.");
+        }
+
+        var captureEngine = ControlPanelSettings.NormalizeCaptureEngine(_state.Settings.CaptureEngine);
+        var audioMode = string.Equals(_state.Settings.AudioMode, "ProcessLoopback", StringComparison.OrdinalIgnoreCase)
+            ? "ProcessLoopback"
+            : "None";
+        var unsupported = new List<string>();
+        foreach (var instance in readyInstances)
+        {
+            var capabilities = _recorderHostHealthChecker.GetCapabilities(instance.RecorderHostUrl);
+            if (!capabilities.SupportsCaptureEngine(captureEngine))
+            {
+                unsupported.Add(
+                    CreateManagedInstanceName(instance.Index) + " capture " + captureEngine + ": " +
+                    (NormalizeNullable(capabilities.DescribeCaptureEngine(captureEngine)) ??
+                     NormalizeNullable(capabilities.Detail) ??
+                     "not supported"));
+            }
+
+            if (!capabilities.SupportsAudioMode(audioMode))
+            {
+                unsupported.Add(
+                    CreateManagedInstanceName(instance.Index) + " audio " + audioMode + ": " +
+                    (NormalizeNullable(capabilities.DescribeAudioMode(audioMode)) ??
+                     NormalizeNullable(capabilities.Detail) ??
+                     "not supported"));
+            }
+        }
+
+        if (unsupported.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Recorder host capabilities do not match the selected benchmark settings. " +
+                string.Join("; ", unsupported.Take(5)) +
+                (unsupported.Count > 5 ? "; and " + (unsupported.Count - 5) + " more" : "") + ".");
+        }
+    }
+
+    private void StartNextBenchmarkPassNoLock(DateTimeOffset now)
+    {
+        if (!_state.Benchmark.IsRunning || _state.Benchmark.CancellationRequested)
+        {
+            return;
+        }
+
+        var selectedConcurrencies = GetSelectedBenchmarkConcurrenciesNoLock();
+        var passIndex = _state.Benchmark.Passes.Count;
+        if (passIndex >= selectedConcurrencies.Count)
+        {
+            CompleteBenchmarkNoLock("Complete", "", now);
+            return;
+        }
+
+        var concurrency = selectedConcurrencies[passIndex];
+        var sourceReplays = GetBenchmarkSourceReplaysNoLock()
+            .Where(replay => _state.Benchmark.SourceQueueItemIds.Contains(replay.Id, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        if (sourceReplays.Count == 0)
+        {
+            CompleteBenchmarkNoLock("Failed", "No benchmark source replays are still available.", now);
+            return;
+        }
+
+        var readyInstances = GetBenchmarkReadyInstancesNoLock(now);
+        if (readyInstances.Count < concurrency)
+        {
+            CompleteBenchmarkNoLock(
+                "Failed",
+                "Only " + readyInstances.Count + "/" + concurrency + " benchmark workers are still online.",
+                now);
+            return;
+        }
+
+        var pass = new BenchmarkPassResult
+        {
+            Concurrency = concurrency,
+            Status = "Running",
+            StartedAtUtc = now
+        };
+
+        for (var index = 0; index < concurrency; index++)
+        {
+            var instance = readyInstances[index];
+            var replay = sourceReplays[index % sourceReplays.Count];
+            pass.Assignments.Add(new BenchmarkAssignmentResult
+            {
+                AssignmentId = CreateBenchmarkAssignmentId(),
+                SourceReplayId = replay.Id,
+                ReplayLabel = CreateReplayLabel(replay),
+                InstanceIndex = instance.Index,
+                InstanceName = CreateManagedInstanceName(instance.Index),
+                WorkerId = instance.WorkerId ?? "",
+                Status = "Queued"
+            });
+        }
+
+        _state.Benchmark.ActiveConcurrency = concurrency;
+        _state.Benchmark.Passes.Add(pass);
+        AddEventNoLock(
+            "Info",
+            "Benchmark",
+            "Benchmark pass " + concurrency + " started (" +
+            (passIndex + 1).ToString(CultureInfo.InvariantCulture) +
+            "/" +
+            selectedConcurrencies.Count.ToString(CultureInfo.InvariantCulture) +
+            ").");
+    }
+
+    private BenchmarkAssignmentResult? FindActiveBenchmarkAssignmentNoLock(WorkerInstanceRecord instance)
+    {
+        var activeAssignmentId = NormalizeNullable(instance.ActiveAssignmentId);
+        if (activeAssignmentId == null)
+        {
+            return null;
+        }
+
+        var assignment = FindBenchmarkAssignmentByIdNoLock(activeAssignmentId);
+        return assignment != null && IsPendingReplayStatus(assignment.Status) ? assignment : null;
+    }
+
+    private BenchmarkAssignmentResult? FindBenchmarkAssignmentByIdNoLock(string? assignmentId)
+    {
+        var normalizedAssignmentId = NormalizeNullable(assignmentId);
+        if (normalizedAssignmentId == null)
+        {
+            return null;
+        }
+
+        return _state.Benchmark.Passes
+            .SelectMany(pass => pass.Assignments)
+            .FirstOrDefault(assignment =>
+                string.Equals(assignment.AssignmentId, normalizedAssignmentId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private BenchmarkAssignmentResult? FindQueuedBenchmarkAssignmentForInstanceNoLock(WorkerInstanceRecord instance)
+    {
+        var pass = _state.Benchmark.Passes
+            .LastOrDefault(item => string.Equals(item.Status, "Running", StringComparison.OrdinalIgnoreCase));
+        return pass?.Assignments.FirstOrDefault(assignment =>
+            assignment.InstanceIndex == instance.Index &&
+            string.Equals(assignment.Status, "Queued", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private IEnumerable<BenchmarkAssignmentResult> EnumerateActiveBenchmarkAssignmentsNoLock()
+    {
+        return _state.Benchmark.Passes
+            .SelectMany(pass => pass.Assignments)
+            .Where(assignment => IsPendingReplayStatus(assignment.Status));
+    }
+
+    private void UpdateBenchmarkAssignmentHeartbeatNoLock(
+        BenchmarkAssignmentResult assignment,
+        WorkerInstanceRecord instance,
+        DateTimeOffset now)
+    {
+        assignment.HeartbeatCount++;
+        assignment.WorkerId = instance.WorkerId ?? assignment.WorkerId;
+        if (IsRecordingStatus(instance.Status))
+        {
+            assignment.Status = "Recording";
+            assignment.RecordingStartedAtUtc ??= now;
+            if (instance.LastReportedFramesPerSecond.HasValue)
+            {
+                assignment.MinimumFramesPerSecond = assignment.MinimumFramesPerSecond.HasValue
+                    ? Math.Min(assignment.MinimumFramesPerSecond.Value, instance.LastReportedFramesPerSecond.Value)
+                    : instance.LastReportedFramesPerSecond.Value;
+            }
+
+            var sampleCount = Math.Max(0, instance.LastReportedFrameSampleCount);
+            if (sampleCount > 0 && instance.LastReportedAverageFramesPerSecond.HasValue)
+            {
+                var existingCount = Math.Max(0, assignment.SampledFrameCount);
+                var existingTotal = assignment.AverageFramesPerSecond.GetValueOrDefault() * existingCount;
+                var newTotal = instance.LastReportedAverageFramesPerSecond.Value * sampleCount;
+                assignment.SampledFrameCount = existingCount + sampleCount;
+                assignment.AverageFramesPerSecond = Math.Round(
+                    (existingTotal + newTotal) / assignment.SampledFrameCount,
+                    1);
+            }
+        }
+        else if (IsFinalizingStatus(instance.Status))
+        {
+            assignment.Status = "Finalizing";
+            assignment.FinalizingStartedAtUtc ??= now;
+            ResetRecordingLagSpikeTrackerNoLock(instance);
+        }
+    }
+
+    private static string? CreateBenchmarkHeartbeatLagSpikeCancellationReasonNoLock(
+        WorkerInstanceRecord instance,
+        BenchmarkAssignmentResult? assignment,
+        DateTimeOffset now)
+    {
+        var framesPerSecond = GetLagGuardFramesPerSecondNoLock(instance, out var fpsMetricLabel);
+        if (assignment == null ||
+            !framesPerSecond.HasValue ||
+            !IsRecordingStatus(instance.Status) ||
+            IsWithinBenchmarkLagSpikeStartupGrace(assignment, now))
+        {
+            ResetRecordingLagSpikeTrackerNoLock(instance);
+            return null;
+        }
+
+        if (framesPerSecond.Value >= LagSpikeFramesPerSecondThreshold)
+        {
+            ResetRecordingLagSpikeTrackerNoLock(instance);
+            return null;
+        }
+
+        instance.LowFpsRecordingStartedAtUtc ??= now;
+        instance.ConsecutiveLowFpsRecordingHeartbeatCount++;
+        var lowFpsDuration = now - instance.LowFpsRecordingStartedAtUtc.Value;
+        if (lowFpsDuration < LagSpikeLowFpsDurationThreshold)
+        {
+            return null;
+        }
+
+        return "Benchmark FPS drop detected: worker " +
+               fpsMetricLabel +
+               " FPS " +
+               FormatFramesPerSecond(framesPerSecond.Value) +
+               " stayed below " +
+               LagSpikeFramesPerSecondThreshold.ToString("0", CultureInfo.InvariantCulture) +
+               " FPS for " +
+               FormatDurationSeconds(lowFpsDuration) +
+               ". Benchmark assignment is invalid.";
+    }
+
+    private static bool IsWithinBenchmarkLagSpikeStartupGrace(
+        BenchmarkAssignmentResult assignment,
+        DateTimeOffset now)
+    {
+        var graceAnchor = assignment.RecordingStartedAtUtc ?? assignment.AssignedAtUtc;
+        if (!graceAnchor.HasValue)
+        {
+            return false;
+        }
+
+        var gracePeriod = TimeSpan.FromSeconds(MinimumRecordingLagSpikeStartupGraceSeconds);
+        return now - graceAnchor.Value < gracePeriod;
+    }
+
+    private void ReportBenchmarkAssignmentNoLock(
+        WorkerReportRequest request,
+        string status,
+        WorkerInstanceRecord instance,
+        BenchmarkAssignmentResult assignment,
+        DateTimeOffset now)
+    {
+        if (status == "Completed")
+        {
+            CompleteBenchmarkAssignmentFinalizationNoLock(assignment, now);
+            var outputPath = NormalizeNullable(request.OutputPath);
+            var audioVerification = VerifyCompletedRecordingAudioNoLock(outputPath);
+            var syncVerification = VerifyCompletedRecordingSyncNoLock(request);
+            var verified = audioVerification.HasAudio && syncVerification.Verified;
+            assignment.Status = verified ? "Completed" : "Failed";
+            assignment.Passed = verified;
+            assignment.OutputPath = outputPath ?? "";
+            assignment.Error = verified
+                ? ""
+                : audioVerification.HasAudio
+                    ? syncVerification.Error ?? "Required sync verification failed."
+                    : audioVerification.Error ?? "Required audio verification failed.";
+            assignment.Warning = NormalizeNullable(request.Warning) ?? "";
+            assignment.SyncStatus = NormalizeNullable(request.SyncStatus) ?? "";
+            assignment.SyncCorrectionMilliseconds = request.SyncCorrectionMilliseconds;
+            assignment.TrimStartSeconds = request.TrimStartSeconds;
+            assignment.SyncReportPath = NormalizeNullable(request.SyncReportPath) ?? "";
+            assignment.CompletedAtUtc = now;
+            ClearWorkerAssignmentNoLock(instance);
+            instance.Status = "Online";
+        }
+        else if (status == "Failed" || status == "Stopped")
+        {
+            CompleteBenchmarkAssignmentFinalizationNoLock(assignment, now);
+            assignment.Status = status == "Stopped" ? "Stopped" : "Failed";
+            assignment.Passed = false;
+            assignment.OutputPath = NormalizeNullable(request.OutputPath) ?? "";
+            assignment.Error = NormalizeNullable(request.Error) ?? "Worker reported " + status.ToLowerInvariant() + ".";
+            assignment.Warning = NormalizeNullable(request.Warning) ?? "";
+            assignment.SyncStatus = NormalizeNullable(request.SyncStatus) ?? "";
+            assignment.SyncCorrectionMilliseconds = request.SyncCorrectionMilliseconds;
+            assignment.TrimStartSeconds = request.TrimStartSeconds;
+            assignment.SyncReportPath = NormalizeNullable(request.SyncReportPath) ?? "";
+            assignment.CompletedAtUtc = now;
+            ClearWorkerAssignmentNoLock(instance);
+            instance.Status = "Online";
+        }
+        else
+        {
+            assignment.Status = status;
+            if (IsFinalizingStatus(status))
+            {
+                assignment.Status = "Finalizing";
+                assignment.FinalizingStartedAtUtc ??= now;
+                ResetRecordingLagSpikeTrackerNoLock(instance);
+            }
+
+            assignment.OutputPath = NormalizeNullable(request.OutputPath) ?? assignment.OutputPath;
+            assignment.Error = NormalizeNullable(request.Error) ?? "";
+            assignment.Warning = NormalizeNullable(request.Warning) ?? "";
+            instance.Status = assignment.Status;
+            instance.CurrentReplayId = assignment.SourceReplayId;
+        }
+
+        if (assignment.CompletedAtUtc.HasValue)
+        {
+            AddEventNoLock(
+                assignment.Passed ? "Good" : "Bad",
+                "Benchmark",
+                assignment.Passed
+                    ? "Benchmark recording complete: " + assignment.ReplayLabel
+                    : "Benchmark recording failed: " + assignment.ReplayLabel + " - " + assignment.Error,
+                assignment.SourceReplayId,
+                assignment.InstanceIndex);
+        }
+
+        TryAdvanceBenchmarkNoLock(now);
+    }
+
+    private static void CompleteBenchmarkAssignmentFinalizationNoLock(
+        BenchmarkAssignmentResult assignment,
+        DateTimeOffset now)
+    {
+        if (!assignment.FinalizingStartedAtUtc.HasValue)
+        {
+            return;
+        }
+
+        assignment.FinalizingCompletedAtUtc ??= now;
+        var elapsed = assignment.FinalizingCompletedAtUtc.Value - assignment.FinalizingStartedAtUtc.Value;
+        assignment.FinalizationSeconds = Math.Round(Math.Max(0, elapsed.TotalSeconds), 1);
+    }
+
+    private void TryAdvanceBenchmarkNoLock(DateTimeOffset now)
+    {
+        if (_state.Benchmark.Passes.Count == 0)
+        {
+            if (_state.Benchmark.CancellationRequested)
+            {
+                CompleteBenchmarkNoLock("Stopped", NormalizeNullable(_state.Benchmark.FailureReason) ?? "Stopped by operator.", now);
+            }
+
+            return;
+        }
+
+        var currentPass = _state.Benchmark.Passes
+            .LastOrDefault(pass => string.Equals(pass.Status, "Running", StringComparison.OrdinalIgnoreCase));
+        if (currentPass == null)
+        {
+            if (_state.Benchmark.CancellationRequested)
+            {
+                CompleteBenchmarkNoLock("Stopped", NormalizeNullable(_state.Benchmark.FailureReason) ?? "Stopped by operator.", now);
+            }
+
+            return;
+        }
+
+        if (currentPass.Assignments.Any(assignment => !IsBenchmarkAssignmentTerminal(assignment)))
+        {
+            return;
+        }
+
+        SummarizeBenchmarkPassNoLock(currentPass, now);
+        if (_state.Benchmark.CancellationRequested)
+        {
+            CompleteBenchmarkNoLock("Stopped", NormalizeNullable(_state.Benchmark.FailureReason) ?? "Stopped by operator.", now);
+            return;
+        }
+
+        if (!currentPass.Passed)
+        {
+            CompleteBenchmarkNoLock(
+                _state.Benchmark.RecommendedWorkerCount.HasValue ? "Complete" : "Failed",
+                currentPass.FailureReason,
+                now);
+            return;
+        }
+
+        _state.Benchmark.RecommendedWorkerCount = currentPass.Concurrency;
+        if (_state.Benchmark.Passes.Count >= GetSelectedBenchmarkConcurrenciesNoLock().Count)
+        {
+            CompleteBenchmarkNoLock("Complete", "", now);
+            return;
+        }
+
+        StartNextBenchmarkPassNoLock(now);
+    }
+
+    private void SummarizeBenchmarkPassNoLock(BenchmarkPassResult pass, DateTimeOffset now)
+    {
+        pass.FinishedAtUtc ??= now;
+        pass.MinimumFramesPerSecond = pass.Assignments
+            .Where(assignment => assignment.MinimumFramesPerSecond.HasValue)
+            .Select(assignment => assignment.MinimumFramesPerSecond!.Value)
+            .DefaultIfEmpty()
+            .Min();
+        if (pass.MinimumFramesPerSecond <= 0)
+        {
+            pass.MinimumFramesPerSecond = null;
+        }
+
+        var sampledCount = pass.Assignments.Sum(assignment => Math.Max(0, assignment.SampledFrameCount));
+        if (sampledCount > 0)
+        {
+            var total = pass.Assignments.Sum(assignment =>
+                assignment.AverageFramesPerSecond.GetValueOrDefault() * Math.Max(0, assignment.SampledFrameCount));
+            pass.AverageFramesPerSecond = Math.Round(total / sampledCount, 1);
+        }
+
+        var validCount = pass.Assignments.Count(assignment => assignment.Passed);
+        pass.Passed = validCount == pass.Assignments.Count && pass.Assignments.Count > 0;
+        pass.OutputSummary = validCount + "/" + pass.Assignments.Count + " recordings valid";
+        pass.FailureReason = pass.Passed
+            ? ""
+            : pass.Assignments
+                  .Select(assignment => NormalizeNullable(assignment.Error))
+                  .FirstOrDefault(error => error != null) ??
+              "At least one benchmark assignment failed.";
+        pass.Status = pass.Passed ? "Passed" : _state.Benchmark.CancellationRequested ? "Stopped" : "Failed";
+    }
+
+    private static bool IsBenchmarkAssignmentTerminal(BenchmarkAssignmentResult assignment)
+    {
+        return string.Equals(assignment.Status, "Completed", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(assignment.Status, "Failed", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(assignment.Status, "Stopped", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void CompleteBenchmarkNoLock(string status, string failureReason, DateTimeOffset now)
+    {
+        if (!_state.Benchmark.IsRunning && !_state.Benchmark.CancellationRequested &&
+            !_state.Benchmark.StartedAtUtc.HasValue)
+        {
+            return;
+        }
+
+        _state.Benchmark.IsRunning = false;
+        _state.Benchmark.CancellationRequested = false;
+        _state.Benchmark.Status = status;
+        _state.Benchmark.ActiveConcurrency = 0;
+        _state.Benchmark.FinishedAtUtc ??= now;
+        _state.Benchmark.FailureReason = NormalizeNullable(failureReason) ?? "";
+        foreach (var instance in _state.Instances.Where(instance => FindActiveBenchmarkAssignmentNoLock(instance) != null))
+        {
+            ClearWorkerAssignmentNoLock(instance);
+            instance.Status = string.IsNullOrWhiteSpace(instance.WorkerId) ? "Idle" : "Online";
+        }
+
+        WriteBenchmarkReportNoLock();
+        AddEventNoLock(
+            status == "Complete" ? "Good" : status == "Stopped" ? "Warn" : "Bad",
+            "Benchmark",
+            CreateBenchmarkCompletionMessageNoLock(),
+            nowOverride: now);
+    }
+
+    private string CreateBenchmarkCompletionMessageNoLock()
+    {
+        if (_state.Benchmark.RecommendedWorkerCount.HasValue)
+        {
+            return "Benchmark finished. Recommended worker count: " +
+                   _state.Benchmark.RecommendedWorkerCount.Value.ToString(CultureInfo.InvariantCulture) + ".";
+        }
+
+        var reason = NormalizeNullable(_state.Benchmark.FailureReason);
+        return reason == null
+            ? "Benchmark finished without a passing worker count."
+            : "Benchmark finished without a passing worker count: " + reason;
+    }
+
+    private void WriteBenchmarkReportNoLock()
+    {
+        var reportPath = NormalizeNullable(_state.Benchmark.ReportPath);
+        if (reportPath == null)
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
+            File.WriteAllText(reportPath, JsonSerializer.Serialize(_state.Benchmark, JsonOptions.Default));
+        }
+        catch
+        {
+            // The persisted control-panel state remains the source of truth if report export fails.
+        }
+    }
+
+    private WorkerRunProgress CreateBenchmarkProgressNoLock()
+    {
+        var assignments = _state.Benchmark.Passes.SelectMany(pass => pass.Assignments).ToList();
+        return new WorkerRunProgress
+        {
+            TotalCount = assignments.Count,
+            CompletedCount = assignments.Count(assignment => assignment.Passed),
+            FailedCount = assignments.Count(assignment =>
+                string.Equals(assignment.Status, "Failed", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(assignment.Status, "Stopped", StringComparison.OrdinalIgnoreCase)),
+            IsRunning = _state.Benchmark.IsRunning || _state.Benchmark.CancellationRequested,
+            Status = string.IsNullOrWhiteSpace(_state.Benchmark.Status) ? "Idle" : _state.Benchmark.Status
+        };
+    }
+
+    private WorkerAssignmentResponse CreateBenchmarkAssignmentResponse(
+        BenchmarkAssignmentResult assignment,
+        WorkerInstanceRecord instance)
+    {
+        var replay = _state.Queue.FirstOrDefault(item =>
+                         string.Equals(item.Id, assignment.SourceReplayId, StringComparison.OrdinalIgnoreCase))
+                     ?? throw new InvalidOperationException("Benchmark source replay was not found: " + assignment.SourceReplayId);
+        var snapshot = _state.Benchmark.SettingsSnapshot;
+        var outputDirectory = NormalizeNullable(_state.Benchmark.OutputDirectory) ?? instance.OutputDirectory;
+        Directory.CreateDirectory(outputDirectory);
+        return new WorkerAssignmentResponse
+        {
+            HasAssignment = true,
+            AssignmentId = assignment.AssignmentId,
+            ReplayId = replay.Id,
+            ReplayPath = Path.GetFullPath(replay.Path),
+            DisableScoreSubmissions = true,
+            SuppressScoreSaberReplayUi = true,
+            Provider = replay.Provider,
+            ReferenceKind = replay.ReferenceKind,
+            ReplayFormat = replay.ReplayFormat,
+            SourceUrl = replay.SourceUrl,
+            ScoreId = replay.ScoreId,
+            SongName = replay.SongName,
+            Mapper = replay.Mapper,
+            PlayerName = replay.PlayerName,
+            Difficulty = replay.Difficulty,
+            Mode = replay.Mode,
+            LevelHash = replay.LevelHash,
+            EstimatedSeconds = replay.EstimatedSeconds,
+            AssignmentKind = "Benchmark",
+            OutputBaseName = CreateBenchmarkOutputBaseName(assignment, replay),
+            RecorderHostUrl = instance.RecorderHostUrl,
+            OutputDirectory = outputDirectory,
+            InstanceIndex = instance.Index,
+            TargetProcessId = instance.GameProcessId,
+            TargetFps = snapshot.TargetFps,
+            CaptureWidth = snapshot.CaptureWidth,
+            CaptureHeight = snapshot.CaptureHeight,
+            Encoder = snapshot.Encoder,
+            VideoBitrateKbps = snapshot.VideoBitrateKbps,
+            OutputFormat = snapshot.OutputFormat,
+            MonitorIndex = snapshot.MonitorIndex,
+            QualityMode = snapshot.QualityMode,
+            CaptureEngine = snapshot.CaptureEngine,
+            AudioMode = snapshot.AudioMode,
+            AudioDeviceName = GetAudioCaptureDeviceName(instance.Index),
+            AudioBitrateKbps = snapshot.AudioBitrateKbps,
+            AudioSampleRate = snapshot.AudioSampleRate,
+            AudioChannels = snapshot.AudioChannels,
+            AudioLevelMode = snapshot.AudioLevelMode,
+            AudioTargetLevelDb = snapshot.AudioTargetLevelDb,
+            DelayBetweenRecordingsSeconds = snapshot.DelayBetweenRecordingsSeconds,
+            LagSpikeStartupGraceSeconds = snapshot.LagSpikeStartupGraceSeconds,
+            GamePresentationSettingsVersion = _state.Settings.GamePresentationSettingsVersion,
+            GamePresentation = CloneGamePresentationSettings(_state.Settings.GamePresentation),
+            Progress = CreateBenchmarkProgressNoLock()
+        };
+    }
+
+    private static string CreateBenchmarkOutputBaseName(BenchmarkAssignmentResult assignment, ReplayQueueRecord replay)
+    {
+        var suffix = assignment.AssignmentId.StartsWith("benchmark-", StringComparison.OrdinalIgnoreCase)
+            ? assignment.AssignmentId.Substring("benchmark-".Length, Math.Min(8, assignment.AssignmentId.Length - "benchmark-".Length))
+            : assignment.AssignmentId.Substring(0, Math.Min(8, assignment.AssignmentId.Length));
+        return FileNameSanitizer.SanitizeBaseName(
+            "benchmark-c" + (assignment.InstanceIndex + 1).ToString(CultureInfo.InvariantCulture) +
+            "-" + suffix +
+            " - " + CreateOutputBaseName(replay));
+    }
+
+    private static string CreateBenchmarkAssignmentId()
+    {
+        return "benchmark-" + Guid.NewGuid().ToString("N");
+    }
+
     private WorkerAssignmentResponse CreateAssignmentResponse(ReplayQueueRecord replay, WorkerInstanceRecord instance)
     {
-        Directory.CreateDirectory(instance.OutputDirectory);
+        var outputDirectory = ResolveAssignmentOutputDirectoryNoLock(instance);
+        Directory.CreateDirectory(outputDirectory);
         return new WorkerAssignmentResponse
         {
             HasAssignment = true,
@@ -3875,7 +6286,7 @@ public sealed class ControlPanelStore
             AssignmentKind = "Replay",
             OutputBaseName = CreateOutputBaseName(replay),
             RecorderHostUrl = instance.RecorderHostUrl,
-            OutputDirectory = instance.OutputDirectory,
+            OutputDirectory = outputDirectory,
             InstanceIndex = instance.Index,
             TargetProcessId = instance.GameProcessId,
             TargetFps = _state.Settings.TargetFps,
@@ -3886,6 +6297,7 @@ public sealed class ControlPanelStore
             OutputFormat = _state.Settings.OutputFormat,
             MonitorIndex = _state.Settings.MonitorIndex,
             QualityMode = _state.Settings.QualityMode,
+            CaptureEngine = _state.Settings.CaptureEngine,
             AudioMode = _state.Settings.AudioMode,
             AudioDeviceName = GetAudioCaptureDeviceName(instance.Index),
             AudioBitrateKbps = _state.Settings.AudioBitrateKbps,
@@ -3894,11 +6306,19 @@ public sealed class ControlPanelStore
             AudioLevelMode = _state.Settings.AudioLevelMode,
             AudioTargetLevelDb = _state.Settings.AudioTargetLevelDb,
             DelayBetweenRecordingsSeconds = _state.Settings.DelayBetweenRecordingsSeconds,
-            LagSpikeStartupGraceSeconds = _state.Settings.LagSpikeStartupGraceSeconds,
+            LagSpikeStartupGraceSeconds = ResolveEffectiveLagSpikeStartupGraceSeconds(_state.Settings.LagSpikeStartupGraceSeconds),
             GamePresentationSettingsVersion = _state.Settings.GamePresentationSettingsVersion,
             GamePresentation = CloneGamePresentationSettings(_state.Settings.GamePresentation),
-            Progress = CreateRunProgressNoLock()
+            Progress = CreateWorkerProgressNoLock()
         };
+    }
+
+    private string ResolveAssignmentOutputDirectoryNoLock(WorkerInstanceRecord instance)
+    {
+        var runOutputDirectory = NormalizeNullable(_state.Run.RecordingOutputDirectory);
+        return _state.Run.IsRunning && runOutputDirectory != null
+            ? runOutputDirectory
+            : instance.OutputDirectory;
     }
 
     private WorkerAssignmentResponse CreateEmptyAssignment(WorkerInstanceRecord? instance = null)
@@ -3916,6 +6336,7 @@ public sealed class ControlPanelStore
             OutputFormat = _state.Settings.OutputFormat,
             MonitorIndex = _state.Settings.MonitorIndex,
             QualityMode = _state.Settings.QualityMode,
+            CaptureEngine = _state.Settings.CaptureEngine,
             AudioMode = _state.Settings.AudioMode,
             AudioDeviceName = "",
             AudioBitrateKbps = _state.Settings.AudioBitrateKbps,
@@ -3924,11 +6345,21 @@ public sealed class ControlPanelStore
             AudioLevelMode = _state.Settings.AudioLevelMode,
             AudioTargetLevelDb = _state.Settings.AudioTargetLevelDb,
             DelayBetweenRecordingsSeconds = _state.Settings.DelayBetweenRecordingsSeconds,
-            LagSpikeStartupGraceSeconds = _state.Settings.LagSpikeStartupGraceSeconds,
+            LagSpikeStartupGraceSeconds = ResolveEffectiveLagSpikeStartupGraceSeconds(_state.Settings.LagSpikeStartupGraceSeconds),
             GamePresentationSettingsVersion = _state.Settings.GamePresentationSettingsVersion,
             GamePresentation = CloneGamePresentationSettings(_state.Settings.GamePresentation),
-            Progress = CreateRunProgressNoLock()
+            Progress = CreateWorkerProgressNoLock()
         };
+    }
+
+    private WorkerRunProgress CreateWorkerProgressNoLock()
+    {
+        if (_state.Benchmark.IsRunning || _state.Benchmark.CancellationRequested)
+        {
+            return CreateBenchmarkProgressNoLock();
+        }
+
+        return CreateRunProgressNoLock();
     }
 
     private WorkerRunProgress CreateRunProgressNoLock()
@@ -4004,8 +6435,13 @@ public sealed class ControlPanelStore
 
     private string CreateImportPath(string fileName)
     {
+        return CreateUniqueFilePath(_queueDirectory, fileName);
+    }
+
+    private static string CreateUniqueFilePath(string directory, string fileName)
+    {
         var safeFileName = Path.GetFileName(fileName);
-        var targetPath = Path.Combine(_queueDirectory, safeFileName);
+        var targetPath = Path.Combine(directory, safeFileName);
         if (!File.Exists(targetPath))
         {
             return targetPath;
@@ -4015,14 +6451,28 @@ public sealed class ControlPanelStore
         var extension = Path.GetExtension(safeFileName);
         for (var index = 2; index < 10_000; index++)
         {
-            targetPath = Path.Combine(_queueDirectory, baseName + " (" + index + ")" + extension);
+            targetPath = Path.Combine(directory, baseName + " (" + index + ")" + extension);
             if (!File.Exists(targetPath))
             {
                 return targetPath;
             }
         }
 
-        throw new InvalidOperationException("Could not create an import filename for " + safeFileName + ".");
+        throw new InvalidOperationException("Could not create a filename for " + safeFileName + ".");
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
     }
 
     private static bool IsSupportedReplayFileName(string fileName)
@@ -4401,6 +6851,377 @@ public sealed class ControlPanelStore
         }
     }
 
+    private static void NormalizeMapCollectionItemProviderFields(MapCollectionItemRecord item)
+    {
+        if (item.Provider == ReplayProvider.Unknown)
+        {
+            var extension = Path.GetExtension(item.Path);
+            item.Provider = string.Equals(extension, ".dat", StringComparison.OrdinalIgnoreCase)
+                ? ReplayProvider.ScoreSaber2
+                : ReplayProvider.BeatLeader;
+        }
+
+        if (item.ReferenceKind == ReplayReferenceKind.Unknown)
+        {
+            item.ReferenceKind = item.Provider == ReplayProvider.ScoreSaber2
+                ? ReplayReferenceKind.LocalScoreSaberDatFile
+                : ReplayReferenceKind.LocalBsorFile;
+        }
+
+        if (string.IsNullOrWhiteSpace(item.ReplayFormat))
+        {
+            item.ReplayFormat = item.Provider == ReplayProvider.ScoreSaber2 ? "ScoreSaber" : "BSOR";
+        }
+    }
+
+    private static MapCollectionItemRecord CreateMapCollectionItem(
+        ReplayQueueRecord replay,
+        string collectionReplayPath,
+        int sequenceNumber)
+    {
+        return new MapCollectionItemRecord
+        {
+            Id = CreateStableId(collectionReplayPath),
+            SequenceNumber = sequenceNumber,
+            Provider = replay.Provider,
+            ReferenceKind = replay.ReferenceKind,
+            ReplayFormat = replay.ReplayFormat,
+            SourceUrl = replay.SourceUrl,
+            ScoreId = replay.ScoreId,
+            FileName = Path.GetFileName(collectionReplayPath),
+            Path = collectionReplayPath,
+            SongName = replay.SongName,
+            Mapper = replay.Mapper,
+            PlayerName = replay.PlayerName,
+            Difficulty = replay.Difficulty,
+            Mode = replay.Mode,
+            LevelHash = replay.LevelHash,
+            CoverArtUrl = replay.CoverArtUrl,
+            EstimatedSeconds = replay.EstimatedSeconds,
+            CompletedOutputPath = string.Equals(replay.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+                ? replay.OutputPath
+                : null,
+            CompletedAtUtc = string.Equals(replay.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+                ? replay.CompletedAtUtc
+                : null
+        };
+    }
+
+    private MapCardExportItem CreateMapCardExportItemNoLock(
+        MapCollectionRecord collection,
+        MapCollectionItemRecord item)
+    {
+        var replay = CreateReplayRecordForMapLookup(item);
+        var levelDirectory = ResolveLevelDirectoryNoLock(replay);
+        var local = levelDirectory == null
+            ? null
+            : LocalMapCardMetadataReader.TryRead(levelDirectory, item.Difficulty, item.Mode, item.EstimatedSeconds);
+        var beatSaver = TryGetBeatSaverMapCardMetadata(item);
+        var lengthSeconds = FirstPositive(
+            local?.LengthSeconds,
+            beatSaver?.LengthSeconds,
+            item.EstimatedSeconds);
+        var coverArtUrl = CreateCollectionCardCoverUrl(collection, item, levelDirectory, beatSaver);
+        var metadataSources = new List<string>();
+        if (local != null)
+        {
+            metadataSources.Add("local map");
+        }
+
+        if (beatSaver != null)
+        {
+            metadataSources.Add("BeatSaver");
+        }
+
+        return new MapCardExportItem
+        {
+            Id = item.Id,
+            SequenceNumber = item.SequenceNumber,
+            SongName = Prefer(item.SongName, Prefer(local?.SongName, beatSaver?.SongName)),
+            Artist = Prefer(local?.Artist, beatSaver?.Artist),
+            MapAuthor = Prefer(item.Mapper, Prefer(local?.MapAuthor, beatSaver?.MapAuthor)),
+            Difficulty = MapCardMetadataText.DisplayDifficulty(Prefer(item.Difficulty, Prefer(local?.Difficulty, beatSaver?.Difficulty))),
+            Mode = Prefer(item.Mode, Prefer(local?.Mode, beatSaver?.Mode)),
+            NotesPerSecond = local?.NotesPerSecond ?? beatSaver?.NotesPerSecond,
+            BeatsPerMinute = FirstPositive(local?.BeatsPerMinute, beatSaver?.BeatsPerMinute),
+            NoteCount = local?.NoteCount ?? beatSaver?.NoteCount,
+            LengthSeconds = lengthSeconds,
+            BeatSaverKey = Prefer(TryExtractBeatSaverKey(item.SourceUrl), beatSaver?.BeatSaverKey),
+            LevelHash = item.LevelHash,
+            CoverArtUrl = coverArtUrl,
+            Category = NormalizeMapCardCategory(item.MapCardCategory),
+            MetadataStatus = metadataSources.Count > 0 ? "Ready" : "Partial",
+            MetadataDetail = metadataSources.Count > 0
+                ? "Enriched from " + string.Join(" and ", metadataSources) + "."
+                : "Only replay metadata was available."
+        };
+    }
+
+    private BeatSaverMapCardMetadata? TryGetBeatSaverMapCardMetadata(MapCollectionItemRecord item)
+    {
+        if (string.IsNullOrWhiteSpace(item.LevelHash))
+        {
+            return null;
+        }
+
+        try
+        {
+            return _mapDownloader.GetMapCardMetadataByHash(item.LevelHash, item.Difficulty, item.Mode);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static string CreateCollectionCardCoverUrl(
+        MapCollectionRecord collection,
+        MapCollectionItemRecord item,
+        string? levelDirectory,
+        BeatSaverMapCardMetadata? beatSaver)
+    {
+        if (!string.IsNullOrWhiteSpace(levelDirectory) &&
+            !string.IsNullOrWhiteSpace(FindCoverInDirectory(levelDirectory)))
+        {
+            return "/api/collections/" + Uri.EscapeDataString(collection.Id) +
+                   "/items/" + Uri.EscapeDataString(item.Id) + "/cover";
+        }
+
+        return Prefer(beatSaver?.CoverArtUrl, item.CoverArtUrl);
+    }
+
+    private static ReplayQueueRecord CreateReplayRecordForMapLookup(MapCollectionItemRecord item)
+    {
+        return new ReplayQueueRecord
+        {
+            Id = item.Id,
+            SequenceNumber = item.SequenceNumber,
+            Provider = item.Provider,
+            ReferenceKind = item.ReferenceKind,
+            ReplayFormat = item.ReplayFormat,
+            SourceUrl = item.SourceUrl,
+            ScoreId = item.ScoreId,
+            FileName = item.FileName,
+            Path = item.Path,
+            SongName = item.SongName,
+            Mapper = item.Mapper,
+            PlayerName = item.PlayerName,
+            Difficulty = item.Difficulty,
+            Mode = item.Mode,
+            LevelHash = item.LevelHash,
+            CoverArtUrl = item.CoverArtUrl,
+            EstimatedSeconds = item.EstimatedSeconds
+        };
+    }
+
+    private static double FirstPositive(params double?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (value.HasValue && value.Value > 0)
+            {
+                return Math.Round(value.Value, 2);
+            }
+        }
+
+        return 0;
+    }
+
+    private static string TryExtractBeatSaverKey(string? url)
+    {
+        var text = NormalizeNullable(url);
+        if (text == null || !Uri.TryCreate(text, UriKind.Absolute, out var uri))
+        {
+            return "";
+        }
+
+        if (!uri.Host.Contains("beatsaver", StringComparison.OrdinalIgnoreCase))
+        {
+            return "";
+        }
+
+        var segments = uri.AbsolutePath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        for (var index = 0; index < segments.Length - 1; index++)
+        {
+            if (string.Equals(segments[index], "beatmap", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(segments[index], "maps", StringComparison.OrdinalIgnoreCase))
+            {
+                return segments[index + 1];
+            }
+        }
+
+        return segments.LastOrDefault() ?? "";
+    }
+
+    private static ReplayQueueSidecar CreateReplaySidecar(ReplayQueueRecord replay, string replayPath)
+    {
+        return new ReplayQueueSidecar
+        {
+            Provider = replay.Provider,
+            ReferenceKind = replay.ReferenceKind,
+            ReplayFormat = replay.ReplayFormat,
+            Path = replayPath,
+            SourceUrl = replay.SourceUrl,
+            ScoreId = replay.ScoreId,
+            HasReplay = true,
+            PlayerName = replay.PlayerName,
+            SongName = replay.SongName,
+            Mapper = replay.Mapper,
+            Difficulty = replay.Difficulty,
+            Mode = replay.Mode,
+            LevelHash = replay.LevelHash,
+            CoverArtUrl = replay.CoverArtUrl,
+            EstimatedSeconds = replay.EstimatedSeconds
+        };
+    }
+
+    private static ReplayQueueSidecar CreateReplaySidecar(MapCollectionItemRecord item, string replayPath)
+    {
+        return new ReplayQueueSidecar
+        {
+            Provider = item.Provider,
+            ReferenceKind = item.ReferenceKind,
+            ReplayFormat = item.ReplayFormat,
+            Path = replayPath,
+            SourceUrl = item.SourceUrl,
+            ScoreId = item.ScoreId,
+            HasReplay = true,
+            PlayerName = item.PlayerName,
+            SongName = item.SongName,
+            Mapper = item.Mapper,
+            Difficulty = item.Difficulty,
+            Mode = item.Mode,
+            LevelHash = item.LevelHash,
+            CoverArtUrl = item.CoverArtUrl,
+            EstimatedSeconds = item.EstimatedSeconds
+        };
+    }
+
+    private void ApplyCollectionImportOrderNoLock(IReadOnlyList<string> importedPaths)
+    {
+        if (importedPaths.Count == 0)
+        {
+            return;
+        }
+
+        var importOrder = importedPaths
+            .Select((path, index) => new { Path = path, Index = index })
+            .ToDictionary(item => item.Path, item => item.Index, StringComparer.OrdinalIgnoreCase);
+        var existing = _state.Queue
+            .Where(item => !importOrder.ContainsKey(Path.GetFullPath(item.Path)))
+            .ToList();
+        var imported = _state.Queue
+            .Where(item => importOrder.ContainsKey(Path.GetFullPath(item.Path)))
+            .OrderBy(item => importOrder[Path.GetFullPath(item.Path)])
+            .ToList();
+
+        _state.Queue = existing.Concat(imported).ToList();
+        ResequenceQueueNoLock();
+    }
+
+    private static bool IsRecordedReplay(ReplayQueueRecord replay)
+    {
+        return string.Equals(replay.Status, "Completed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void UpdateMatchingCollectionCompletionNoLock(ReplayQueueRecord replay, DateTimeOffset completedAtUtc)
+    {
+        var replayKey = CreateReplayTargetKey(replay);
+        if (string.IsNullOrWhiteSpace(replayKey))
+        {
+            return;
+        }
+
+        var outputPath = NormalizeNullable(replay.OutputPath);
+        foreach (var collection in _state.Collections)
+        {
+            var changed = false;
+            foreach (var item in collection.Items)
+            {
+                if (!string.Equals(CreateReplayTargetKey(item), replayKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                item.CompletedOutputPath = outputPath;
+                item.CompletedAtUtc = completedAtUtc;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                collection.UpdatedAtUtc = completedAtUtc;
+            }
+        }
+    }
+
+    private static bool IsRecordedCollectionItem(MapCollectionItemRecord item)
+    {
+        var outputPath = NormalizeNullable(item.CompletedOutputPath);
+        return item.CompletedAtUtc != null &&
+               (outputPath == null || File.Exists(outputPath));
+    }
+
+    private static string CreateReplayTargetKey(ReplayQueueRecord replay)
+    {
+        return CreateReplayTargetKey(
+            replay.LevelHash,
+            replay.Difficulty,
+            replay.Mode,
+            replay.Provider,
+            replay.ScoreId,
+            replay.SourceUrl,
+            replay.FileName);
+    }
+
+    private static string CreateReplayTargetKey(MapCollectionItemRecord item)
+    {
+        return CreateReplayTargetKey(
+            item.LevelHash,
+            item.Difficulty,
+            item.Mode,
+            item.Provider,
+            item.ScoreId,
+            item.SourceUrl,
+            item.FileName);
+    }
+
+    private static string CreateReplayTargetKey(
+        string levelHash,
+        string difficulty,
+        string mode,
+        ReplayProvider provider,
+        string scoreId,
+        string sourceUrl,
+        string fileName)
+    {
+        var normalizedHash = NormalizeKeyPart(levelHash);
+        if (!string.IsNullOrWhiteSpace(normalizedHash))
+        {
+            return "map|" + normalizedHash + "|" + NormalizeKeyPart(difficulty) + "|" + NormalizeKeyPart(mode);
+        }
+
+        var normalizedScoreId = NormalizeKeyPart(scoreId);
+        if (!string.IsNullOrWhiteSpace(normalizedScoreId))
+        {
+            return "score|" + ((int)provider).ToString(CultureInfo.InvariantCulture) + "|" + normalizedScoreId;
+        }
+
+        var normalizedSourceUrl = NormalizeKeyPart(sourceUrl);
+        if (!string.IsNullOrWhiteSpace(normalizedSourceUrl))
+        {
+            return "source|" + normalizedSourceUrl;
+        }
+
+        return "file|" + NormalizeKeyPart(fileName);
+    }
+
+    private static string NormalizeKeyPart(string? value)
+    {
+        return (value ?? "").Trim().ToUpperInvariant();
+    }
+
     private static string GetReplaySidecarPath(string replayPath)
     {
         return replayPath + ".metadata.json";
@@ -4655,6 +7476,13 @@ public sealed class ControlPanelStore
                ?? new ControlPanelState();
     }
 
+    private static MapCollectionRecord CloneMapCollection(MapCollectionRecord collection)
+    {
+        var json = JsonSerializer.Serialize(collection, JsonOptions.Default);
+        return JsonSerializer.Deserialize<MapCollectionRecord>(json, JsonOptions.Default)
+               ?? new MapCollectionRecord();
+    }
+
     private static ControlPanelSettings CloneSettings(ControlPanelSettings settings)
     {
         var json = JsonSerializer.Serialize(settings, JsonOptions.Default);
@@ -4683,6 +7511,13 @@ public sealed class ControlPanelStore
             ReduceDebris = settings?.ReduceDebris ?? true,
             NoFailEffects = settings?.NoFailEffects ?? false,
             SaberTrailIntensity = settings?.SaberTrailIntensity ?? 0f,
+            LeftSaberColor = settings?.LeftSaberColor ?? "#a82020",
+            RightSaberColor = settings?.RightSaberColor ?? "#2064a8",
+            LightColorA = settings?.LightColorA ?? "#ff3030",
+            LightColorB = settings?.LightColorB ?? "#c03030",
+            BoostLightColorA = settings?.BoostLightColorA ?? "#ff3030",
+            BoostLightColorB = settings?.BoostLightColorB ?? "#c03030",
+            WallColor = settings?.WallColor ?? "#3098ff",
             NoteJumpDurationType = settings?.NoteJumpDurationType ?? GamePresentationSettings.NoteJumpDurationTypeDynamic,
             NoteJumpFixedDuration = settings?.NoteJumpFixedDuration ?? 0.2f,
             NoteJumpStartBeatOffset = settings?.NoteJumpStartBeatOffset ?? 0f,
@@ -4723,6 +7558,13 @@ public sealed class ControlPanelStore
                normalizedLeft.ReduceDebris == normalizedRight.ReduceDebris &&
                normalizedLeft.NoFailEffects == normalizedRight.NoFailEffects &&
                normalizedLeft.SaberTrailIntensity == normalizedRight.SaberTrailIntensity &&
+               string.Equals(normalizedLeft.LeftSaberColor, normalizedRight.LeftSaberColor, StringComparison.Ordinal) &&
+               string.Equals(normalizedLeft.RightSaberColor, normalizedRight.RightSaberColor, StringComparison.Ordinal) &&
+               string.Equals(normalizedLeft.LightColorA, normalizedRight.LightColorA, StringComparison.Ordinal) &&
+               string.Equals(normalizedLeft.LightColorB, normalizedRight.LightColorB, StringComparison.Ordinal) &&
+               string.Equals(normalizedLeft.BoostLightColorA, normalizedRight.BoostLightColorA, StringComparison.Ordinal) &&
+               string.Equals(normalizedLeft.BoostLightColorB, normalizedRight.BoostLightColorB, StringComparison.Ordinal) &&
+               string.Equals(normalizedLeft.WallColor, normalizedRight.WallColor, StringComparison.Ordinal) &&
                string.Equals(normalizedLeft.NoteJumpDurationType, normalizedRight.NoteJumpDurationType, StringComparison.Ordinal) &&
                normalizedLeft.NoteJumpFixedDuration == normalizedRight.NoteJumpFixedDuration &&
                normalizedLeft.NoteJumpStartBeatOffset == normalizedRight.NoteJumpStartBeatOffset &&
@@ -4763,13 +7605,15 @@ public sealed class ControlPanelStore
     {
         return string.Equals(status, "Queued", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(status, "Assigned", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(status, "Recording", StringComparison.OrdinalIgnoreCase);
+               string.Equals(status, "Recording", StringComparison.OrdinalIgnoreCase) ||
+               IsFinalizingStatus(status);
     }
 
     private static bool IsActiveReplayStatus(string status)
     {
         return string.Equals(status, "Assigned", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(status, "Recording", StringComparison.OrdinalIgnoreCase);
+               string.Equals(status, "Recording", StringComparison.OrdinalIgnoreCase) ||
+               IsFinalizingStatus(status);
     }
 
     private static bool IsRecordingStatus(string status)
@@ -4777,6 +7621,13 @@ public sealed class ControlPanelStore
         return string.Equals(status, "Recording", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(status, "Playing", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(status, "Started", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsFinalizingStatus(string status)
+    {
+        return string.Equals(status, "Finalizing", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(status, "Saving", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(status, "Stopping", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsPathInsideDirectory(string path, string directory)
@@ -4890,6 +7741,11 @@ public sealed class ControlPanelStore
             return "Recording";
         }
 
+        if (IsFinalizingStatus(normalized))
+        {
+            return "Finalizing";
+        }
+
         return normalized;
     }
 
@@ -4904,10 +7760,52 @@ public sealed class ControlPanelStore
         return char.ToUpperInvariant(trimmed[0]) + trimmed.Substring(1);
     }
 
+    private static double? NormalizeFramesPerSecond(double? value)
+    {
+        if (!value.HasValue ||
+            double.IsNaN(value.Value) ||
+            double.IsInfinity(value.Value) ||
+            value.Value <= 0)
+        {
+            return null;
+        }
+
+        return Math.Round(value.Value, 1);
+    }
+
+    private static string FormatFramesPerSecond(double value)
+    {
+        return Math.Round(value, 1).ToString("0.0", CultureInfo.InvariantCulture);
+    }
+
     private static string? NormalizeNullable(string? value)
     {
         var trimmed = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private static string? CombineWarnings(params string?[] warnings)
+    {
+        var normalized = warnings
+            .Select(NormalizeNullable)
+            .Where(value => value != null)
+            .Cast<string>()
+            .ToList();
+        return normalized.Count == 0 ? null : string.Join(" ", normalized);
+    }
+
+    private static string NormalizeMapCardCategory(string? value)
+    {
+        var normalized = NormalizeNullable(value)?.ToLowerInvariant();
+        return normalized switch
+        {
+            "standard" => "standard",
+            "accuracy" => "accuracy",
+            "tech" => "tech",
+            "speed" => "speed",
+            "extreme" => "extreme",
+            _ => ""
+        };
     }
 
     private static string CreateOutputBaseName(ReplayQueueRecord replay)
@@ -4959,6 +7857,13 @@ public sealed class ControlPanelStore
     {
         var bytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value));
         return Convert.ToHexString(bytes).Substring(0, 16).ToLowerInvariant();
+    }
+
+    private sealed class ReferenceImportDownloadResult
+    {
+        public List<string> ImportedPaths { get; } = new List<string>();
+
+        public List<string> Failures { get; } = new List<string>();
     }
 
     private sealed class RecordingSyncVerificationResult

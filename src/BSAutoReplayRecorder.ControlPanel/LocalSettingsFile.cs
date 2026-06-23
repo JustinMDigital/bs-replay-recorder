@@ -116,6 +116,7 @@ internal static class LocalSettingsFile
     {
         settings.WorkspaceDirectory = ResolveSettingsRelativePath(settings.WorkspaceDirectory, settingsDirectory);
         settings.BeatSaberInstancesRoot = ResolveSettingsRelativePath(settings.BeatSaberInstancesRoot, settingsDirectory);
+        settings.SourceBeatSaberPath = ResolveSettingsRelativePath(settings.SourceBeatSaberPath, settingsDirectory);
         settings.SharedCustomLevelsDirectory = ResolveSettingsRelativePath(settings.SharedCustomLevelsDirectory, settingsDirectory);
         settings.SharedCustomWipLevelsDirectory = ResolveSettingsRelativePath(settings.SharedCustomWipLevelsDirectory, settingsDirectory);
         settings.SharedCustomSabersDirectory = ResolveSettingsRelativePath(settings.SharedCustomSabersDirectory, settingsDirectory);

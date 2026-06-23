@@ -13,12 +13,24 @@ try
 {
     RunStartGuardCheck(Path.Combine(tempRoot, "guard"));
     RunRecorderHostHealthGuardCheck(Path.Combine(tempRoot, "recorder-host-health-guard"));
+    RunBeatLeaderReadinessGuardCheck(Path.Combine(tempRoot, "beatleader-readiness-guard"));
+    RunWindowsGraphicsCaptureCapabilityGuardCheck(Path.Combine(tempRoot, "wgc-capability-guard"));
     RunParallelAssignmentCheck(Path.Combine(tempRoot, "parallel"));
     RunFourInstanceAssignmentCheck(Path.Combine(tempRoot, "parallel-four"));
     RunImportedQueuePlanDistributionCheck(Path.Combine(tempRoot, "queue-plan-distribution"));
     RunEnabledInstanceQueuePlanDistributionCheck(Path.Combine(tempRoot, "enabled-queue-plan-distribution"));
+    RunActiveInstanceCountQueuePlanDistributionCheck(Path.Combine(tempRoot, "active-count-queue-plan-distribution"));
     RunConfiguredInstanceAssignmentCheck(Path.Combine(tempRoot, "configured-instances"));
     RunActiveRunInstanceSettingsGuardCheck(Path.Combine(tempRoot, "active-run-settings-guard"));
+    RunHeartbeatFinalizingFpsDoesNotCancelCheck(Path.Combine(tempRoot, "heartbeat-finalizing-fps"));
+    RunHeartbeatFpsLagSpikeCancellationCheck(Path.Combine(tempRoot, "heartbeat-fps-lag-spike"));
+    RunBenchmarkRecommendationAndQueueIsolationCheck(Path.Combine(tempRoot, "benchmark-recommendation"));
+    RunBenchmarkStopCheck(Path.Combine(tempRoot, "benchmark-stop"));
+    RunBenchmarkHeartbeatFpsCancellationCheck(Path.Combine(tempRoot, "benchmark-fps-cancel"));
+    RunBenchmarkHighAverageFpsDoesNotCancelCheck(Path.Combine(tempRoot, "benchmark-fps-average"));
+    RunBenchmarkFinalizingFpsDoesNotCancelCheck(Path.Combine(tempRoot, "benchmark-finalizing-fps"));
+    RunBenchmarkSelectedConcurrencyCheck(Path.Combine(tempRoot, "benchmark-selected-concurrency"));
+    RunBenchmarkStartGuardCheck(Path.Combine(tempRoot, "benchmark-guards"));
     RunSingleReplayFailureDoesNotCancelOtherAssignmentsCheck(Path.Combine(tempRoot, "single-failure"));
     RunAllConcurrentReplayFailuresCancelQueuedRunCheck(Path.Combine(tempRoot, "all-concurrent-failed"));
     RunWorkerProgressContractCheck(Path.Combine(tempRoot, "worker-progress"));
@@ -27,9 +39,13 @@ try
     RunInstanceDisplayNameNormalizationCheck(Path.Combine(tempRoot, "instance-display-name"));
     RunDefaultLaunchArgumentsCheck(Path.Combine(tempRoot, "default-launch-args"));
     RunStopBroadcastCheck(Path.Combine(tempRoot, "stop-broadcast"));
+    RunCloseGamesAfterQueueCheck(Path.Combine(tempRoot, "close-games-after-queue"));
+    RunStaleCanceledRunFinalizesOnLoadCheck(Path.Combine(tempRoot, "stale-canceled-run"));
     RunIdleShutdownCheck(Path.Combine(tempRoot, "idle-shutdown"));
     RunRecordingOutputDirectoryCheck(Path.Combine(tempRoot, "recording-output"));
+    RunPerRunRecordingOutputDirectoryCheck(Path.Combine(tempRoot, "per-run-recording-output"));
     RunLocalSettingsFileCheck(Path.Combine(tempRoot, "local-settings-file"));
+    RunSetupSourcePathDetectorCheck(Path.Combine(tempRoot, "setup-source-path"));
     RunLaunchPresetNormalizationCheck();
     RunAudioLevelNormalizationCheck();
     RunAudioLevelSettingsUpdateCheck(Path.Combine(tempRoot, "audio-level-update"));
@@ -37,14 +53,20 @@ try
     RunRequireAudioGuardCheck(Path.Combine(tempRoot, "require-audio-guard"));
     RunProcessLoopbackAudioGuardCheck(Path.Combine(tempRoot, "process-loopback-audio-guard"));
     RunLaunchValidationCheck(Path.Combine(tempRoot, "launch-validation"));
+    RunSingleInstanceLaunchPluginInstallScopeCheck(Path.Combine(tempRoot, "single-launch-install-scope"));
+    RunDisplayScaleOnlyAppliesOnRunCheck(Path.Combine(tempRoot, "display-scale-run-boundary"));
     RunWorkerPluginSettingsIdentityCheck();
+    RunWorkerPluginInstallerBeatLeaderGuardCheck(Path.Combine(tempRoot, "worker-plugin-beatleader-guard"));
     RunDuplicateManagedWorkerIdRegistrationCheck(Path.Combine(tempRoot, "duplicate-managed-worker-id"));
     RunManagedInstanceProvisioningCheck(Path.Combine(tempRoot, "managed-instance-provisioning"));
     RunInstanceBaselineCheck(Path.Combine(tempRoot, "instance-baseline"));
+    RunModIntegrationCatalogCheck(Path.Combine(tempRoot, "mod-integration-catalog"));
     RunSongFolderLinksCheck(Path.Combine(tempRoot, "song-folder-links"));
     RunQueueCoverArtCheck(Path.Combine(tempRoot, "queue-cover-art"));
     RunQueueMapImportCheck(Path.Combine(tempRoot, "queue-map-import"));
     RunScoreSaberRichTextPlayerNameFormattingCheck();
+    RunBeatLeaderReferenceImportCheck(Path.Combine(tempRoot, "beatleader-reference-import"));
+    RunBeatLeaderScoreUrlDownloaderCheck(Path.Combine(tempRoot, "beatleader-score-url-downloader"));
     RunScoreSaberReferenceImportCheck(Path.Combine(tempRoot, "scoresaber-reference-import"));
     RunLocalScoreSaberImportMetadataEnrichmentCheck(Path.Combine(tempRoot, "scoresaber-local-metadata-import"));
     RunLocalScoreSaberFilenameFallbackCheck(Path.Combine(tempRoot, "scoresaber-local-filename-fallback"));
@@ -54,8 +76,12 @@ try
     RunReplayCalibrationCheck(Path.Combine(tempRoot, "replay-calibration"));
     RunDiskSpaceAndEventLogCheck(Path.Combine(tempRoot, "disk-events"));
     RunCompletedRecordingUriCheck(Path.Combine(tempRoot, "recording-uri"));
+    RunRequeueAllQueueItemsCheck(Path.Combine(tempRoot, "requeue-all"));
+    RunMapCollectionSaveLoadCheck(Path.Combine(tempRoot, "map-collections"));
+    RunMapCollectionCardExportCheck(Path.Combine(tempRoot, "map-card-export"));
     RunCompletedRecordingAudioVerificationCheck(Path.Combine(tempRoot, "recording-audio-verification"));
     RunCompletedRecordingSyncVerificationCheck(Path.Combine(tempRoot, "recording-sync-verification"));
+    RunCompletedRecordingBookmarkChapterEmbeddingCheck(Path.Combine(tempRoot, "recording-bookmark-chapters"));
     Console.WriteLine("All control panel checks passed.");
 }
 finally
@@ -98,6 +124,52 @@ static void RunRecorderHostHealthGuardCheck(string workspace)
         "recorder host health start guard");
 }
 
+static void RunBeatLeaderReadinessGuardCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 1);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+    store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "worker-0",
+        WorkerName = "Worker 0",
+        PreferredInstanceIndex = 0,
+        ReplayProviderStatusReported = true,
+        BeatLeaderReady = false,
+        BeatLeaderStatus = "BeatLeader test unavailable",
+        ScoreSaberReady = true,
+        ScoreSaberStatus = "ScoreSaber test ready"
+    });
+
+    AssertThrows<InvalidOperationException>(
+        () => store.StartRun(),
+        "beatleader readiness start guard");
+}
+
+static void RunWindowsGraphicsCaptureCapabilityGuardCheck(string workspace)
+{
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        captureEngine: "WindowsGraphicsCapture",
+        recorderHostHealthChecker: new FakeRecorderHostHealthChecker(true, wgcSupported: false));
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+    store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "worker-0",
+        WorkerName = "Worker 0",
+        PreferredInstanceIndex = 0,
+        ReplayProviderStatusReported = true,
+        BeatLeaderReady = true,
+        BeatLeaderStatus = "BeatLeader test ready"
+    });
+
+    AssertThrows<InvalidOperationException>(
+        () => store.StartRun(),
+        "wgc capability start guard");
+}
+
 static void RunLaunchPlanCheck(string workspace)
 {
     var instancesRoot = Path.Combine(workspace, "BSInstances");
@@ -130,6 +202,70 @@ static void RunLaunchValidationCheck(string workspace)
     AssertContains("Beat Saber.exe was not found", state.Instances[0].GameLaunchError, "missing exe launch error");
 }
 
+static void RunSingleInstanceLaunchPluginInstallScopeCheck(string workspace)
+{
+    var instancesRoot = Path.Combine(workspace, "BSInstances");
+    CreateFakeBeatSaberInstance(instancesRoot, "Scope I-1", 0);
+    CreateFakeBeatSaberInstance(instancesRoot, "Scope I-2", 1);
+    var pluginInstaller = new FakeWorkerPluginInstaller();
+    var store = CreateStore(
+        workspace,
+        instancesRoot,
+        "Scope I-",
+        instanceCount: 2,
+        workerPluginInstaller: pluginInstaller);
+
+    store.LaunchInstance(1);
+
+    AssertEqual(1, pluginInstaller.InstallCount, "single launch worker plugin install count");
+    AssertEqual("0,1", string.Join(",", pluginInstaller.LastContextIndexes), "single launch worker plugin context indexes");
+    AssertEqual("1", string.Join(",", pluginInstaller.LastDeployTargetIndexes), "single launch worker plugin target indexes");
+}
+
+static void RunDisplayScaleOnlyAppliesOnRunCheck(string workspace)
+{
+    var previousSetDpiPath = Environment.GetEnvironmentVariable("BSARR_SETDPI_PATH");
+    try
+    {
+        Environment.SetEnvironmentVariable(
+            "BSARR_SETDPI_PATH",
+            Path.Combine(workspace, "missing-setdpi", "SetDpi.exe"));
+
+        var launchWorkspace = Path.Combine(workspace, "manual-launch");
+        var launchInstancesRoot = Path.Combine(launchWorkspace, "BSInstances");
+        CreateFakeBeatSaberInstance(launchInstancesRoot, "Scale I-1", 0);
+        var launchStore = CreateStore(
+            launchWorkspace,
+            launchInstancesRoot,
+            "Scale I-",
+            instanceCount: 1,
+            workerPluginInstaller: new FakeWorkerPluginInstaller(),
+            manageDisplayScale: true);
+
+        var launched = launchStore.LaunchInstance(0);
+        AssertEqual(true, launched.Settings.ManageDisplayScale, "manual launch keeps display scale management enabled");
+        AssertEqual(false, launched.Run.DisplayScaleRestorePending, "manual launch does not arm display scale restore");
+
+        var runWorkspace = Path.Combine(workspace, "run-start");
+        var runStore = CreateStore(
+            runWorkspace,
+            instanceCount: 1,
+            manageDisplayScale: true);
+        using var files = CreateReplayFiles(1);
+        runStore.ImportFiles(files.Collection);
+        RegisterWorkers(runStore, "display-scale-worker", count: 1);
+        SetGameProcessIds(runStore, 4100);
+
+        var started = runStore.StartRun();
+        AssertEqual(false, started.Settings.ManageDisplayScale, "run start handles missing display scale helper");
+        AssertEqual(false, started.Run.DisplayScaleRestorePending, "missing display scale helper does not arm restore");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("BSARR_SETDPI_PATH", previousSetDpiPath);
+    }
+}
+
 static void RunDisplayLabelFormattingCheck()
 {
     var primaryLabel = WindowsDisplayInfoProvider.BuildDisplayLabel(0, "Acer VG240Y", 1920, 1080, true);
@@ -156,6 +292,7 @@ static void RunLocalSettingsFileCheck(string workspace)
           "controlPanelUrl": "http://127.0.0.1:5999",
           "workspace": "LocalWorkspace",
           "beatSaberInstancesRoot": "Instances",
+          "sourceBeatSaberPath": "Steam/Beat Saber",
           "instanceCount": 2,
           "maxConcurrentRecordings": 1
         }
@@ -180,6 +317,10 @@ static void RunLocalSettingsFileCheck(string workspace)
             Path.GetFullPath(Path.Combine(workspace, "Instances")),
             settings.BeatSaberInstancesRoot,
             "local settings instances path");
+        AssertEqual(
+            Path.GetFullPath(Path.Combine(workspace, "Steam", "Beat Saber")),
+            settings.SourceBeatSaberPath,
+            "local settings source path");
         AssertEqual(2, settings.InstanceCount, "local settings instance count");
         AssertEqual(2, settings.MaxConcurrentRecordings, "local settings max concurrent follows instance count");
     }
@@ -188,6 +329,31 @@ static void RunLocalSettingsFileCheck(string workspace)
         Environment.SetEnvironmentVariable("BSARR_SETTINGS_PATH", previousSettingsPath);
         Directory.SetCurrentDirectory(previousDirectory);
     }
+}
+
+static void RunSetupSourcePathDetectorCheck(string workspace)
+{
+    var library = Path.Combine(workspace, "SteamLibrary");
+    var detectedSource = Path.Combine(library, "steamapps", "common", "Beat Saber");
+    Directory.CreateDirectory(detectedSource);
+    File.WriteAllText(Path.Combine(detectedSource, "Beat Saber.exe"), "");
+
+    var detected = SetupSourcePathDetector.Detect("", new[] { library });
+    AssertEqual("Detected", detected.Status, "setup source detected status");
+    AssertEqual(Path.GetFullPath(detectedSource), detected.DetectedSourceBeatSaberPath, "setup source detected path");
+    AssertEqual(Path.GetFullPath(detectedSource), detected.EffectiveSourceBeatSaberPath, "setup source effective detected path");
+
+    var configuredSource = Path.Combine(workspace, "Configured", "Beat Saber");
+    Directory.CreateDirectory(configuredSource);
+    File.WriteAllText(Path.Combine(configuredSource, "Beat Saber.exe"), "");
+
+    var configured = SetupSourcePathDetector.Detect(configuredSource, new[] { library });
+    AssertEqual("Ready", configured.Status, "setup source configured status");
+    AssertEqual(Path.GetFullPath(configuredSource), configured.EffectiveSourceBeatSaberPath, "setup source configured wins");
+
+    var missing = SetupSourcePathDetector.Detect(Path.Combine(workspace, "Missing"), Array.Empty<string>());
+    AssertEqual("Missing", missing.Status, "setup source missing status");
+    AssertEqual("", missing.EffectiveSourceBeatSaberPath, "setup source missing effective path");
 }
 
 static void RunManagedInstanceProvisioningCheck(string workspace)
@@ -507,6 +673,101 @@ static void RunStopBroadcastCheck(string workspace)
     AssertEqual(false, repeatedHeartbeat.ShouldOpenPauseMenu, "stop command is delivered once");
 }
 
+static void RunCloseGamesAfterQueueCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 1);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+    var worker = store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "close-worker",
+        WorkerName = "Close Worker",
+        PreferredInstanceIndex = 0
+    });
+    SetGameProcessIds(store, 4100);
+
+    store.StartRun();
+    var armed = store.SetCloseGamesWhenFinished(true);
+    AssertEqual(true, armed.Run.CloseGamesWhenFinishedRequested, "close games after queue armed");
+
+    var assignment = store.GetAssignment(worker.WorkerId);
+    var outputPath = Path.Combine(workspace, "recording.mp4");
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    File.WriteAllText(outputPath, "recorded");
+
+    var completed = store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = worker.WorkerId,
+        AssignmentId = assignment.AssignmentId!,
+        Status = "Completed",
+        OutputPath = outputPath
+    });
+
+    AssertEqual("Complete", completed.Run.Status, "close games after queue run complete");
+    AssertEqual(false, completed.Run.CloseGamesWhenFinishedRequested, "close games after queue resets request");
+    AssertEqual((string?)null, completed.Instances[0].WorkerId, "close games after queue clears worker id");
+    AssertEqual((int?)null, completed.Instances[0].GameProcessId, "close games after queue clears process id");
+    AssertEqual("Exited", completed.Instances[0].GameLaunchStatus, "close games after queue marks game exited");
+    AssertEqual(
+        true,
+        completed.Events.Any(item => item.Tag == "Instance" &&
+                                     item.Text.Contains("Queue finished; close requested for all games", StringComparison.Ordinal)),
+        "close games after queue event");
+}
+
+static void RunStaleCanceledRunFinalizesOnLoadCheck(string workspace)
+{
+    Directory.CreateDirectory(workspace);
+    var statePath = Path.Combine(workspace, "control-panel-state.json");
+    var jsonOptions = new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
+    var state = new ControlPanelState
+    {
+        Settings = new ControlPanelSettings
+        {
+            WorkspaceDirectory = workspace,
+            RecordingOutputDirectory = Path.Combine(workspace, "Recordings"),
+            InstanceCount = 1,
+            MaxConcurrentRecordings = 1,
+            AudioMode = "None",
+            RequireAudioForRun = false,
+            BeatSaberInstancesRoot = Path.Combine(workspace, "Instances"),
+            BeatSaberLaunchPreset = "custom",
+            BeatSaberLaunchArguments = "--no-yeet fpfc"
+        },
+        Instances =
+        {
+            new WorkerInstanceRecord
+            {
+                Index = 0,
+                Name = "Instance 1",
+                Status = "Assigned",
+                WorkerId = null,
+                ActiveAssignmentId = null
+            }
+        },
+        Run = new RunState
+        {
+            IsRunning = false,
+            CancellationRequested = true,
+            CancellationReason = "Stopped by operator.",
+            StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-10),
+            Status = "Stopping",
+            ForceStopCommandId = 4
+        }
+    };
+    File.WriteAllText(statePath, JsonSerializer.Serialize(state, jsonOptions));
+
+    var store = CreateStore(workspace, instanceCount: 1);
+    var snapshot = store.Snapshot();
+    AssertEqual(false, snapshot.Run.CancellationRequested, "stale canceled run clears cancellation flag");
+    AssertEqual("Stopped", snapshot.Run.Status, "stale canceled run status");
+    AssertEqual("Idle", snapshot.Instances[0].Status, "stale canceled run resets idle instance");
+}
+
 static void RunIdleShutdownCheck(string workspace)
 {
     var store = CreateStore(workspace, instanceCount: 1);
@@ -668,6 +929,44 @@ static void RunWorkerPluginSettingsIdentityCheck()
     }
 }
 
+static void RunWorkerPluginInstallerBeatLeaderGuardCheck(string workspace)
+{
+    var instanceDirectory = Path.Combine(workspace, "Instances", "I-1");
+    WriteFakeFile(instanceDirectory, "Beat Saber.exe", "game exe");
+
+    var settings = new ControlPanelSettings
+    {
+        WorkspaceDirectory = workspace,
+        BeatSaberInstancesRoot = Path.Combine(workspace, "Instances"),
+        InstanceCount = 1
+    };
+    settings.Normalize();
+
+    var instances = new List<WorkerInstanceRecord>
+    {
+        new WorkerInstanceRecord
+        {
+            Index = 0,
+            Name = "Instance 1",
+            LaunchDirectory = instanceDirectory,
+            Enabled = true
+        }
+    };
+
+    try
+    {
+        new DotNetWorkerPluginInstaller().Install(instances, settings);
+    }
+    catch (InvalidOperationException ex)
+    {
+        AssertContains("Plugins/BeatLeader.dll", ex.Message, "worker plugin installer beatleader error path");
+        AssertContains("reprovision workers", ex.Message, "worker plugin installer beatleader remediation");
+        return;
+    }
+
+    throw new InvalidOperationException("worker plugin installer beatleader guard failed. Expected InvalidOperationException.");
+}
+
 static void RunDuplicateManagedWorkerIdRegistrationCheck(string workspace)
 {
     var store = CreateStore(workspace, instanceCount: 3);
@@ -777,6 +1076,34 @@ static void RunSongFolderLinksCheck(string workspace)
     AssertEqual("Linked", settingsRepairState.SongFolders.Status, "settings save repairs song folder links");
 }
 
+static void RunModIntegrationCatalogCheck(string workspace)
+{
+    var settings = new ControlPanelSettings
+    {
+        WorkspaceDirectory = workspace,
+        ShareCustomSabers = true,
+        ShareCustomNotes = false,
+        ShareCustomPlatforms = true,
+        ShareCustomAvatars = false,
+        ShareCustomWalls = true,
+        ShareCustomBombs = false
+    };
+    settings.Normalize();
+
+    var definitions = ModIntegrationCatalog.CreateSharedFolderDefinitions(settings);
+    AssertEqual(5, definitions.Count, "enabled shared mod folder count");
+    AssertEqual(true, definitions.Any(item => item.DisplayName == "CustomLevels"), "catalog includes CustomLevels");
+    AssertEqual(true, definitions.Any(item => item.DisplayName == "CustomWIPLevels"), "catalog includes CustomWIPLevels");
+    AssertEqual(true, definitions.Any(item => item.DisplayName == "CustomSabers"), "catalog includes CustomSabers");
+    AssertEqual(false, definitions.Any(item => item.DisplayName == "CustomNotes"), "catalog skips disabled CustomNotes");
+    AssertEqual(
+        Path.Combine(Path.GetFullPath(workspace), "SharedContent", "CustomSabers"),
+        definitions.First(item => item.DisplayName == "CustomSabers").SharedFolderPath,
+        "catalog uses normalized shared CustomSabers path");
+    AssertEqual(true, ModIntegrationCatalog.SettingsAdapters.Any(item => item.DisplayName == "Chroma"), "catalog reserves Chroma settings adapter");
+    AssertEqual(true, ModIntegrationCatalog.SettingsAdapters.Any(item => item.DisplayName == "Custom Sabers Picker"), "catalog reserves saber picker settings adapter");
+}
+
 static void RunRecordingOutputDirectoryCheck(string workspace)
 {
     var customRoot = Path.Combine(workspace, "Custom Videos");
@@ -802,6 +1129,63 @@ static void RunRecordingOutputDirectoryCheck(string workspace)
         Path.Combine(Path.GetFullPath(workspace), "Relative Videos"),
         updated.Settings.RecordingOutputDirectory,
         "relative recording folder");
+}
+
+static void RunPerRunRecordingOutputDirectoryCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 2, maxConcurrentRecordings: 2);
+    using var files = CreateReplayFiles(2, distinctLevelHashes: true);
+    store.ImportFiles(files.Collection);
+    var collection = store.SaveMapCollection(new SaveMapCollectionRequest
+    {
+        Name = "Friday Night / Pack?"
+    });
+    RegisterWorkers(store, "run-folder-worker", count: 2);
+
+    var started = store.StartRun();
+    AssertEqual("Friday Night / Pack?", started.Run.CollectionName, "run collection name");
+    AssertEqual(true, Directory.Exists(started.Run.RecordingOutputDirectory), "run recording folder exists");
+    AssertContains("Friday Night Pack", Path.GetFileName(started.Run.RecordingOutputDirectory), "sanitized collection folder name");
+    AssertEqual(
+        Path.GetFullPath(started.Settings.RecordingOutputDirectory),
+        Path.GetFullPath(Path.GetDirectoryName(started.Run.RecordingOutputDirectory) ?? ""),
+        "run folder parent");
+    AssertEqual(
+        true,
+        Regex.IsMatch(
+            Path.GetFileName(started.Run.RecordingOutputDirectory),
+            @"^\d{2}-\d{2}-\d{4} \d{2}-\d{2}-\d{2} - "),
+        "run folder timestamp");
+
+    var firstAssignment = store.GetAssignment("run-folder-worker-0");
+    var secondAssignment = store.GetAssignment("run-folder-worker-1");
+    AssertEqual(true, firstAssignment.HasAssignment, "first run-folder assignment exists");
+    AssertEqual(true, secondAssignment.HasAssignment, "second run-folder assignment exists");
+    AssertEqual(
+        started.Run.RecordingOutputDirectory,
+        firstAssignment.OutputDirectory ?? "",
+        "first assignment run folder");
+    AssertEqual(
+        started.Run.RecordingOutputDirectory,
+        secondAssignment.OutputDirectory ?? "",
+        "second assignment run folder");
+    AssertEqual(
+        firstAssignment.OutputDirectory ?? "",
+        secondAssignment.OutputDirectory ?? "",
+        "shared run folder");
+
+    var noCollectionStore = CreateStore(Path.Combine(workspace, "manual"), instanceCount: 1, maxConcurrentRecordings: 1);
+    using var manualFiles = CreateReplayFiles(1, distinctLevelHashes: true);
+    noCollectionStore.ImportFiles(manualFiles.Collection);
+    RegisterWorkers(noCollectionStore, "manual-run-folder-worker", count: 1);
+    var manualRun = noCollectionStore.StartRun();
+    AssertEqual("", manualRun.Run.CollectionName, "manual run collection name");
+    AssertEqual(
+        true,
+        Regex.IsMatch(
+            Path.GetFileName(manualRun.Run.RecordingOutputDirectory),
+            @"^\d{2}-\d{2}-\d{4} \d{2}-\d{2}-\d{2}$"),
+        "manual run folder timestamp only");
 }
 
 static void RunLaunchPresetNormalizationCheck()
@@ -1255,7 +1639,7 @@ static void RunParallelAssignmentCheck(string workspace)
     AssertEqual(3, assignments.Count(assignment => assignment.HasAssignment), "active assignment count");
     AssertEqual(3, assignments.Select(assignment => assignment.AssignmentId).Distinct().Count(), "distinct assignment count");
     AssertEqual(3, assignments.Select(assignment => assignment.ReplayId).Distinct().Count(), "distinct replay count");
-    AssertEqual(3, assignments.Select(assignment => assignment.OutputDirectory).Distinct().Count(), "distinct output directory count");
+    AssertEqual(1, assignments.Select(assignment => assignment.OutputDirectory).Distinct().Count(), "shared run output directory count");
 
     for (var index = 0; index < assignments.Length; index++)
     {
@@ -1362,6 +1746,31 @@ static void RunEnabledInstanceQueuePlanDistributionCheck(string workspace)
     AssertEqual(1, secondAssignment.InstanceIndex.GetValueOrDefault(-1), "second enabled assignment instance");
 }
 
+static void RunActiveInstanceCountQueuePlanDistributionCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 3, maxConcurrentRecordings: 3);
+    using var files = CreateReplayFiles(6);
+    store.ImportFiles(files.Collection);
+
+    var threeLaneState = store.SetActiveInstanceCount(3);
+    AssertQueuePlan(threeLaneState, new[] { 0, 1, 2, 0, 1, 2 }, "active count three-lane queue plan");
+    AssertEqual(3, threeLaneState.Settings.InstanceCount, "active count preserves configured inventory");
+    AssertEqual(3, threeLaneState.Settings.MaxConcurrentRecordings, "active count three-lane concurrency");
+
+    var twoLaneState = store.SetActiveInstanceCount(2);
+    AssertQueuePlan(twoLaneState, new[] { 0, 1, 0, 1, 0, 1 }, "active count two-lane queue plan");
+    AssertEqual(3, twoLaneState.Settings.InstanceCount, "active count downshift keeps managed instance inventory");
+    AssertEqual(2, twoLaneState.Settings.MaxConcurrentRecordings, "active count two-lane concurrency");
+    AssertEqual(true, twoLaneState.Instances[0].Enabled, "active count two-lane instance 1 enabled");
+    AssertEqual(true, twoLaneState.Instances[1].Enabled, "active count two-lane instance 2 enabled");
+    AssertEqual(false, twoLaneState.Instances[2].Enabled, "active count two-lane instance 3 disabled");
+
+    var restoredState = store.SetActiveInstanceCount(3);
+    AssertQueuePlan(restoredState, new[] { 0, 1, 2, 0, 1, 2 }, "active count restored three-lane queue plan");
+    AssertEqual(3, restoredState.Settings.MaxConcurrentRecordings, "active count restored concurrency");
+    AssertEqual(true, restoredState.Instances[2].Enabled, "active count restored instance 3 enabled");
+}
+
 static void RunConfiguredInstanceAssignmentCheck(string workspace)
 {
     var store = CreateStore(workspace);
@@ -1461,6 +1870,435 @@ static void RunSingleReplayFailureDoesNotCancelOtherAssignmentsCheck(string work
     var replacement = store.GetAssignment(workerIds[0]);
     AssertEqual(true, replacement.HasAssignment, "freed worker receives queued replay after one failure");
     AssertEqual(imported[3].Id, replacement.ReplayId, "freed worker receives original queued replay");
+}
+
+static void RunHeartbeatFpsLagSpikeCancellationCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 1);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+
+    var workerId = store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "fps-worker",
+        WorkerName = "FPS Worker",
+        PreferredInstanceIndex = 0
+    }).WorkerId;
+
+    var idleHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = workerId,
+        Status = "Online",
+        FramesPerSecond = 42.2
+    });
+    AssertEqual(false, idleHeartbeat.ShouldCancelAssignment, "idle low fps does not cancel assignment");
+    AssertEqual(42.2, store.Snapshot().Instances[0].LastReportedFramesPerSecond ?? 0, "idle fps stored");
+
+    store.StartRun();
+    var assignment = store.GetAssignment(workerId);
+    AssertEqual(true, assignment.HasAssignment, "fps assignment exists");
+
+    var healthyHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = workerId,
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 60
+    });
+    AssertEqual(false, healthyHeartbeat.ShouldCancelAssignment, "healthy recording fps does not cancel assignment");
+    AssertEqual(false, healthyHeartbeat.CancellationFailsAssignment, "healthy recording fps does not fail assignment");
+
+    var graceHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = workerId,
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 49.4
+    });
+    AssertEqual(false, graceHeartbeat.ShouldCancelAssignment, "startup grace low fps does not cancel assignment");
+    AssertEqual(false, graceHeartbeat.CancellationFailsAssignment, "startup grace low fps does not fail assignment");
+
+    SetAssignmentAssignedAtUtc(store, assignment.AssignmentId!, DateTimeOffset.UtcNow.AddSeconds(-20));
+    var assignmentAgeGraceHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = workerId,
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 49.4
+    });
+    AssertEqual(false, assignmentAgeGraceHeartbeat.ShouldCancelAssignment, "old assignment time does not cancel during recording startup grace");
+    AssertEqual(false, assignmentAgeGraceHeartbeat.CancellationFailsAssignment, "old assignment time does not fail during recording startup grace");
+
+    SetAssignmentRecordingStartedAtUtc(store, assignment.AssignmentId!, DateTimeOffset.UtcNow.AddSeconds(-20));
+    var firstLagHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = workerId,
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 49.4
+    });
+    AssertEqual(false, firstLagHeartbeat.ShouldCancelAssignment, "single low recording fps heartbeat does not cancel assignment");
+    AssertEqual(false, firstLagHeartbeat.CancellationFailsAssignment, "single low recording fps heartbeat does not fail assignment");
+
+    var secondLagHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = workerId,
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 49.4
+    });
+    AssertEqual(false, secondLagHeartbeat.ShouldCancelAssignment, "brief sustained low recording fps does not cancel assignment");
+    AssertEqual(false, secondLagHeartbeat.CancellationFailsAssignment, "brief sustained low recording fps does not fail assignment");
+
+    SetLowFpsRecordingStartedAtUtc(store, workerId, DateTimeOffset.UtcNow.AddSeconds(-11));
+    var lagHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = workerId,
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 49.4
+    });
+    AssertEqual(true, lagHeartbeat.ShouldCancelAssignment, "low recording fps cancels assignment");
+    AssertEqual(true, lagHeartbeat.CancellationFailsAssignment, "low recording fps fails assignment");
+    AssertContains("Lag spike detected", lagHeartbeat.CancellationReason, "low recording fps cancellation reason");
+    AssertContains("worker minimum FPS 49.4 stayed below 50 FPS", lagHeartbeat.CancellationReason, "low recording fps threshold reason");
+
+    var state = store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = workerId,
+        AssignmentId = assignment.AssignmentId!,
+        Status = lagHeartbeat.CancellationFailsAssignment ? "Failed" : "Stopped",
+        Error = lagHeartbeat.CancellationReason
+    });
+    var replay = state.Queue.Single();
+    AssertEqual("Failed", replay.Status, "low recording fps replay failed");
+    AssertContains("worker minimum FPS 49.4 stayed below 50 FPS", replay.Error, "low recording fps replay error");
+}
+
+static void RunHeartbeatFinalizingFpsDoesNotCancelCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 1);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+
+    var workerId = store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "finalizing-fps-worker",
+        WorkerName = "Finalizing FPS Worker",
+        PreferredInstanceIndex = 0
+    }).WorkerId;
+
+    store.StartRun();
+    var assignment = store.GetAssignment(workerId);
+    SetAssignmentRecordingStartedAtUtc(store, assignment.AssignmentId!, DateTimeOffset.UtcNow.AddSeconds(-20));
+    SetLowFpsRecordingStartedAtUtc(store, workerId, DateTimeOffset.UtcNow.AddSeconds(-11));
+
+    var finalizing = store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = workerId,
+        AssignmentId = assignment.AssignmentId!,
+        Status = "Finalizing"
+    });
+    AssertEqual("Finalizing", finalizing.Queue.Single().Status, "normal finalizing report keeps replay active");
+    AssertEqual("Finalizing", finalizing.Instances[0].Status, "normal finalizing report updates worker status");
+
+    var heartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = workerId,
+        Status = "Finalizing",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 12.3,
+        AverageFramesPerSecond = 12.3,
+        SampledFrameCount = 60
+    });
+    AssertEqual(false, heartbeat.ShouldCancelAssignment, "finalizing low fps does not cancel normal assignment");
+    AssertEqual(false, heartbeat.CancellationFailsAssignment, "finalizing low fps does not fail normal assignment");
+    AssertEqual("Finalizing", store.Snapshot().Queue.Single().Status, "finalizing replay status remains active");
+}
+
+static void RunBenchmarkRecommendationAndQueueIsolationCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 3);
+    using var files = CreateReplayFiles(1);
+    var imported = store.ImportFiles(files.Collection);
+    RegisterWorkers(store, "benchmark-worker", 3);
+
+    var started = store.StartBenchmark();
+    AssertEqual(true, started.Benchmark.IsRunning, "benchmark starts");
+    AssertEqual(1, started.Benchmark.Passes.Count, "benchmark first pass count");
+    AssertEqual(1, started.Benchmark.Passes[0].Concurrency, "benchmark first pass concurrency");
+
+    var first = store.GetAssignment("benchmark-worker-0");
+    AssertEqual(true, first.HasAssignment, "benchmark first assignment exists");
+    AssertEqual("Benchmark", first.AssignmentKind, "benchmark assignment kind");
+    AssertEqual("Queued", store.Snapshot().Queue.Single().Status, "benchmark assignment does not mutate queue status");
+
+    store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = "benchmark-worker-0",
+        Status = "Recording",
+        CurrentReplayId = first.ReplayId,
+        FramesPerSecond = 57.2,
+        AverageFramesPerSecond = 59.6,
+        SampledFrameCount = 120
+    });
+    var afterFirstHeartbeat = store.Snapshot().Benchmark.Passes[0].Assignments[0];
+    AssertEqual(57.2, afterFirstHeartbeat.MinimumFramesPerSecond ?? 0, "benchmark minimum fps stored");
+    AssertEqual(59.6, afterFirstHeartbeat.AverageFramesPerSecond ?? 0, "benchmark average fps stored");
+    AssertEqual(120, afterFirstHeartbeat.SampledFrameCount, "benchmark sample count stored");
+
+    CompleteBenchmarkAssignment(store, "benchmark-worker-0", first.AssignmentId!, workspace, "pass1.mkv");
+    var pass2State = store.Snapshot();
+    AssertEqual(true, pass2State.Benchmark.IsRunning, "benchmark continues after pass one");
+    AssertEqual(2, pass2State.Benchmark.Passes.Count, "benchmark second pass count");
+    AssertEqual(1, pass2State.Benchmark.RecommendedWorkerCount ?? 0, "benchmark recommends first passing count");
+
+    var secondA = store.GetAssignment("benchmark-worker-0");
+    var secondB = store.GetAssignment("benchmark-worker-1");
+    AssertEqual(2, store.Snapshot().Benchmark.Passes[1].Assignments.Count, "benchmark second pass assignments");
+    CompleteBenchmarkAssignment(store, "benchmark-worker-0", secondA.AssignmentId!, workspace, "pass2-a.mkv");
+    CompleteBenchmarkAssignment(store, "benchmark-worker-1", secondB.AssignmentId!, workspace, "pass2-b.mkv");
+
+    var thirdA = store.GetAssignment("benchmark-worker-0");
+    var thirdB = store.GetAssignment("benchmark-worker-1");
+    var thirdC = store.GetAssignment("benchmark-worker-2");
+    CompleteBenchmarkAssignment(store, "benchmark-worker-0", thirdA.AssignmentId!, workspace, "pass3-a.mkv");
+    store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = "benchmark-worker-1",
+        AssignmentId = thirdB.AssignmentId!,
+        Status = "Failed",
+        Error = "Synthetic benchmark failure"
+    });
+    CompleteBenchmarkAssignment(store, "benchmark-worker-2", thirdC.AssignmentId!, workspace, "pass3-c.mkv");
+
+    var final = store.Snapshot();
+    AssertEqual(false, final.Benchmark.IsRunning, "benchmark stops after failed pass");
+    AssertEqual("Complete", final.Benchmark.Status, "benchmark final status with recommendation");
+    AssertEqual(2, final.Benchmark.RecommendedWorkerCount ?? 0, "benchmark recommends highest passing count");
+    AssertContains("Synthetic benchmark failure", final.Benchmark.FailureReason, "benchmark failure reason");
+    AssertEqual("Queued", final.Queue.Single().Status, "benchmark leaves queue status unchanged");
+    AssertEqual<string?>(null, final.Queue.Single().OutputPath, "benchmark leaves queue output path unchanged");
+    AssertEqual(0, final.Run.CompletedCount, "benchmark does not increment run completed count");
+    AssertEqual(0, final.Run.FailedCount, "benchmark does not increment run failed count");
+    AssertEqual(true, File.Exists(final.Benchmark.ReportPath), "benchmark writes report file");
+    AssertEqual(imported[0].Id, final.Benchmark.SourceQueueItemIds.Single(), "benchmark records source replay id");
+}
+
+static void RunBenchmarkStopCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 2);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+    RegisterWorkers(store, "benchmark-stop-worker", 2);
+
+    store.StartBenchmark();
+    var assignment = store.GetAssignment("benchmark-stop-worker-0");
+    var stopped = store.StopBenchmark();
+    AssertEqual("Stopping", stopped.Benchmark.Status, "benchmark stop status");
+    AssertEqual(1, stopped.Run.ForceStopCommandId, "benchmark stop broadcasts force command");
+
+    var heartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = "benchmark-stop-worker-0",
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 60
+    });
+    AssertEqual(true, heartbeat.ShouldCancelAssignment, "benchmark stop cancels active assignment");
+    AssertEqual(true, heartbeat.ShouldOpenPauseMenu, "benchmark stop opens pause menu");
+    AssertEqual(false, heartbeat.CancellationFailsAssignment, "operator stop does not fail assignment");
+
+    var final = store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = "benchmark-stop-worker-0",
+        AssignmentId = assignment.AssignmentId!,
+        Status = "Stopped",
+        Error = heartbeat.CancellationReason
+    });
+    AssertEqual(false, final.Benchmark.IsRunning, "benchmark stopped");
+    AssertEqual("Stopped", final.Benchmark.Status, "benchmark final stopped status");
+}
+
+static void RunBenchmarkHeartbeatFpsCancellationCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 1);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+    RegisterWorkers(store, "benchmark-fps-worker", 1);
+
+    store.StartBenchmark();
+    var assignment = store.GetAssignment("benchmark-fps-worker-0");
+    store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = "benchmark-fps-worker-0",
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 60,
+        AverageFramesPerSecond = 60,
+        SampledFrameCount = 60
+    });
+
+    SetBenchmarkAssignmentRecordingStartedAtUtc(store, assignment.AssignmentId!, DateTimeOffset.UtcNow.AddSeconds(-20));
+    SetLowFpsRecordingStartedAtUtc(store, "benchmark-fps-worker-0", DateTimeOffset.UtcNow.AddSeconds(-11));
+    var lagHeartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = "benchmark-fps-worker-0",
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 49.4,
+        AverageFramesPerSecond = 49.4,
+        SampledFrameCount = 60
+    });
+    AssertEqual(true, lagHeartbeat.ShouldCancelAssignment, "benchmark low fps cancels assignment");
+    AssertEqual(true, lagHeartbeat.CancellationFailsAssignment, "benchmark low fps fails assignment");
+    AssertContains("Benchmark FPS drop detected", lagHeartbeat.CancellationReason, "benchmark low fps cancellation reason");
+
+    var final = store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = "benchmark-fps-worker-0",
+        AssignmentId = assignment.AssignmentId!,
+        Status = "Failed",
+        Error = lagHeartbeat.CancellationReason
+    });
+    AssertEqual(false, final.Benchmark.IsRunning, "benchmark low fps stops benchmark");
+    AssertEqual("Failed", final.Benchmark.Status, "benchmark low fps final status");
+    AssertEqual<int?>(null, final.Benchmark.RecommendedWorkerCount, "benchmark low fps no recommendation");
+}
+
+static void RunBenchmarkHighAverageFpsDoesNotCancelCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 1);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+    RegisterWorkers(store, "benchmark-average-worker", 1);
+
+    store.StartBenchmark();
+    var assignment = store.GetAssignment("benchmark-average-worker-0");
+    SetBenchmarkAssignmentRecordingStartedAtUtc(store, assignment.AssignmentId!, DateTimeOffset.UtcNow.AddSeconds(-20));
+    SetLowFpsRecordingStartedAtUtc(store, "benchmark-average-worker-0", DateTimeOffset.UtcNow.AddSeconds(-11));
+
+    var heartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = "benchmark-average-worker-0",
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 24.1,
+        AverageFramesPerSecond = 140.2,
+        SampledFrameCount = 120
+    });
+    AssertEqual(false, heartbeat.ShouldCancelAssignment, "benchmark high average fps does not cancel assignment");
+    var assignmentState = store.Snapshot().Benchmark.Passes.Single().Assignments.Single();
+    AssertEqual(24.1, assignmentState.MinimumFramesPerSecond ?? 0, "benchmark still reports minimum fps");
+    AssertEqual(140.2, assignmentState.AverageFramesPerSecond ?? 0, "benchmark still reports average fps");
+}
+
+static void RunBenchmarkFinalizingFpsDoesNotCancelCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 1);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+    RegisterWorkers(store, "benchmark-finalizing-worker", 1);
+
+    store.StartBenchmark();
+    var assignment = store.GetAssignment("benchmark-finalizing-worker-0");
+    store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = "benchmark-finalizing-worker-0",
+        Status = "Recording",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 58.1,
+        AverageFramesPerSecond = 60.2,
+        SampledFrameCount = 60
+    });
+
+    SetBenchmarkAssignmentRecordingStartedAtUtc(store, assignment.AssignmentId!, DateTimeOffset.UtcNow.AddSeconds(-20));
+    SetLowFpsRecordingStartedAtUtc(store, "benchmark-finalizing-worker-0", DateTimeOffset.UtcNow.AddSeconds(-11));
+    var finalizingState = store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = "benchmark-finalizing-worker-0",
+        AssignmentId = assignment.AssignmentId!,
+        Status = "Finalizing"
+    });
+    var finalizingAssignment = finalizingState.Benchmark.Passes.Single().Assignments.Single();
+    AssertEqual("Finalizing", finalizingAssignment.Status, "benchmark finalizing report updates assignment status");
+    AssertEqual(true, finalizingAssignment.FinalizingStartedAtUtc.HasValue, "benchmark finalizing start recorded");
+
+    var heartbeat = store.Heartbeat(new WorkerHeartbeatRequest
+    {
+        WorkerId = "benchmark-finalizing-worker-0",
+        Status = "Finalizing",
+        CurrentReplayId = assignment.ReplayId,
+        FramesPerSecond = 11.5,
+        AverageFramesPerSecond = 11.5,
+        SampledFrameCount = 60
+    });
+    AssertEqual(false, heartbeat.ShouldCancelAssignment, "benchmark finalizing low fps does not cancel assignment");
+
+    var afterFinalizingHeartbeat = store.Snapshot().Benchmark.Passes.Single().Assignments.Single();
+    AssertEqual(58.1, afterFinalizingHeartbeat.MinimumFramesPerSecond ?? 0, "benchmark finalizing fps does not lower gameplay min fps");
+    AssertEqual(60.2, afterFinalizingHeartbeat.AverageFramesPerSecond ?? 0, "benchmark finalizing fps does not lower gameplay average fps");
+    AssertEqual(60, afterFinalizingHeartbeat.SampledFrameCount, "benchmark finalizing fps does not add gameplay samples");
+
+    SetBenchmarkAssignmentFinalizingStartedAtUtc(store, assignment.AssignmentId!, DateTimeOffset.UtcNow.AddSeconds(-3));
+    var final = CompleteBenchmarkAssignment(
+        store,
+        "benchmark-finalizing-worker-0",
+        assignment.AssignmentId!,
+        workspace,
+        "finalizing.mkv");
+    var completedAssignment = final.Benchmark.Passes.Single().Assignments.Single();
+    AssertEqual("Completed", completedAssignment.Status, "benchmark finalizing assignment completes");
+    AssertEqual(true, completedAssignment.FinalizationSeconds >= 2.5, "benchmark finalization duration recorded");
+    AssertEqual("Complete", final.Benchmark.Status, "benchmark finalizing low fps still completes");
+}
+
+static void RunBenchmarkSelectedConcurrencyCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 3);
+    using var files = CreateReplayFiles(2);
+    store.ImportFiles(files.Collection);
+    RegisterWorkers(store, "benchmark-selected-worker", 3);
+
+    var started = store.StartBenchmark(new BenchmarkStartRequest
+    {
+        ConcurrencyLevels = new List<int> { 2 }
+    });
+    AssertEqual(1, started.Benchmark.Passes.Count, "selected benchmark starts one pass");
+    AssertEqual(2, started.Benchmark.Passes[0].Concurrency, "selected benchmark skips lower concurrency");
+    AssertEqual(1, started.Benchmark.SelectedConcurrencies.Count, "selected benchmark records selected count");
+    AssertEqual(2, started.Benchmark.SelectedConcurrencies[0], "selected benchmark records selected concurrency");
+
+    var first = store.GetAssignment("benchmark-selected-worker-0");
+    var second = store.GetAssignment("benchmark-selected-worker-1");
+    CompleteBenchmarkAssignment(store, "benchmark-selected-worker-0", first.AssignmentId!, workspace, "selected-a.mkv");
+    var final = CompleteBenchmarkAssignment(store, "benchmark-selected-worker-1", second.AssignmentId!, workspace, "selected-b.mkv");
+    AssertEqual(false, final.Benchmark.IsRunning, "selected benchmark completes after selected pass");
+    AssertEqual("Complete", final.Benchmark.Status, "selected benchmark final status");
+    AssertEqual(1, final.Benchmark.Passes.Count, "selected benchmark does not run skipped passes");
+    AssertEqual(2, final.Benchmark.RecommendedWorkerCount ?? 0, "selected benchmark recommends selected passing count");
+
+    AssertThrows<InvalidOperationException>(
+        () => store.StartBenchmark(new BenchmarkStartRequest { ConcurrencyLevels = new List<int> { 4 } }),
+        "selected benchmark rejects unavailable concurrency");
+}
+
+static void RunBenchmarkStartGuardCheck(string workspace)
+{
+    var emptyStore = CreateStore(Path.Combine(workspace, "empty"), instanceCount: 1);
+    RegisterWorkers(emptyStore, "empty-benchmark-worker", 1);
+    AssertThrows<InvalidOperationException>(
+        () => emptyStore.StartBenchmark(),
+        "benchmark requires source replay");
+
+    var activeRunStore = CreateStore(Path.Combine(workspace, "active-run"), instanceCount: 1);
+    using var files = CreateReplayFiles(1);
+    activeRunStore.ImportFiles(files.Collection);
+    RegisterWorkers(activeRunStore, "active-run-benchmark-worker", 1);
+    activeRunStore.StartRun();
+    AssertThrows<InvalidOperationException>(
+        () => activeRunStore.StartBenchmark(),
+        "benchmark cannot overlap active run");
 }
 
 static void RunAllConcurrentReplayFailuresCancelQueuedRunCheck(string workspace)
@@ -1735,6 +2573,63 @@ static void RunQueueMapImportCheck(string workspace)
     var downloaded = downloadedStore.ImportFiles(downloadedFiles.Collection);
     AssertEqual("Downloaded", downloaded[0].MapStatus, "downloaded map status");
     AssertEqual(true, File.Exists(Path.Combine(downloaded[0].MapInstallPath, "Info.dat")), "downloaded map info.dat");
+}
+
+static void RunBeatLeaderReferenceImportCheck(string workspace)
+{
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        beatLeaderReplayDownloader: new FakeBeatLeaderReplayDownloader());
+
+    var imported = store.ImportReferencesAsync(new ReplayReferenceImportRequest
+    {
+        References = new List<string>
+        {
+            "https://replay.beatleader.xyz/?link=https%3A%2F%2Fcdn.replays.beatleader.xyz%2F9280912-76561198059961776-ExpertPlus-Standard-13400F5FB2FD19F52E8C7AC48815D12E72FA3B4A.bsor"
+        }
+    }, CancellationToken.None).GetAwaiter().GetResult();
+
+    AssertEqual(1, imported.Count, "beatleader linked replay import count");
+    var replay = imported[0];
+    AssertEqual(ReplayProvider.BeatLeader, replay.Provider, "beatleader provider");
+    AssertEqual(ReplayReferenceKind.BeatLeaderCdnBsorUrl, replay.ReferenceKind, "beatleader reference kind");
+    AssertEqual("BSOR", replay.ReplayFormat, "beatleader replay format");
+    AssertEqual("9280912", replay.ScoreId, "beatleader score id");
+    AssertEqual("Song 1", replay.SongName, "beatleader song");
+    AssertEqual("ExpertPlus", replay.Difficulty, "beatleader difficulty");
+    AssertEqual("Standard", replay.Mode, "beatleader mode");
+    AssertEqual("13400F5FB2FD19F52E8C7AC48815D12E72FA3B4A", replay.LevelHash, "beatleader hash");
+    AssertEqual(true, File.Exists(replay.Path), "beatleader replay file exists");
+    AssertEqual(true, File.Exists(replay.Path + ".metadata.json"), "beatleader sidecar exists");
+}
+
+static void RunBeatLeaderScoreUrlDownloaderCheck(string workspace)
+{
+    var queueDirectory = Path.Combine(workspace, "Queue");
+    var handler = new FakeBeatLeaderScoreHttpMessageHandler();
+    using var httpClient = new HttpClient(handler);
+    var downloader = new BeatLeaderReplayDownloader(httpClient);
+    var reference = new ReplayReferenceParser().Parse("https://beatleader.com/score/30643468");
+
+    var download = downloader.DownloadAsync(
+        reference,
+        queueDirectory,
+        fileName => Path.Combine(queueDirectory, fileName),
+        CancellationToken.None).GetAwaiter().GetResult();
+
+    AssertEqual(1, handler.ScoreLookupCount, "beatleader score lookup count");
+    AssertEqual(1, handler.ReplayDownloadCount, "beatleader replay download count");
+    AssertEqual(true, File.Exists(download.LocalPath), "beatleader score url downloaded file exists");
+    AssertEqual(
+        "30643468-76561199081029968-ExpertPlus-Standard-D790917A21934DC957352377B204E9C57D97D386.bsor",
+        Path.GetFileName(download.LocalPath),
+        "beatleader score url imported file name");
+    AssertEqual("30643468", download.Metadata.ScoreId, "beatleader score url score id");
+    AssertEqual("https://beatleader.com/score/30643468", download.Metadata.SourceUrl, "beatleader score url source");
+    AssertEqual("Train of Thought", download.Metadata.SongName, "beatleader score url song");
+    AssertEqual("ExpertPlus", download.Metadata.Difficulty, "beatleader score url difficulty");
+    AssertEqual("D790917A21934DC957352377B204E9C57D97D386", download.Metadata.LevelHash, "beatleader score url hash");
 }
 
 static void RunScoreSaberReferenceImportCheck(string workspace)
@@ -2035,6 +2930,239 @@ static void RunCompletedRecordingUriCheck(string workspace)
     AssertEqual<string?>(null, replay.OutputPath, "requeued output path");
 }
 
+static void RunRequeueAllQueueItemsCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 3);
+    using var files = CreateReplayFiles(4);
+    var imported = store.ImportFiles(files.Collection);
+    var workers = Enumerable.Range(0, 3)
+        .Select(index => store.RegisterWorker(new WorkerRegisterRequest
+        {
+            WorkerId = "worker-" + index,
+            WorkerName = "Worker " + index,
+            PreferredInstanceIndex = index
+        }))
+        .ToArray();
+
+    store.StartRun();
+    var assignments = workers
+        .Select(worker => store.GetAssignment(worker.WorkerId))
+        .ToArray();
+    AssertEqual(3, assignments.Count(assignment => assignment.HasAssignment), "requeue all active assignment count");
+
+    var completedOutputPath = Path.Combine(workspace, "Recordings", "completed.mp4");
+    Directory.CreateDirectory(Path.GetDirectoryName(completedOutputPath)!);
+    File.WriteAllText(completedOutputPath, "recorded");
+    store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = workers[0].WorkerId,
+        AssignmentId = assignments[0].AssignmentId!,
+        Status = "Completed",
+        OutputPath = completedOutputPath
+    });
+    store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = workers[1].WorkerId,
+        AssignmentId = assignments[1].AssignmentId!,
+        Status = "Failed",
+        Error = "Map failed early."
+    });
+
+    var requeued = store.RequeueAllQueueItems();
+    var completedReplay = requeued.Queue.Single(item => item.Id == imported[0].Id);
+    var failedReplay = requeued.Queue.Single(item => item.Id == imported[1].Id);
+    var activeReplay = requeued.Queue.Single(item => item.Id == imported[2].Id);
+    var queuedReplay = requeued.Queue.Single(item => item.Id == imported[3].Id);
+
+    AssertEqual("Queued", completedReplay.Status, "requeue all completed status");
+    AssertEqual<string?>(null, completedReplay.OutputPath, "requeue all completed output path");
+    AssertEqual("Queued", failedReplay.Status, "requeue all failed status");
+    AssertEqual<string?>(null, failedReplay.Error, "requeue all failed error");
+    AssertEqual("Assigned", activeReplay.Status, "requeue all leaves active status");
+    AssertEqual(assignments[2].AssignmentId, activeReplay.AssignmentId, "requeue all leaves active assignment");
+    AssertEqual("Queued", queuedReplay.Status, "requeue all leaves queued status");
+    AssertEqual(0, requeued.Run.CompletedCount, "requeue all completed count");
+    AssertEqual(0, requeued.Run.FailedCount, "requeue all failed count");
+}
+
+static void RunMapCollectionSaveLoadCheck(string workspace)
+{
+    var draftStore = CreateStore(
+        Path.Combine(workspace, "draft"),
+        instanceCount: 1,
+        beatLeaderReplayDownloader: new FakeBeatLeaderReplayDownloader());
+    var draft = draftStore.SaveMapCollection(new SaveMapCollectionRequest
+    {
+        Name = "Draft Pack",
+        CreateEmpty = true
+    });
+    AssertEqual("Draft Pack", draft.Name, "empty collection name");
+    AssertEqual(0, draft.Items.Count, "empty collection item count");
+    using (var draftFiles = CreateReplayFiles(1, distinctLevelHashes: true))
+    {
+        var draftImport = draftStore.ImportFilesToMapCollection(draft.Id, draftFiles.Collection);
+        AssertEqual(1, draftImport.ImportedCount, "collection direct import count");
+        AssertEqual(1, draftImport.Collection.Items.Count, "collection direct import item count");
+        AssertEqual(0, draftImport.State.Queue.Count, "collection direct import leaves queue alone");
+    }
+    var draftLinkImport = draftStore.ImportReferencesToMapCollectionAsync(
+        draft.Id,
+        new ReplayReferenceImportRequest
+        {
+            References = new List<string>
+            {
+                "https://beatleader.com/score/9280912"
+            }
+        },
+        CancellationToken.None).GetAwaiter().GetResult();
+    AssertEqual(1, draftLinkImport.ImportedCount, "collection link import count");
+    AssertEqual(2, draftLinkImport.Collection.Items.Count, "collection link import item count");
+    AssertEqual(0, draftLinkImport.State.Queue.Count, "collection link import leaves queue alone");
+
+    var store = CreateStore(workspace, instanceCount: 1);
+    using var files = CreateReplayFiles(2, distinctLevelHashes: true);
+    var imported = store.ImportFiles(files.Collection);
+
+    var collection = store.SaveMapCollection(new SaveMapCollectionRequest
+    {
+        Name = "Warmups"
+    });
+    AssertEqual("Warmups", collection.Name, "saved collection name");
+    AssertEqual(2, collection.Items.Count, "saved collection item count");
+    AssertEqual(true, collection.Items.All(item => File.Exists(item.Path)), "saved collection copies replay files");
+
+    var cleared = store.ClearQueue();
+    AssertEqual(0, cleared.Queue.Count, "collection queue clear count");
+    AssertEqual(1, cleared.Collections.Count, "collection survives queue clear");
+    AssertEqual(true, collection.Items.All(item => File.Exists(item.Path)), "collection files survive queue clear");
+
+    var loaded = store.LoadMapCollection(collection.Id, new LoadMapCollectionRequest());
+    AssertEqual(2, loaded.LoadedCount, "collection load count");
+    AssertEqual(0, loaded.SkippedRecordedCount, "collection initial skipped count");
+    AssertEqual(2, loaded.State.Queue.Count, "collection loaded queue count");
+    AssertEqual("Song 0", loaded.State.Queue[0].SongName, "collection preserves first order");
+    AssertEqual("Song 1", loaded.State.Queue[1].SongName, "collection preserves second order");
+
+    var worker = store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "worker-0",
+        WorkerName = "Worker 0",
+        PreferredInstanceIndex = 0
+    });
+    store.StartRun();
+    var assignment = store.GetAssignment(worker.WorkerId);
+    var outputPath = Path.Combine(workspace, "Recordings", "Instance 1", "already-recorded.mp4");
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    File.WriteAllText(outputPath, "recorded");
+    store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = worker.WorkerId,
+        AssignmentId = assignment.AssignmentId!,
+        Status = "Completed",
+        OutputPath = outputPath
+    });
+    store.StopRun();
+    var collectionAfterCompletion = store.GetMapCollections().Single(item => item.Id == collection.Id);
+    var recordedCollectionItem = collectionAfterCompletion.Items.Single(item =>
+        !string.IsNullOrWhiteSpace(item.CompletedOutputPath) &&
+        string.Equals(
+            Path.GetFullPath(item.CompletedOutputPath),
+            Path.GetFullPath(outputPath),
+            StringComparison.OrdinalIgnoreCase));
+    AssertEqual(true, recordedCollectionItem.CompletedAtUtc.HasValue, "collection item records completed output");
+
+    var skipped = store.LoadMapCollection(collection.Id, new LoadMapCollectionRequest());
+    AssertEqual(1, skipped.SkippedRecordedCount, "collection skips recorded map");
+    AssertEqual(1, skipped.LoadedCount, "collection keeps unrecorded map queued");
+    var completedReplay = skipped.State.Queue.Single(item => item.Id == assignment.ReplayId);
+    AssertEqual("Completed", completedReplay.Status, "collection skipped replay remains completed");
+    AssertEqual(Path.GetFullPath(outputPath), Path.GetFullPath(completedReplay.OutputPath!), "collection skipped replay keeps output path");
+
+    var overwritten = store.LoadMapCollection(collection.Id, new LoadMapCollectionRequest
+    {
+        OverwriteRecorded = true
+    });
+    var overwrittenReplay = overwritten.State.Queue.Single(item => item.Id == assignment.ReplayId);
+    AssertEqual(0, overwritten.SkippedRecordedCount, "collection overwrite skipped count");
+    AssertEqual(1, overwritten.RequeuedCount, "collection overwrite requeue count");
+    AssertEqual("Queued", overwrittenReplay.Status, "collection overwrite requeues completed replay");
+    AssertEqual<string?>(null, overwrittenReplay.OutputPath, "collection overwrite clears output path");
+}
+
+static void RunMapCollectionCardExportCheck(string workspace)
+{
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        mapDownloader: new FakeBeatSaverMapDownloader(downloadsMap: true, songLengthSeconds: 60));
+    var launchDirectory = store.Snapshot().Instances[0].LaunchDirectory;
+    var levelDirectory = Path.Combine(
+        launchDirectory,
+        "Beat Saber_Data",
+        "CustomLevels",
+        "ABCDEF123456 Card Export");
+    WriteMapCardTestMap(levelDirectory);
+
+    using var files = CreateReplayFiles(1);
+    var imported = store.ImportFiles(files.Collection);
+    AssertEqual("Found", imported[0].MapStatus, "map card local map status");
+
+    var collection = store.SaveMapCollection(new SaveMapCollectionRequest
+    {
+        Name = "Card Export"
+    });
+    var export = store.GetMapCardExport(collection.Id);
+    AssertEqual("Card Export", export.CollectionName, "map card collection name");
+    AssertEqual(1, export.Items.Count, "map card item count");
+
+    var card = export.Items[0];
+    AssertEqual("Song 0", card.SongName, "map card song name");
+    AssertEqual("Local Artist", card.Artist, "map card artist");
+    AssertEqual("Mapper 0", card.MapAuthor, "map card mapper");
+    AssertEqual("Expert+", card.Difficulty, "map card difficulty");
+    AssertEqual(120, card.NoteCount ?? 0, "map card note count");
+    AssertEqual(2.0, Math.Round(card.NotesPerSecond.GetValueOrDefault(), 2), "map card nps");
+    AssertEqual(142.0, card.BeatsPerMinute.GetValueOrDefault(), "map card bpm");
+    AssertEqual(60.0, card.LengthSeconds, "map card length");
+    AssertEqual("4fc4b", card.BeatSaverKey, "map card beatsaver key");
+    AssertEqual("Ready", card.MetadataStatus, "map card metadata status");
+    AssertEqual(true, card.CoverArtUrl.Contains("/api/collections/", StringComparison.OrdinalIgnoreCase), "map card cover url");
+    AssertEqual(true, File.Exists(store.GetCollectionItemCoverPath(collection.Id, card.Id)), "map card cover path");
+
+    var categorized = store.UpdateMapCardCategories(collection.Id, new UpdateMapCollectionCardCategoriesRequest
+    {
+        Items = new List<MapCollectionCardCategoryUpdate>
+        {
+            new MapCollectionCardCategoryUpdate
+            {
+                ItemId = card.Id,
+                Category = "tech"
+            }
+        }
+    });
+    AssertEqual("tech", categorized.Items[0].Category, "map card saved category");
+    AssertEqual("tech", store.GetMapCardExport(collection.Id).Items[0].Category, "map card category export persists in store");
+
+    var reloaded = CreateStore(
+        workspace,
+        instanceCount: 1,
+        mapDownloader: new FakeBeatSaverMapDownloader(downloadsMap: true, songLengthSeconds: 60));
+    AssertEqual("tech", reloaded.GetMapCardExport(collection.Id).Items[0].Category, "map card category survives state reload");
+
+    var normalized = reloaded.UpdateMapCardCategories(collection.Id, new UpdateMapCollectionCardCategoriesRequest
+    {
+        Items = new List<MapCollectionCardCategoryUpdate>
+        {
+            new MapCollectionCardCategoryUpdate
+            {
+                ItemId = card.Id,
+                Category = "bogus"
+            }
+        }
+    });
+    AssertEqual("", normalized.Items[0].Category, "map card unknown category is not persisted");
+}
+
 static void RunCompletedRecordingAudioVerificationCheck(string workspace)
 {
     var failedStore = CreateStore(
@@ -2110,6 +3238,35 @@ static void RunCompletedRecordingSyncVerificationCheck(string workspace)
     AssertEqual(1.2, failedReplay.TrimStartSeconds ?? 0, "failed replay sync trim");
 }
 
+static void RunCompletedRecordingBookmarkChapterEmbeddingCheck(string workspace)
+{
+    var chapterEmbedder = new FakeRecordingChapterEmbedder();
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        audioMode: "ProcessLoopback",
+        recordingAudioVerifier: new FakeRecordingAudioVerifier(true, ""),
+        recordingChapterEmbedder: chapterEmbedder);
+    WriteBookmarkChapterTestMap(Path.Combine(workspace, "SharedSongs", "CustomLevels", "ABCDEF123456 Song 0 Mapper 0"));
+
+    var replay = CompleteSingleReplay(
+        store,
+        Path.Combine(workspace, "recording.mkv"),
+        syncCorrectionMilliseconds: 0,
+        trimStartSeconds: 0,
+        syncReportPath: Path.Combine(workspace, "recording.sync.json"));
+
+    AssertEqual("Completed", replay.Status, "bookmark chapter replay status");
+    AssertEqual<string?>(null, replay.Warning, "bookmark chapter warning");
+    AssertEqual(1, chapterEmbedder.Requests.Count, "bookmark chapter embed request count");
+
+    var request = chapterEmbedder.Requests[0];
+    AssertEqual(Path.Combine(workspace, "recording.mkv"), request.RecordingPath, "bookmark chapter output path");
+    AssertEqual(1, request.Chapters.Count, "bookmark chapter count");
+    AssertEqual("Slow Drop", request.Chapters[0].Title, "bookmark chapter title");
+    AssertEqual(60.0, Math.Round(request.Chapters[0].StartSeconds, 3), "bookmark chapter start");
+}
+
 static ReplayQueueRecord CompleteSingleReplay(
     ControlPanelStore store,
     string outputPath,
@@ -2163,13 +3320,17 @@ static ControlPanelStore CreateStore(
     int instanceCount = 3,
     int? maxConcurrentRecordings = null,
     string audioMode = "None",
+    string captureEngine = "FFmpegDdagrab",
     bool requireAudioForRun = false,
     bool requireMatchingInstanceBaseline = false,
     IRecordingAudioVerifier? recordingAudioVerifier = null,
     IRecorderHostHealthChecker? recorderHostHealthChecker = null,
     IBeatSaverMapDownloader? mapDownloader = null,
     IWorkerPluginInstaller? workerPluginInstaller = null,
-    IScoreSaberReplayDownloader? scoreSaberReplayDownloader = null)
+    IBeatLeaderReplayDownloader? beatLeaderReplayDownloader = null,
+    IScoreSaberReplayDownloader? scoreSaberReplayDownloader = null,
+    IRecordingChapterEmbedder? recordingChapterEmbedder = null,
+    bool manageDisplayScale = false)
 {
     return new ControlPanelStore(new ControlPanelSettings
     {
@@ -2187,6 +3348,7 @@ static ControlPanelStore CreateStore(
         OutputFormat = "mp4",
         MonitorIndex = 1,
         QualityMode = "Quality",
+        CaptureEngine = captureEngine,
         AudioMode = audioMode,
         RequireAudioForRun = requireAudioForRun,
         AudioBitrateKbps = 192,
@@ -2195,12 +3357,15 @@ static ControlPanelStore CreateStore(
         BeatSaberInstancesRoot = beatSaberInstancesRoot ?? Path.Combine(workspace, "BSInstances"),
         BeatSaberInstanceNamePrefix = beatSaberInstanceNamePrefix,
         BeatSaberLaunchPreset = "custom",
-        BeatSaberLaunchArguments = "--no-yeet fpfc"
+        BeatSaberLaunchArguments = "--no-yeet fpfc",
+        ManageDisplayScale = manageDisplayScale
     }, recordingAudioVerifier,
         recorderHostHealthChecker ?? new FakeRecorderHostHealthChecker(true),
         mapDownloader ?? new FakeBeatSaverMapDownloader(downloadsMap: true),
         workerPluginInstaller,
-        scoreSaberReplayDownloader);
+        beatLeaderReplayDownloader,
+        scoreSaberReplayDownloader,
+        recordingChapterEmbedder);
 }
 
 static void RegisterWorkers(ControlPanelStore store, string workerPrefix, int count = 3)
@@ -2214,6 +3379,90 @@ static void RegisterWorkers(ControlPanelStore store, string workerPrefix, int co
             PreferredInstanceIndex = index
         });
     }
+}
+
+static ControlPanelState CompleteBenchmarkAssignment(
+    ControlPanelStore store,
+    string workerId,
+    string assignmentId,
+    string workspace,
+    string fileName)
+{
+    var outputPath = Path.Combine(workspace, "BenchmarkOutputs", fileName);
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    File.WriteAllText(outputPath, "benchmark recording");
+    return store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = workerId,
+        AssignmentId = assignmentId,
+        Status = "Completed",
+        OutputPath = outputPath,
+        SyncStatus = "Corrected",
+        SyncReportPath = Path.ChangeExtension(outputPath, ".sync.json")
+    });
+}
+
+static void SetAssignmentAssignedAtUtc(ControlPanelStore store, string assignmentId, DateTimeOffset assignedAtUtc)
+{
+    var field = typeof(ControlPanelStore).GetField("_state", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(typeof(ControlPanelStore).FullName, "_state");
+    var state = (ControlPanelState?)field.GetValue(store)
+                ?? throw new InvalidOperationException("ControlPanelStore state was null.");
+    var replay = state.Queue.Single(item =>
+        string.Equals(item.AssignmentId, assignmentId, StringComparison.OrdinalIgnoreCase));
+    replay.AssignedAtUtc = assignedAtUtc;
+}
+
+static void SetAssignmentRecordingStartedAtUtc(ControlPanelStore store, string assignmentId, DateTimeOffset recordingStartedAtUtc)
+{
+    var field = typeof(ControlPanelStore).GetField("_state", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(typeof(ControlPanelStore).FullName, "_state");
+    var state = (ControlPanelState?)field.GetValue(store)
+                ?? throw new InvalidOperationException("ControlPanelStore state was null.");
+    var replay = state.Queue.Single(item =>
+        string.Equals(item.AssignmentId, assignmentId, StringComparison.OrdinalIgnoreCase));
+    replay.RecordingStartedAtUtc = recordingStartedAtUtc;
+}
+
+static void SetBenchmarkAssignmentRecordingStartedAtUtc(
+    ControlPanelStore store,
+    string assignmentId,
+    DateTimeOffset recordingStartedAtUtc)
+{
+    var field = typeof(ControlPanelStore).GetField("_state", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(typeof(ControlPanelStore).FullName, "_state");
+    var state = (ControlPanelState?)field.GetValue(store)
+                ?? throw new InvalidOperationException("ControlPanelStore state was null.");
+    var assignment = state.Benchmark.Passes
+        .SelectMany(pass => pass.Assignments)
+        .Single(item => string.Equals(item.AssignmentId, assignmentId, StringComparison.OrdinalIgnoreCase));
+    assignment.RecordingStartedAtUtc = recordingStartedAtUtc;
+}
+
+static void SetBenchmarkAssignmentFinalizingStartedAtUtc(
+    ControlPanelStore store,
+    string assignmentId,
+    DateTimeOffset finalizingStartedAtUtc)
+{
+    var field = typeof(ControlPanelStore).GetField("_state", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(typeof(ControlPanelStore).FullName, "_state");
+    var state = (ControlPanelState?)field.GetValue(store)
+                ?? throw new InvalidOperationException("ControlPanelStore state was null.");
+    var assignment = state.Benchmark.Passes
+        .SelectMany(pass => pass.Assignments)
+        .Single(item => string.Equals(item.AssignmentId, assignmentId, StringComparison.OrdinalIgnoreCase));
+    assignment.FinalizingStartedAtUtc = finalizingStartedAtUtc;
+}
+
+static void SetLowFpsRecordingStartedAtUtc(ControlPanelStore store, string workerId, DateTimeOffset lowFpsRecordingStartedAtUtc)
+{
+    var field = typeof(ControlPanelStore).GetField("_state", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(typeof(ControlPanelStore).FullName, "_state");
+    var state = (ControlPanelState?)field.GetValue(store)
+                ?? throw new InvalidOperationException("ControlPanelStore state was null.");
+    var instance = state.Instances.Single(item =>
+        string.Equals(item.WorkerId, workerId, StringComparison.OrdinalIgnoreCase));
+    instance.LowFpsRecordingStartedAtUtc = lowFpsRecordingStartedAtUtc;
 }
 
 static void SetGameProcessIds(ControlPanelStore store, params int[] processIds)
@@ -2270,6 +3519,7 @@ static SettingsUpdateRequest CreateSettingsUpdateRequest(ControlPanelSettings se
         DisableScoreSubmissions = settings.DisableScoreSubmissions,
         SuppressScoreSaberReplayUi = settings.SuppressScoreSaberReplayUi,
         BeatSaberInstancesRoot = settings.BeatSaberInstancesRoot,
+        SourceBeatSaberPath = settings.SourceBeatSaberPath,
         BeatSaberInstanceNamePrefix = settings.BeatSaberInstanceNamePrefix,
         BeatSaberLaunchPreset = settings.BeatSaberLaunchPreset,
         BeatSaberLaunchArguments = settings.BeatSaberLaunchArguments,
@@ -2435,7 +3685,7 @@ static ReplayFormFiles CreateBeatLeaderAndScoreSaberReplayFiles()
     return new ReplayFormFiles(collection, streams);
 }
 
-static ReplayFormFiles CreateReplayFiles(int count)
+static ReplayFormFiles CreateReplayFiles(int count, bool distinctLevelHashes = false)
 {
     var collection = new FormFileCollection();
     var streams = new List<MemoryStream>();
@@ -2449,7 +3699,8 @@ static ReplayFormFiles CreateReplayFiles(int count)
             "Mapper " + index,
             "ExpertPlus",
             100000 + index,
-            60 + index);
+            60 + index,
+            distinctLevelHashes ? "ABCDEF123456" + index.ToString("X2") : "ABCDEF123456");
         stream.Position = 0;
         streams.Add(stream);
         collection.Add(new FormFile(stream, 0, stream.Length, "files", $"{index + 1:00}-sample.bsor"));
@@ -2464,7 +3715,8 @@ static void WriteSampleBsor(
     string mapper,
     string difficulty,
     int score,
-    float lastFrameTime)
+    float lastFrameTime,
+    string levelHash = "ABCDEF123456")
 {
     using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
 
@@ -2481,7 +3733,7 @@ static void WriteSampleBsor(
     WriteString(writer, "OpenVR");
     WriteString(writer, "Index");
     WriteString(writer, "Index Controllers");
-    WriteString(writer, "ABCDEF123456");
+    WriteString(writer, levelHash);
     WriteString(writer, songName);
     WriteString(writer, mapper);
     WriteString(writer, difficulty);
@@ -2512,6 +3764,87 @@ static void WriteFrame(BinaryWriter writer, float time)
     {
         writer.Write(0f);
     }
+}
+
+static void WriteMapCardTestMap(string levelDirectory)
+{
+    Directory.CreateDirectory(levelDirectory);
+    File.WriteAllBytes(Path.Combine(levelDirectory, "cover.png"), new byte[] { 137, 80, 78, 71 });
+    File.WriteAllText(
+        Path.Combine(levelDirectory, "Info.dat"),
+        """
+        {
+          "_songName": "Local Song",
+          "_songAuthorName": "Local Artist",
+          "_levelAuthorName": "Local Mapper",
+          "_beatsPerMinute": 142,
+          "_difficultyBeatmapSets": [
+            {
+              "_beatmapCharacteristicName": "Standard",
+              "_difficultyBeatmaps": [
+                {
+                  "_difficulty": "ExpertPlus",
+                  "_beatmapFilename": "ExpertPlusStandard.dat"
+                }
+              ]
+            }
+          ]
+        }
+        """);
+
+    var notes = string.Join(
+        ",",
+        Enumerable.Range(0, 120).Select(index =>
+            "{\"_time\":" + index.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+            ",\"_lineIndex\":0,\"_lineLayer\":0,\"_type\":" + (index % 2) + ",\"_cutDirection\":0}"));
+    File.WriteAllText(
+        Path.Combine(levelDirectory, "ExpertPlusStandard.dat"),
+        "{\"_version\":\"2.6.0\",\"_notes\":[" + notes + "]}");
+}
+
+static void WriteBookmarkChapterTestMap(string levelDirectory)
+{
+    Directory.CreateDirectory(levelDirectory);
+    File.WriteAllText(
+        Path.Combine(levelDirectory, "Info.dat"),
+        """
+        {
+          "_songName": "Song 0",
+          "_songAuthorName": "Artist",
+          "_levelAuthorName": "Mapper 0",
+          "_beatsPerMinute": 120,
+          "_difficultyBeatmapSets": [
+            {
+              "_beatmapCharacteristicName": "Standard",
+              "_difficultyBeatmaps": [
+                {
+                  "_difficulty": "ExpertPlus",
+                  "_beatmapFilename": "ExpertPlusStandard.dat"
+                }
+              ]
+            }
+          ]
+        }
+        """);
+
+    File.WriteAllText(
+        Path.Combine(levelDirectory, "ExpertPlusStandard.dat"),
+        """
+        {
+          "version": "3.3.0",
+          "bpmEvents": [
+            { "b": 0, "m": 120 },
+            { "b": 60, "m": 60 }
+          ],
+          "customData": {
+            "bookmarks": [
+              { "b": 90, "n": "Slow Drop" }
+            ],
+            "bookmarksUseOfficialBpmEvents": true
+          },
+          "colorNotes": []
+        }
+        """);
 }
 
 static MemoryStream CreateMapZip()
@@ -2629,18 +3962,63 @@ internal sealed class FakeRecordingAudioVerifier : IRecordingAudioVerifier
     }
 }
 
+internal sealed class FakeRecordingChapterEmbedder : IRecordingChapterEmbedder
+{
+    public List<FakeRecordingChapterEmbedRequest> Requests { get; } = new List<FakeRecordingChapterEmbedRequest>();
+
+    public RecordingChapterEmbedResult Embed(string recordingPath, IReadOnlyList<RecordingChapter> chapters)
+    {
+        Requests.Add(new FakeRecordingChapterEmbedRequest
+        {
+            RecordingPath = recordingPath,
+            Chapters = chapters.ToList()
+        });
+        return RecordingChapterEmbedResult.Success(chapters.Count);
+    }
+}
+
+internal sealed class FakeRecordingChapterEmbedRequest
+{
+    public string RecordingPath { get; set; } = "";
+
+    public List<RecordingChapter> Chapters { get; set; } = new List<RecordingChapter>();
+}
+
 internal sealed class FakeRecorderHostHealthChecker : IRecorderHostHealthChecker
 {
     private readonly bool _healthy;
+    private readonly bool _wgcSupported;
+    private readonly bool _processLoopbackSupported;
 
-    public FakeRecorderHostHealthChecker(bool healthy)
+    public FakeRecorderHostHealthChecker(
+        bool healthy,
+        bool wgcSupported = false,
+        bool processLoopbackSupported = true)
     {
         _healthy = healthy;
+        _wgcSupported = wgcSupported;
+        _processLoopbackSupported = processLoopbackSupported;
     }
 
     public bool IsHealthy(string recorderHostUrl)
     {
         return _healthy;
+    }
+
+    public RecorderHostCapabilitiesSnapshot GetCapabilities(string recorderHostUrl)
+    {
+        var capabilities = RecorderHostCapabilitiesSnapshot.LegacyFallback("Fake recorder host capabilities.");
+        capabilities.CaptureEngines["WindowsGraphicsCapture"] = new RecorderHostCapability
+        {
+            Supported = _wgcSupported,
+            Status = _wgcSupported ? "WGC fake ready" : "WGC fake unavailable"
+        };
+        capabilities.AudioModes["ProcessLoopback"] = new RecorderHostCapability
+        {
+            Supported = _processLoopbackSupported,
+            Status = _processLoopbackSupported ? "ProcessLoopback fake ready" : "ProcessLoopback fake unavailable"
+        };
+        return capabilities;
     }
 }
 
@@ -2681,6 +4059,212 @@ internal sealed class FakeBeatSaverMapDownloader : IBeatSaverMapDownloader
     public double? GetSongLengthSecondsByHash(string levelHash)
     {
         return _songLengthSeconds;
+    }
+
+    public BeatSaverMapCardMetadata? GetMapCardMetadataByHash(string levelHash, string difficulty, string mode)
+    {
+        if (!_downloadsMap)
+        {
+            return null;
+        }
+
+        return new BeatSaverMapCardMetadata
+        {
+            SongName = "BeatSaver Song",
+            Artist = "BeatSaver Artist",
+            MapAuthor = "BeatSaver Mapper",
+            Difficulty = difficulty,
+            Mode = mode,
+            NotesPerSecond = 11.5,
+            BeatsPerMinute = 180,
+            NoteCount = 690,
+            LengthSeconds = _songLengthSeconds,
+            BeatSaverKey = "4fc4b",
+            CoverArtUrl = "https://cdn.beatsaver.com/fake-cover.jpg"
+        };
+    }
+}
+
+internal sealed class FakeBeatLeaderScoreHttpMessageHandler : HttpMessageHandler
+{
+    public int ScoreLookupCount { get; private set; }
+
+    public int ReplayDownloadCount { get; private set; }
+
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        var uri = request.RequestUri?.ToString() ?? "";
+        if (string.Equals(uri, "https://api.beatleader.xyz/score/30643468", StringComparison.Ordinal))
+        {
+            ScoreLookupCount++;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "id": 30643468,
+                      "replay": "https://cdn.replays.beatleader.com/30643468-76561199081029968-ExpertPlus-Standard-D790917A21934DC957352377B204E9C57D97D386.bsor"
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            });
+        }
+
+        if (string.Equals(
+                uri,
+                "https://cdn.replays.beatleader.com/30643468-76561199081029968-ExpertPlus-Standard-D790917A21934DC957352377B204E9C57D97D386.bsor",
+                StringComparison.Ordinal))
+        {
+            ReplayDownloadCount++;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(CreateFakeBsor())
+            });
+        }
+
+        return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+    }
+
+    private static byte[] CreateFakeBsor()
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(0x442d3d69);
+            writer.Write((byte)1);
+            writer.Write((byte)0);
+            WriteString(writer, "1.0.0");
+            WriteString(writer, "1.29.1");
+            WriteString(writer, "2026-06-15T00:00:00Z");
+            WriteString(writer, "76561199081029968");
+            WriteString(writer, "thinking");
+            WriteString(writer, "steam");
+            WriteString(writer, "OpenVR");
+            WriteString(writer, "Index");
+            WriteString(writer, "Index Controllers");
+            WriteString(writer, "D790917A21934DC957352377B204E9C57D97D386");
+            WriteString(writer, "Train of Thought");
+            WriteString(writer, "ZenithGD");
+            WriteString(writer, "ExpertPlus");
+            writer.Write(2373271);
+            WriteString(writer, "Standard");
+            WriteString(writer, "DefaultEnvironment");
+            WriteString(writer, "");
+            writer.Write(18.5f);
+            writer.Write(false);
+            writer.Write(1.8f);
+            writer.Write(0f);
+            writer.Write(0f);
+            writer.Write(1f);
+
+            writer.Write((byte)1);
+            writer.Write(3);
+            WriteFrame(writer, 0f);
+            WriteFrame(writer, 165f);
+            WriteFrame(writer, 330f);
+        }
+
+        return stream.ToArray();
+    }
+
+    private static void WriteFrame(BinaryWriter writer, float time)
+    {
+        writer.Write(time);
+        writer.Write(90);
+
+        for (var index = 0; index < 21; index++)
+        {
+            writer.Write(0f);
+        }
+    }
+
+    private static void WriteString(BinaryWriter writer, string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        writer.Write(bytes.Length);
+        writer.Write(bytes);
+    }
+}
+
+internal sealed class FakeBeatLeaderReplayDownloader : IBeatLeaderReplayDownloader
+{
+    public Task<BeatLeaderReplayDownload> DownloadAsync(
+        ReplayReference reference,
+        string queueDirectory,
+        Func<string, string> createImportPath,
+        CancellationToken cancellationToken)
+    {
+        var targetPath = createImportPath(
+            "9280912-76561198059961776-ExpertPlus-Standard-13400F5FB2FD19F52E8C7AC48815D12E72FA3B4A.bsor");
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        using (var stream = File.Create(targetPath))
+        {
+            WriteFakeBsor(stream);
+        }
+
+        return Task.FromResult(new BeatLeaderReplayDownload
+        {
+            LocalPath = targetPath,
+            Metadata = new ReplayQueueSidecar
+            {
+                Provider = ReplayProvider.BeatLeader,
+                ReferenceKind = ReplayReferenceKind.BeatLeaderCdnBsorUrl,
+                ReplayFormat = "BSOR",
+                SourceUrl = reference.OriginalValue,
+                ScoreId = "9280912",
+                PlayerName = "BeatLeader Player",
+                PlayerId = "76561198059961776",
+                SongName = "Song 1",
+                Mapper = "Mapper 1",
+                Difficulty = "ExpertPlus",
+                Mode = "Standard",
+                LevelHash = "13400F5FB2FD19F52E8C7AC48815D12E72FA3B4A",
+                EstimatedSeconds = 60
+            }
+        });
+    }
+
+    private static void WriteFakeBsor(Stream stream)
+    {
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        writer.Write(0x442d3d69);
+        writer.Write((byte)1);
+        writer.Write((byte)0);
+        WriteString(writer, "1.0.0");
+        WriteString(writer, "1.40.6");
+        WriteString(writer, "2026-06-11");
+        WriteString(writer, "76561198059961776");
+        WriteString(writer, "BeatLeader Player");
+        WriteString(writer, "steam");
+        WriteString(writer, "OpenVR");
+        WriteString(writer, "Index");
+        WriteString(writer, "Index");
+        WriteString(writer, "13400F5FB2FD19F52E8C7AC48815D12E72FA3B4A");
+        WriteString(writer, "Song 1");
+        WriteString(writer, "Mapper 1");
+        WriteString(writer, "ExpertPlus");
+        writer.Write(123456);
+        WriteString(writer, "Standard");
+        WriteString(writer, "DefaultEnvironment");
+        WriteString(writer, "");
+        writer.Write(18.0f);
+        writer.Write(false);
+        writer.Write(1.8f);
+        writer.Write(0.0f);
+        writer.Write(0.0f);
+        writer.Write(1.0f);
+        writer.Write((byte)1);
+        writer.Write(0);
+    }
+
+    private static void WriteString(BinaryWriter writer, string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        writer.Write(bytes.Length);
+        writer.Write(bytes);
     }
 }
 
@@ -2765,11 +4349,19 @@ internal sealed class FakeScoreSaberReplayDownloader : IScoreSaberReplayDownload
 internal sealed class FakeWorkerPluginInstaller : IWorkerPluginInstaller
 {
     public int InstallCount { get; private set; }
+    public IReadOnlyList<int> LastContextIndexes { get; private set; } = Array.Empty<int>();
+    public IReadOnlyList<int> LastDeployTargetIndexes { get; private set; } = Array.Empty<int>();
 
-    public void Install(IReadOnlyList<WorkerInstanceRecord> instances, ControlPanelSettings settings)
+    public void Install(
+        IReadOnlyList<WorkerInstanceRecord> instances,
+        ControlPanelSettings settings,
+        IReadOnlyList<WorkerInstanceRecord>? deployTargets = null)
     {
         InstallCount++;
-        foreach (var instance in instances)
+        var targets = deployTargets ?? instances;
+        LastContextIndexes = instances.Select(instance => instance.Index).ToList();
+        LastDeployTargetIndexes = targets.Select(instance => instance.Index).ToList();
+        foreach (var instance in targets)
         {
             WriteFile(instance.LaunchDirectory, "Plugins/BSAutoReplayRecorder.Plugin.dll", "installed plugin");
             WriteFile(instance.LaunchDirectory, "Libs/BSAutoReplayRecorder.Core.dll", "installed core");

@@ -8,6 +8,10 @@ public sealed class SyncMarkerAnalysisResult
 {
     public string Status { get; set; } = "Corrected";
 
+    public string AudioOffsetSource { get; set; } = "SyncMarker";
+
+    public string? AnalysisError { get; set; }
+
     public double AudioOffsetSeconds { get; set; }
 
     public double SyncCorrectionMilliseconds { get; set; }
@@ -45,14 +49,6 @@ public static class SyncMarkerAnalyzer
             throw new ArgumentOutOfRangeException(nameof(audioSamplesPerSecond));
         }
 
-        var videoPulses = SelectPulseSequence(
-            FindPulseTimes(
-                videoBrightnessSamples,
-                videoSamplesPerSecond,
-                RecordingSyncMarker.MinimumVisualBrightness,
-                useAbsoluteValue: false,
-                usePeakTime: false),
-            "visual");
         var audioPulses = SelectPulseSequence(
             FindPulseTimes(
                 audioSamples,
@@ -61,6 +57,10 @@ public static class SyncMarkerAnalyzer
                 useAbsoluteValue: true,
                 usePeakTime: true),
             "audio");
+        var videoPulses = SelectVisualPulseSequence(
+            videoBrightnessSamples,
+            videoSamplesPerSecond,
+            audioPulses);
 
         var offsets = new List<double>();
         for (var index = 0; index < RecordingSyncMarker.PulseCount; index++)
@@ -90,6 +90,20 @@ public static class SyncMarkerAnalyzer
             SyncCorrectionMilliseconds = Math.Round(averageOffset * 1000.0, 1),
             VideoPulseTimesSeconds = videoPulses,
             AudioPulseTimesSeconds = audioPulses
+        };
+    }
+
+    public static SyncMarkerAnalysisResult CreateEstimated(
+        TimeSpan audioOffset,
+        string analysisError)
+    {
+        return new SyncMarkerAnalysisResult
+        {
+            Status = "Estimated",
+            AudioOffsetSource = "ProcessLoopbackStartup",
+            AnalysisError = analysisError,
+            AudioOffsetSeconds = audioOffset.TotalSeconds,
+            SyncCorrectionMilliseconds = Math.Round(audioOffset.TotalMilliseconds, 1)
         };
     }
 
@@ -244,8 +258,124 @@ public static class SyncMarkerAnalyzer
         }
     }
 
+    private static List<double> SelectVisualPulseSequence(
+        IReadOnlyList<double> videoBrightnessSamples,
+        double videoSamplesPerSecond,
+        IReadOnlyList<double> audioPulses)
+    {
+        var absoluteCandidates = FindPulseTimes(
+            videoBrightnessSamples,
+            videoSamplesPerSecond,
+            RecordingSyncMarker.MinimumVisualBrightness,
+            useAbsoluteValue: false,
+            usePeakTime: false);
+
+        if (TrySelectPulseSequence(absoluteCandidates, out var selected))
+        {
+            return selected;
+        }
+
+        try
+        {
+            var contrastCandidates = FindVisualContrastPulseTimes(
+                videoBrightnessSamples,
+                videoSamplesPerSecond);
+            if (TrySelectPulseSequence(contrastCandidates, out selected))
+            {
+                return selected;
+            }
+
+            if (TryCreateExpectedVisualSequence(contrastCandidates, audioPulses, out selected))
+            {
+                return selected;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // Preserve the original absolute-brightness failure below.
+        }
+
+        if (TryCreateExpectedVisualSequence(absoluteCandidates, audioPulses, out selected))
+        {
+            return selected;
+        }
+
+        return SelectPulseSequence(absoluteCandidates, "visual");
+    }
+
+    private static bool TryCreateExpectedVisualSequence(
+        IReadOnlyList<double> candidates,
+        IReadOnlyList<double> audioPulses,
+        out List<double> selected)
+    {
+        selected = new List<double>();
+        if (audioPulses.Count != RecordingSyncMarker.PulseCount ||
+            candidates.Count == 0 ||
+            candidates.Count >= RecordingSyncMarker.PulseCount)
+        {
+            return false;
+        }
+
+        var firstPulse = candidates[0];
+        for (var index = 1; index < candidates.Count; index++)
+        {
+            var expected = firstPulse + index * RecordingSyncMarker.PulseSpacingSeconds;
+            if (Math.Abs(candidates[index] - expected) > RecordingSyncMarker.PulseSpacingToleranceSeconds)
+            {
+                return false;
+            }
+        }
+
+        for (var index = 0; index < RecordingSyncMarker.PulseCount; index++)
+        {
+            selected.Add(firstPulse + index * RecordingSyncMarker.PulseSpacingSeconds);
+        }
+
+        return true;
+    }
+
+    private static IReadOnlyList<double> FindVisualContrastPulseTimes(
+        IReadOnlyList<double> samples,
+        double samplesPerSecond)
+    {
+        var baseline = CalculateQuantile(samples, 0.50);
+        var contrastSamples = new double[samples.Count];
+        for (var index = 0; index < samples.Count; index++)
+        {
+            contrastSamples[index] = Math.Max(0.0, samples[index] - baseline);
+        }
+
+        var contrastPeak = contrastSamples.Max();
+        var minimumContrast = Math.Min(0.08, Math.Max(0.03, contrastPeak * 0.35));
+        return FindPulseTimes(
+            contrastSamples,
+            samplesPerSecond,
+            minimumContrast,
+            useAbsoluteValue: false,
+            usePeakTime: false);
+    }
+
+    private static double CalculateQuantile(IReadOnlyList<double> samples, double quantile)
+    {
+        if (samples.Count == 0)
+        {
+            throw new InvalidOperationException("Sync marker analysis had no samples.");
+        }
+
+        var sorted = samples.ToArray();
+        Array.Sort(sorted);
+        var clamped = Math.Clamp(quantile, 0.0, 1.0);
+        var index = (int)Math.Round((sorted.Length - 1) * clamped);
+        return sorted[index];
+    }
+
     private static List<double> SelectPulseSequence(IReadOnlyList<double> candidates, string label)
     {
+        if (TrySelectPulseSequence(candidates, out var sequence))
+        {
+            return sequence;
+        }
+
         if (candidates.Count < RecordingSyncMarker.PulseCount)
         {
             throw new InvalidOperationException(
@@ -254,16 +384,30 @@ public static class SyncMarkerAnalyzer
                 RecordingSyncMarker.PulseCount.ToString(CultureInfo.InvariantCulture) + ".");
         }
 
+        throw new InvalidOperationException("Sync marker " + label + " pulses did not match the expected spacing.");
+    }
+
+    private static bool TrySelectPulseSequence(
+        IReadOnlyList<double> candidates,
+        out List<double> selected)
+    {
+        selected = new List<double>();
+        if (candidates.Count < RecordingSyncMarker.PulseCount)
+        {
+            return false;
+        }
+
         for (var start = 0; start <= candidates.Count - RecordingSyncMarker.PulseCount; start++)
         {
             var sequence = candidates.Skip(start).Take(RecordingSyncMarker.PulseCount).ToList();
             if (HasExpectedSpacing(sequence))
             {
-                return sequence;
+                selected = sequence;
+                return true;
             }
         }
 
-        throw new InvalidOperationException("Sync marker " + label + " pulses did not match the expected spacing.");
+        return false;
     }
 
     private static bool HasExpectedSpacing(IReadOnlyList<double> sequence)

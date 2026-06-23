@@ -14,6 +14,8 @@ namespace BSAutoReplayRecorder.Plugin;
 
 public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
 {
+    private static readonly TimeSpan FinishEventStartupGrace = TimeSpan.FromSeconds(15);
+
     private readonly Logger _logger;
 
     public BeatLeaderReplayPlaybackDriver(Logger logger)
@@ -42,7 +44,7 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
 
     public IReplayPlaybackWait CreateFinishWait()
     {
-        return new ReplayFinishWait();
+        return new ReplayFinishWait(_logger);
     }
 
     public async Task<ReplayPlaybackSession> StartReplayAsync(
@@ -271,14 +273,28 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
     private sealed class ReplayFinishWait : IReplayPlaybackWait
     {
         private readonly TaskCompletionSource<DateTimeOffset> _completion = new TaskCompletionSource<DateTimeOffset>();
+        private readonly Logger _logger;
+        private readonly object _sync = new object();
+        private DateTimeOffset? _acceptFinishAfterUtc;
+        private bool _loggedUnarmedFinishEvent;
+        private int _ignoredStartupFinishEvents;
 
-        public ReplayFinishWait()
+        public ReplayFinishWait(Logger logger)
         {
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             ReplayerLauncher.ReplayWasFinishedEvent += HandleReplayFinished;
         }
 
         public async Task<DateTimeOffset?> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
         {
+            lock (_sync)
+            {
+                if (!_acceptFinishAfterUtc.HasValue)
+                {
+                    _acceptFinishAfterUtc = DateTimeOffset.UtcNow + FinishEventStartupGrace;
+                }
+            }
+
             var timeoutTask = Task.Delay(timeout, cancellationToken);
             var completed = await Task.WhenAny(_completion.Task, timeoutTask).ConfigureAwait(false);
             if (completed == _completion.Task)
@@ -297,6 +313,44 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
 
         private void HandleReplayFinished(ReplayLaunchData launchData)
         {
+            var now = DateTimeOffset.UtcNow;
+            DateTimeOffset? acceptFinishAfterUtc;
+            int ignoredStartupFinishEvents = 0;
+
+            lock (_sync)
+            {
+                acceptFinishAfterUtc = _acceptFinishAfterUtc;
+                if (!acceptFinishAfterUtc.HasValue)
+                {
+                    if (!_loggedUnarmedFinishEvent)
+                    {
+                        _loggedUnarmedFinishEvent = true;
+                        _logger.Warn("Ignoring BeatLeader replay finish event before finish wait was armed.");
+                    }
+
+                    return;
+                }
+
+                if (now < acceptFinishAfterUtc.Value)
+                {
+                    _ignoredStartupFinishEvents++;
+                    ignoredStartupFinishEvents = _ignoredStartupFinishEvents;
+                }
+            }
+
+            if (acceptFinishAfterUtc.HasValue && now < acceptFinishAfterUtc.Value)
+            {
+                var remainingSeconds = Math.Ceiling((acceptFinishAfterUtc.Value - now).TotalSeconds);
+                if (ignoredStartupFinishEvents <= 3 || ignoredStartupFinishEvents % 10 == 0)
+                {
+                    _logger.Warn(
+                        "Ignoring early BeatLeader replay finish event during startup grace; " +
+                        remainingSeconds + " second(s) remain before finish events are trusted.");
+                }
+
+                return;
+            }
+
             _completion.TrySetResult(DateTimeOffset.UtcNow);
         }
     }

@@ -76,6 +76,8 @@ public sealed class ControlPanelSettings
 
     public string QualityMode { get; set; } = "Balanced";
 
+    public string CaptureEngine { get; set; } = "FFmpegDdagrab";
+
     public string AudioMode { get; set; } = "ProcessLoopback";
 
     public bool RequireAudioForRun { get; set; } = true;
@@ -95,6 +97,8 @@ public sealed class ControlPanelSettings
     public double AudioTargetLevelDb { get; set; } = -12;
 
     public string BeatSaberInstancesRoot { get; set; } = "";
+
+    public string SourceBeatSaberPath { get; set; } = "";
 
     public string BeatSaberInstanceNamePrefix { get; set; } = "I-";
 
@@ -119,6 +123,8 @@ public sealed class ControlPanelSettings
     public int GamePresentationSettingsVersion { get; set; } = 1;
 
     public GamePresentationSettings GamePresentation { get; set; } = new GamePresentationSettings();
+
+    public List<GameColorPreset> GameColorPresets { get; set; } = new List<GameColorPreset>();
 
     public void Normalize()
     {
@@ -174,6 +180,7 @@ public sealed class ControlPanelSettings
             QualityMode = "Balanced";
         }
 
+        CaptureEngine = NormalizeCaptureEngine(CaptureEngine);
         AudioMode = NormalizeAudioMode(AudioMode);
         AudioBitrateKbps = Math.Clamp(AudioBitrateKbps <= 0 ? 192 : AudioBitrateKbps, 64, 1024);
         AudioSampleRate = Math.Clamp(AudioSampleRate <= 0 ? 48000 : AudioSampleRate, 8000, 192000);
@@ -184,6 +191,7 @@ public sealed class ControlPanelSettings
         BeatSaberInstancesRoot = NormalizePathOrDefault(
             BeatSaberInstancesRoot,
             Path.Combine(Path.GetFullPath(WorkspaceDirectory), "Instances"));
+        SourceBeatSaberPath = NormalizePathOrDefault(SourceBeatSaberPath, "");
         BeatSaberInstanceNamePrefix = BeatSaberInstanceNamePrefix?.Trim() ?? "";
         BeatSaberLaunchArguments = BeatSaberLaunchArguments?.Trim() ?? "";
         RecordingDisplayScalePercent = NormalizeScalePercent(RecordingDisplayScalePercent, 100);
@@ -198,6 +206,13 @@ public sealed class ControlPanelSettings
         }
 
         GamePresentation.Normalize();
+        GameColorPresets ??= new List<GameColorPreset>();
+        foreach (var preset in GameColorPresets)
+        {
+            preset.Normalize();
+            preset.Source = "Saved";
+            preset.CanDelete = true;
+        }
 
         if (GamePresentationSettingsVersion <= 0)
         {
@@ -221,6 +236,18 @@ public sealed class ControlPanelSettings
         return string.Equals(trimmed, "None", StringComparison.OrdinalIgnoreCase)
             ? "None"
             : "ProcessLoopback";
+    }
+
+    internal static string NormalizeCaptureEngine(string? value)
+    {
+        var trimmed = value?.Trim();
+        if (string.Equals(trimmed, "WindowsGraphicsCapture", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "WGC", StringComparison.OrdinalIgnoreCase))
+        {
+            return "WindowsGraphicsCapture";
+        }
+
+        return "FFmpegDdagrab";
     }
 
     private static string NormalizePathOrDefault(string? value, string fallback)
