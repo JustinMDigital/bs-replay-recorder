@@ -19,12 +19,15 @@ let shutdownModalVisible = false;
 let colorPresetCatalog = { builtIn: [], beatSaber: [], saved: [] };
 let setupSourcePathInfo = null;
 let queueExportLastFocus = null;
+let recordingRenameLastFocus = null;
+let recordingRenameContext = null;
 let mapCardExportLastFocus = null;
 let mapCardExportData = null;
 let mapCardCategoriesDirty = false;
 let mapCardCategoriesEnabled = readMapCardCategoriesEnabled();
 let selectedBenchmarkConcurrencies = null;
 let selectedCollectionId = null;
+let recordingNameFormat = 'Default';
 let runPlanWorkerActionPending = false;
 let runPlanWorkerActionLockedUntil = 0;
 let runPlanWorkerActionUnlockTimeout = null;
@@ -44,16 +47,74 @@ const windowed720pLaunchArguments = '-screen-fullscreen 0 -screen-width 1280 -sc
 const windowed1440pLaunchArguments = '-screen-fullscreen 0 -screen-width 2560 -screen-height 1440 --no-yeet fpfc --verbose';
 const windowed4kLaunchArguments = '-screen-fullscreen 0 -screen-width 3840 -screen-height 2160 --no-yeet fpfc --verbose';
 const windowed5kLaunchArguments = '-screen-fullscreen 0 -screen-width 5120 -screen-height 2880 --no-yeet fpfc --verbose';
+const recordingRenameFallbackExamples = Object.freeze({
+  Default: '001 - Song [Difficulty]',
+  Key: '4fc4b',
+  KeySong: '4fc4b - Song',
+  Song: 'Song',
+  SongArtist: 'Song - Artist',
+  SongArtistPlayer: 'Song - Artist - Player',
+  SongPlayer: 'Song - Player',
+  SongMapper: 'Song - Mapper',
+  SongDifficulty: 'Song - Expert+',
+  PlayerSong: 'Player - Song'
+});
 const minManagedInstanceCount = 1;
 const maxManagedInstanceCount = 4;
 const visibleManagedInstanceSlots = maxManagedInstanceCount;
 const managedInstanceNamePrefix = 'I-';
 const defaultCaptureEngine = 'FFmpegDdagrab';
+const gamePresentationDefaults = Object.freeze({
+  noHud: true,
+  loadPlayerEnvironment: false,
+  loadPlayerJumpDistance: false,
+  overrideReplayPlayerSettings: false,
+  ignoreModifiers: false,
+  applyJdFixerSettings: false,
+  jdFixerMode: 'ReactionTime',
+  jdFixerJumpDistance: 18,
+  jdFixerReactionTime: 450,
+  showHead: false,
+  showLeftSaber: true,
+  showRightSaber: true,
+  showWatermark: true,
+  showTimelineMisses: true,
+  showTimelineBombs: true,
+  showTimelinePauses: true,
+  sfxVolume: 0.3,
+  noTextsAndHuds: true,
+  advancedHud: false,
+  reduceDebris: true,
+  noFailEffects: false,
+  saberTrailIntensity: 0,
+  leftSaberColor: '#a82020',
+  rightSaberColor: '#2064a8',
+  lightColorA: '#ff3030',
+  lightColorB: '#c03030',
+  boostLightColorA: '#ff3030',
+  boostLightColorB: '#c03030',
+  wallColor: '#3098ff',
+  noteJumpDurationType: 'Dynamic',
+  noteJumpFixedDuration: 0.2,
+  noteJumpStartBeatOffset: 0,
+  hideNoteSpawnEffect: false,
+  adaptiveSfx: true,
+  arcsHapticFeedback: true,
+  arcVisibility: 'Low',
+  environmentEffectsFilterDefaultPreset: 'AllEffects',
+  environmentEffectsFilterExpertPlusPreset: 'AllEffects',
+  headsetHapticIntensity: 0.7
+});
 const liveGamePresentationFields = new Set([
   'noHud',
   'loadPlayerEnvironment',
   'loadPlayerJumpDistance',
+  'overrideReplayPlayerSettings',
   'ignoreModifiers',
+  'applyJdFixerSettings',
+  'jdFixerMode',
+  'jdFixerJumpDistance',
+  'jdFixerReactionTime',
   'showHead',
   'showLeftSaber',
   'showRightSaber',
@@ -63,19 +124,22 @@ const liveGamePresentationFields = new Set([
   'showTimelinePauses',
   'sfxVolume'
 ]);
-const restartRecommendedGamePresentationFields = new Set([
-  'noTextsAndHuds',
-  'advancedHud',
-  'reduceDebris',
-  'noFailEffects',
-  'saberTrailIntensity',
+const liveSyncedGamePresentationFields = new Set([
+  ...liveGamePresentationFields,
   'leftSaberColor',
   'rightSaberColor',
   'lightColorA',
   'lightColorB',
   'boostLightColorA',
   'boostLightColorB',
-  'wallColor',
+  'wallColor'
+]);
+const restartRecommendedGamePresentationFields = new Set([
+  'noTextsAndHuds',
+  'advancedHud',
+  'reduceDebris',
+  'noFailEffects',
+  'saberTrailIntensity',
   'noteJumpDurationType',
   'noteJumpFixedDuration',
   'noteJumpStartBeatOffset',
@@ -87,6 +151,22 @@ const restartRecommendedGamePresentationFields = new Set([
   'environmentEffectsFilterExpertPlusPreset',
   'headsetHapticIntensity'
 ]);
+const restartRecommendedSettings = Object.freeze({
+  beatSaberLaunchPreset: 'launch settings',
+  beatSaberLaunchArguments: 'launch settings',
+  shareCustomSabers: 'custom saber sharing',
+  sharedCustomSabersDirectory: 'custom saber folder',
+  shareCustomNotes: 'custom note sharing',
+  sharedCustomNotesDirectory: 'custom note folder',
+  shareCustomPlatforms: 'custom platform sharing',
+  sharedCustomPlatformsDirectory: 'custom platform folder',
+  shareCustomAvatars: 'custom avatar sharing',
+  sharedCustomAvatarsDirectory: 'custom avatar folder',
+  shareCustomWalls: 'custom wall sharing',
+  sharedCustomWallsDirectory: 'custom wall folder',
+  shareCustomBombs: 'custom bomb sharing',
+  sharedCustomBombsDirectory: 'custom bomb folder'
+});
 const colorFieldIds = [
   'leftSaberColor',
   'rightSaberColor',
@@ -969,48 +1049,15 @@ function renderSongFolders() {
 
 function renderGamePresentationSettings(settings) {
   const gamePresentation = settings.gamePresentation || {};
-  const defaults = {
-    noHud: true,
-    loadPlayerEnvironment: false,
-    loadPlayerJumpDistance: false,
-    ignoreModifiers: false,
-    showHead: false,
-    showLeftSaber: true,
-    showRightSaber: true,
-    showWatermark: true,
-    showTimelineMisses: true,
-    showTimelineBombs: true,
-    showTimelinePauses: true,
-    sfxVolume: 0.3,
-    noTextsAndHuds: true,
-    advancedHud: false,
-    reduceDebris: true,
-    noFailEffects: false,
-    saberTrailIntensity: 0,
-    leftSaberColor: '#a82020',
-    rightSaberColor: '#2064a8',
-    lightColorA: '#ff3030',
-    lightColorB: '#c03030',
-    boostLightColorA: '#ff3030',
-    boostLightColorB: '#c03030',
-    wallColor: '#3098ff',
-    noteJumpDurationType: 'Dynamic',
-    noteJumpFixedDuration: 0.2,
-    noteJumpStartBeatOffset: 0,
-    hideNoteSpawnEffect: false,
-    adaptiveSfx: true,
-    arcsHapticFeedback: true,
-    arcVisibility: 'Low',
-    environmentEffectsFilterDefaultPreset: 'AllEffects',
-    environmentEffectsFilterExpertPlusPreset: 'AllEffects',
-    headsetHapticIntensity: 0.7
-  };
+  const defaults = gamePresentationDefaults;
 
   const booleanFields = [
     'noHud',
     'loadPlayerEnvironment',
     'loadPlayerJumpDistance',
+    'overrideReplayPlayerSettings',
     'ignoreModifiers',
+    'applyJdFixerSettings',
     'showHead',
     'showLeftSaber',
     'showRightSaber',
@@ -1037,6 +1084,8 @@ function renderGamePresentationSettings(settings) {
     'saberTrailIntensity',
     'noteJumpFixedDuration',
     'noteJumpStartBeatOffset',
+    'jdFixerJumpDistance',
+    'jdFixerReactionTime',
     'headsetHapticIntensity'
   ]) {
     const value = Number(gamePresentation[fieldId] ?? defaults[fieldId]);
@@ -1053,6 +1102,7 @@ function renderGamePresentationSettings(settings) {
     'boostLightColorB',
     'wallColor',
     'noteJumpDurationType',
+    'jdFixerMode',
     'arcVisibility',
     'environmentEffectsFilterDefaultPreset',
     'environmentEffectsFilterExpertPlusPreset'
@@ -1060,6 +1110,7 @@ function renderGamePresentationSettings(settings) {
     setValue(fieldId, gamePresentation[fieldId] || defaults[fieldId]);
   }
   updateNoteJumpDurationAvailability();
+  updateJdFixerAvailability();
   renderColorPresetOptions();
 
   const version = document.getElementById('gamePresentationVersion');
@@ -1216,6 +1267,10 @@ function updateGameValueLabel(fieldId) {
     output.textContent = `${value.toFixed(2)}s`;
   } else if (format === 'offset') {
     output.textContent = value.toFixed(1);
+  } else if (format === 'distance') {
+    output.textContent = value.toFixed(2);
+  } else if (format === 'milliseconds') {
+    output.textContent = `${Math.round(value)}ms`;
   } else {
     output.textContent = String(value);
   }
@@ -1251,6 +1306,27 @@ function updateNoteJumpDurationAvailability() {
   const disabled = !sameStatus(mode.value, 'Static');
   fixedDuration.disabled = disabled;
   row.classList.toggle('isDisabled', disabled);
+}
+
+function updateJdFixerAvailability() {
+  const enabled = Boolean(document.getElementById('applyJdFixerSettings')?.checked);
+  const mode = document.getElementById('jdFixerMode');
+  const modeRow = document.getElementById('jdFixerModeRow');
+  const jumpDistance = document.getElementById('jdFixerJumpDistance');
+  const jumpDistanceRow = document.getElementById('jdFixerJumpDistanceRow');
+  const reactionTime = document.getElementById('jdFixerReactionTime');
+  const reactionTimeRow = document.getElementById('jdFixerReactionTimeRow');
+
+  if (!mode || !jumpDistance || !reactionTime) return;
+
+  const useJumpDistance = enabled && sameStatus(mode.value, 'JumpDistance');
+  const useReactionTime = enabled && sameStatus(mode.value, 'ReactionTime');
+  mode.disabled = !enabled;
+  jumpDistance.disabled = !useJumpDistance;
+  reactionTime.disabled = !useReactionTime;
+  modeRow?.classList.toggle('isDisabled', !enabled);
+  jumpDistanceRow?.classList.toggle('isDisabled', !useJumpDistance);
+  reactionTimeRow?.classList.toggle('isDisabled', !useReactionTime);
 }
 
 function updateAudioLevelTargetConstraints() {
@@ -2328,6 +2404,8 @@ function renderQueue() {
   const schedule = visibleQueue.length ? buildRunPlanSchedule(visibleQueue) : null;
   renderCollectionControls();
   setHidden('exportQueue', queue.length === 0);
+  setHidden('renameUsedQueueRecordings', !queue.some(item => sameStatus(item.status, 'Completed')));
+  setDisabled('renameUsedQueueRecordings', Boolean(state.run?.isRunning) || queue.some(item => isActiveStatus(item.status)));
   setHidden('requeueAll', !queue.some(isRequeueableQueueItem));
   setHidden('clearQueue', queue.length === 0);
   document.getElementById('queueSummary').textContent = queue.length
@@ -2418,6 +2496,11 @@ function renderCollectionControls() {
   for (const id of ['loadCollection', 'collectionPageLoad']) setDisabled(id, collections.length === 0);
   setDisabled('collectionPageDelete', collections.length === 0);
   for (const id of ['exportCollectionCards', 'collectionPageExportCards']) setDisabled(id, collections.length === 0);
+  const selectedCollection = collections.find(collection => collection.id === selectedCollectionId) || collections[0] || null;
+  const selectedCollectionHasRecordings = Boolean(selectedCollection?.items?.some(item => item.completedOutputPath));
+  setDisabled(
+    'collectionPageRenameRecordings',
+    !selectedCollectionHasRecordings || Boolean(state.run?.isRunning) || queue.some(item => isActiveStatus(item.status)));
   setDisabled('collectionPageImportFiles', collections.length === 0);
   setDisabled('collectionPageAddReplays', collections.length === 0);
   const collectionSelection = document.getElementById('collectionFileSelection');
@@ -3610,6 +3693,304 @@ async function queueAction(id, action, message) {
     await postJson(queueUrl(id, action));
     showToast(message);
   });
+}
+
+async function renameCompletedQueueRecordings(format = getRecordingNameFormat()) {
+  const response = await fetch('/api/queue/rename-completed-recordings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ format })
+  });
+  if (!response.ok) throw new Error(await response.text());
+
+  const result = await response.json();
+  state = result.state || state;
+  render();
+
+  const renamed = Number(result.renamedCount) || 0;
+  const skipped = Number(result.skippedCount) || 0;
+  if (!renamed) {
+    showToast(skipped ? `No recordings renamed, ${skipped} skipped` : 'No completed recordings to rename');
+    return;
+  }
+
+  showToast(`Renamed ${renamed} recording${renamed === 1 ? '' : 's'}${skipped ? `, ${skipped} skipped` : ''}`);
+}
+
+async function renameSelectedCollectionRecordings(format = getRecordingNameFormat()) {
+  const collectionId = getSelectedCollectionId();
+  if (!collectionId) {
+    showToast('Choose a collection');
+    return;
+  }
+
+  const response = await fetch(`/api/collections/${encodeURIComponent(collectionId)}/rename-recordings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ format })
+  });
+  if (!response.ok) throw new Error(await response.text());
+
+  const result = await response.json();
+  state = result.state || state;
+  render();
+
+  const renamed = Number(result.renamedCount) || 0;
+  const skipped = Number(result.skippedCount) || 0;
+  if (!renamed) {
+    showToast(skipped ? `No recordings renamed, ${skipped} skipped` : 'No recordings to rename');
+    return;
+  }
+
+  showToast(`Renamed ${renamed} recording${renamed === 1 ? '' : 's'}${skipped ? `, ${skipped} skipped` : ''}`);
+}
+
+function getRecordingNameFormat() {
+  return recordingNameFormat || 'Default';
+}
+
+function syncRecordingNameFormatControls(source = null) {
+  const sourceValue = source?.value;
+  if (sourceValue) recordingNameFormat = sourceValue;
+
+  for (const option of getRecordingNameFormatElements()) {
+    option.checked = option.value === recordingNameFormat;
+  }
+}
+
+function getRecordingNameFormatElements() {
+  return [...document.querySelectorAll('input[name="recordingNameFormat"]')];
+}
+
+function getSelectedCollectionName() {
+  const collectionId = getSelectedCollectionId();
+  const collection = (state?.collections || []).find(item => item.id === collectionId);
+  return collection?.name || 'Selected collection';
+}
+
+function selectedCollectionHasCompletedRecordings() {
+  const collectionId = getSelectedCollectionId();
+  const collection = (state?.collections || []).find(item => item.id === collectionId);
+  return Boolean(collection?.items?.some(item => item.completedOutputPath));
+}
+
+async function openRecordingRenameModal(context) {
+  const queue = state?.queue || [];
+  if (context === 'queue' && !queue.some(item => sameStatus(item.status, 'Completed'))) {
+    showToast('No completed recordings to rename');
+    return;
+  }
+
+  if (context === 'collection') {
+    if (!getSelectedCollectionId()) {
+      showToast('Choose a collection');
+      return;
+    }
+
+    if (!selectedCollectionHasCompletedRecordings()) {
+      showToast('No collection recordings to rename');
+      return;
+    }
+  }
+
+  const modal = document.getElementById('recordingRenameModal');
+  if (!modal) return;
+
+  recordingRenameContext = context;
+  recordingRenameLastFocus = document.activeElement;
+  syncRecordingNameFormatControls();
+  setText('recordingRenameKicker', context === 'collection' ? 'Collection Recordings' : 'Queue Recordings');
+  setText('recordingRenameScope', context === 'collection'
+    ? getSelectedCollectionName()
+    : 'Completed queue recordings');
+  applyRecordingRenamePreview(await loadRecordingRenamePreview(context));
+  modal.hidden = false;
+  document.querySelector('input[name="recordingNameFormat"]:checked')?.focus();
+}
+
+async function loadRecordingRenamePreview(context) {
+  const fallback = buildRecordingRenamePreviewFromState(context);
+  const url = getRecordingRenamePreviewUrl(context);
+  if (!url) return fallback;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return fallback;
+    const preview = await response.json();
+    return {
+      sourceLabel: cleanQueueExportField(preview?.sourceLabel) || fallback.sourceLabel,
+      examples: {
+        ...fallback.examples,
+        ...(preview?.examples || {})
+      }
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function getRecordingRenamePreviewUrl(context) {
+  if (context === 'collection') {
+    const collectionId = getSelectedCollectionId();
+    return collectionId
+      ? `/api/collections/${encodeURIComponent(collectionId)}/recording-name-preview`
+      : '';
+  }
+
+  return '/api/queue/recording-name-preview';
+}
+
+function applyRecordingRenamePreview(preview) {
+  const examples = preview?.examples || {};
+  for (const element of document.querySelectorAll('[data-recording-rename-example]')) {
+    const format = element.dataset.recordingRenameExample;
+    element.textContent = cleanQueueExportField(examples[format]) ||
+      recordingRenameFallbackExamples[format] ||
+      'Example unavailable';
+  }
+}
+
+function buildRecordingRenamePreviewFromState(context) {
+  const item = getRecordingRenamePreviewItem(context);
+  const fields = getRecordingRenamePreviewFields(item);
+  return {
+    sourceLabel: fields.song,
+    examples: {
+      Default: joinRecordingRenamePreviewParts(
+        `${String(fields.sequence).padStart(3, '0')} - ${fields.song}${fields.rawDifficulty ? ` [${fields.rawDifficulty}]` : ''}`),
+      Key: fields.key,
+      KeySong: joinRecordingRenamePreviewParts(fields.key, fields.song),
+      Song: fields.song,
+      SongArtist: joinRecordingRenamePreviewParts(fields.song, fields.artist),
+      SongArtistPlayer: joinRecordingRenamePreviewParts(fields.song, fields.artist, fields.player),
+      SongPlayer: joinRecordingRenamePreviewParts(fields.song, fields.player),
+      SongMapper: joinRecordingRenamePreviewParts(fields.song, fields.mapper),
+      SongDifficulty: joinRecordingRenamePreviewParts(fields.song, fields.displayDifficulty),
+      PlayerSong: joinRecordingRenamePreviewParts(fields.player, fields.song)
+    }
+  };
+}
+
+function getRecordingRenamePreviewItem(context) {
+  if (context === 'collection') {
+    const collectionId = getSelectedCollectionId();
+    const collection = (state?.collections || []).find(item => item.id === collectionId);
+    return collection?.items?.find(item => item.completedOutputPath || item.completedAtUtc) ||
+      collection?.items?.[0] ||
+      null;
+  }
+
+  const queue = state?.queue || [];
+  return queue.find(item => sameStatus(item.status, 'Completed') || item.outputPath || item.completedAtUtc) ||
+    queue[0] ||
+    null;
+}
+
+function getRecordingRenamePreviewFields(item) {
+  const song = cleanQueueExportField(item?.songName) ||
+    cleanQueueExportField(item?.fileName) ||
+    'Song';
+  const mapper = cleanQueueExportField(item?.mapper) || 'Mapper';
+  const artist = cleanQueueExportField(item?.artist) ||
+    inferArtistFromMapInstallPath(item?.mapInstallPath) ||
+    'Artist';
+  const player = cleanQueueExportField(formatPlayerName(item?.playerName)) || 'Player';
+  const rawDifficulty = cleanQueueExportField(item?.difficulty);
+  const displayDifficulty = displayRenamePreviewDifficulty(rawDifficulty) || 'Difficulty';
+  return {
+    sequence: Number.isFinite(Number(item?.sequenceNumber)) ? Number(item.sequenceNumber) : 1,
+    key: extractRecordingPreviewKey(item) || 'Key',
+    song,
+    artist,
+    mapper,
+    player,
+    rawDifficulty,
+    displayDifficulty
+  };
+}
+
+function joinRecordingRenamePreviewParts(...parts) {
+  return parts
+    .map(part => cleanQueueExportField(part))
+    .filter(Boolean)
+    .join(' - ');
+}
+
+function extractRecordingPreviewKey(item) {
+  const directKey = cleanQueueExportField(item?.beatSaverKey);
+  if (directKey) return directKey;
+
+  const beatSaverUrlKey = extractBeatSaverKeyFromUrl(item?.sourceUrl);
+  if (beatSaverUrlKey) return beatSaverUrlKey;
+
+  const installPathKey = extractBeatSaverKeyFromInstallPath(item?.mapInstallPath);
+  if (installPathKey) return installPathKey;
+
+  return cleanQueueExportField(item?.levelHash);
+}
+
+function extractBeatSaverKeyFromUrl(url) {
+  const text = cleanQueueExportField(url);
+  if (!text || !/beatsaver/i.test(text)) return '';
+
+  try {
+    const parsed = new URL(text);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    for (let index = 0; index < segments.length - 1; index++) {
+      if (/^(beatmap|maps)$/i.test(segments[index])) {
+        return cleanQueueExportField(segments[index + 1]);
+      }
+    }
+    return cleanQueueExportField(segments.at(-1));
+  } catch {
+    return '';
+  }
+}
+
+function extractBeatSaverKeyFromInstallPath(path) {
+  const name = cleanQueueExportField(String(path ?? '').split(/[\\/]/).filter(Boolean).pop());
+  const match = name.match(/^([0-9a-f]{3,8})(?:\s|\(|$)/i);
+  return match?.[1] || '';
+}
+
+function inferArtistFromMapInstallPath(path) {
+  const name = cleanQueueExportField(String(path ?? '').split(/[\\/]/).filter(Boolean).pop());
+  const match = name.match(/\(([^)]+)\)\s*$/);
+  if (!match) return '';
+  return cleanQueueExportField(match[1].split(' - ')[0]);
+}
+
+function displayRenamePreviewDifficulty(value) {
+  const text = cleanQueueExportField(value);
+  const normalized = text.replace(/[^a-z0-9]+/gi, '').toLowerCase();
+  if (normalized === 'expertplus' || /expert\+/i.test(text)) return 'Expert+';
+  if (normalized === 'expert') return 'Expert';
+  if (normalized === 'hard') return 'Hard';
+  if (normalized === 'normal') return 'Normal';
+  if (normalized === 'easy') return 'Easy';
+  return text;
+}
+
+function closeRecordingRenameModal() {
+  const modal = document.getElementById('recordingRenameModal');
+  if (!modal) return;
+  modal.hidden = true;
+  recordingRenameContext = null;
+  if (recordingRenameLastFocus && typeof recordingRenameLastFocus.focus === 'function') {
+    recordingRenameLastFocus.focus();
+  }
+  recordingRenameLastFocus = null;
+}
+
+async function applyRecordingRenameSelection() {
+  const context = recordingRenameContext;
+  const format = getRecordingNameFormat();
+  if (context === 'collection') {
+    await renameSelectedCollectionRecordings(format);
+  } else {
+    await renameCompletedQueueRecordings(format);
+  }
+  closeRecordingRenameModal();
 }
 
 async function uploadQueueMap(id, file) {
@@ -5573,9 +5954,7 @@ function revealSettingsTarget(targetId) {
 async function persistSettings() {
   const enabledInstanceCount = pendingSetupEnabledInstanceCount;
   const request = buildSettingsRequest();
-  const restartRecommendation = getGamePresentationRestartRecommendation(
-    state?.settings?.gamePresentation,
-    request.gamePresentation);
+  const restartRecommendation = getSettingsRestartRecommendation(state?.settings, request);
   await postJson('/api/settings', request);
   if (enabledInstanceCount != null) {
     await applySetupEnabledInstanceCount(enabledInstanceCount);
@@ -5584,70 +5963,109 @@ async function persistSettings() {
   }
   settingsDirty = false;
   updateSettingsDirtyBadge();
-  return await promptForGamePresentationRestart(restartRecommendation);
+  return await promptForSettingsRestart(restartRecommendation);
 }
 
-function getGamePresentationRestartRecommendation(previous, next) {
-  const changedFields = [];
+function getSettingsRestartRecommendation(previous, next) {
+  const restartLabels = [];
   const previousSettings = previous || {};
   const nextSettings = next || {};
-  const fieldNames = new Set([
-    ...Object.keys(previousSettings),
-    ...Object.keys(nextSettings),
-    ...liveGamePresentationFields,
-    ...restartRecommendedGamePresentationFields
-  ]);
 
-  for (const fieldName of fieldNames) {
-    if (normalizeGamePresentationValue(previousSettings[fieldName]) !==
-        normalizeGamePresentationValue(nextSettings[fieldName])) {
-      changedFields.push(fieldName);
+  for (const [fieldName, label] of Object.entries(restartRecommendedSettings)) {
+    if (normalizeSettingsRestartValue(previousSettings[fieldName]) !==
+        normalizeSettingsRestartValue(nextSettings[fieldName])) {
+      addUniqueRestartLabel(restartLabels, label);
     }
   }
 
-  const restartFields = changedFields.filter(fieldName => restartRecommendedGamePresentationFields.has(fieldName));
-  if (restartFields.length === 0) {
+  for (const fieldName of getGamePresentationRestartFields(
+    previousSettings.gamePresentation,
+    nextSettings.gamePresentation)) {
+    addUniqueRestartLabel(restartLabels, formatGamePresentationFieldName(fieldName));
+  }
+
+  if (restartLabels.length === 0) {
     return null;
   }
 
   return {
-    changedFields,
-    restartFields
+    restartLabels
   };
 }
 
-function normalizeGamePresentationValue(value) {
+function addUniqueRestartLabel(labels, label) {
+  if (!label || labels.includes(label)) return;
+  labels.push(label);
+}
+
+function getGamePresentationRestartFields(previous, next) {
+  const restartFields = [];
+  const previousSettings = previous || {};
+  const nextSettings = next || {};
+  const fieldNames = new Set([
+    ...Object.keys(gamePresentationDefaults),
+    ...Object.keys(previousSettings),
+    ...Object.keys(nextSettings),
+    ...liveSyncedGamePresentationFields,
+    ...restartRecommendedGamePresentationFields
+  ]);
+
+  for (const fieldName of fieldNames) {
+    if (!restartRecommendedGamePresentationFields.has(fieldName)) continue;
+
+    if (normalizeGamePresentationValue(previousSettings, fieldName) !==
+        normalizeGamePresentationValue(nextSettings, fieldName)) {
+      restartFields.push(fieldName);
+    }
+  }
+
+  return restartFields;
+}
+
+function normalizeGamePresentationValue(settings, fieldName) {
+  const value = Object.prototype.hasOwnProperty.call(settings, fieldName)
+    ? settings[fieldName]
+    : gamePresentationDefaults[fieldName];
+  return normalizeSettingsRestartValue(value);
+}
+
+function normalizeSettingsRestartValue(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? String(Math.round(value * 100000) / 100000) : '';
+  }
+
+  if (typeof value === 'string') {
+    return value.trim();
   }
 
   return JSON.stringify(value ?? null);
 }
 
-async function promptForGamePresentationRestart(recommendation) {
+async function promptForSettingsRestart(recommendation) {
   if (!recommendation) return false;
 
   const activeInstances = (state?.instances || [])
     .filter(instance => instance?.gameProcessId || instance?.workerId);
   if (activeInstances.length === 0) return false;
 
+  const fieldList = recommendation.restartLabels
+    .slice(0, 4)
+    .join(', ');
+  const suffix = recommendation.restartLabels.length > 4 ? ', and more' : '';
+  const changedText = fieldList
+    ? `Saved settings changed ${fieldList}${suffix}.`
+    : 'Saved settings changed values that active Beat Saber workers may not fully reload.';
+
   if (state?.run?.isRunning || state?.run?.cancellationRequested) {
-    showToast('Game settings saved; restart workers after this run');
+    window.alert(`${changedText} Restart the managed Beat Saber workers after this run so the changes take effect.`);
+    showToast('Settings saved; restart workers after this run');
     return true;
   }
 
-  const fieldList = recommendation.restartFields
-    .map(formatGamePresentationFieldName)
-    .filter(Boolean)
-    .slice(0, 4)
-    .join(', ');
-  const suffix = recommendation.restartFields.length > 4 ? ', and more' : '';
-  const message = fieldList
-    ? `Saved game settings changed ${fieldList}${suffix}. Restart managed Beat Saber workers now so those settings are guaranteed?`
-    : 'Saved game settings may need the managed Beat Saber workers to restart. Restart them now?';
+  const message = `${changedText} Restart managed Beat Saber workers now so the changes take effect?`;
 
   if (!window.confirm(message)) {
-    showToast('Game settings saved; restart workers when convenient');
+    showToast('Settings saved; restart workers when convenient');
     return true;
   }
 
@@ -5656,7 +6074,7 @@ async function promptForGamePresentationRestart(recommendation) {
   }
 
   await postJson('/api/instances/launch');
-  showToast('Game settings saved; workers restarted');
+  showToast('Settings saved; workers restarted');
   return true;
 }
 
@@ -5677,6 +6095,10 @@ function formatGamePresentationFieldName(fieldName) {
     noteJumpDurationType: 'note jump mode',
     noteJumpFixedDuration: 'note jump duration',
     noteJumpStartBeatOffset: 'note jump offset',
+    applyJdFixerSettings: 'JDFixer',
+    jdFixerMode: 'JDFixer mode',
+    jdFixerJumpDistance: 'JDFixer jump distance',
+    jdFixerReactionTime: 'JDFixer reaction time',
     hideNoteSpawnEffect: 'note spawn effect',
     adaptiveSfx: 'adaptive SFX',
     arcsHapticFeedback: 'arc haptics',
@@ -5887,6 +6309,7 @@ function buildSettingsRequest() {
       noHud: document.getElementById('noHud').checked,
       loadPlayerEnvironment: document.getElementById('loadPlayerEnvironment').checked,
       loadPlayerJumpDistance: document.getElementById('loadPlayerJumpDistance').checked,
+      overrideReplayPlayerSettings: document.getElementById('overrideReplayPlayerSettings').checked,
       ignoreModifiers: document.getElementById('ignoreModifiers').checked,
       showHead: document.getElementById('showHead').checked,
       showLeftSaber: document.getElementById('showLeftSaber').checked,
@@ -5911,6 +6334,10 @@ function buildSettingsRequest() {
       noteJumpDurationType: getText('noteJumpDurationType'),
       noteJumpFixedDuration: getNumber('noteJumpFixedDuration'),
       noteJumpStartBeatOffset: getNumber('noteJumpStartBeatOffset'),
+      applyJdFixerSettings: document.getElementById('applyJdFixerSettings').checked,
+      jdFixerMode: getText('jdFixerMode'),
+      jdFixerJumpDistance: getNumber('jdFixerJumpDistance'),
+      jdFixerReactionTime: getNumber('jdFixerReactionTime'),
       hideNoteSpawnEffect: document.getElementById('hideNoteSpawnEffect').checked,
       adaptiveSfx: document.getElementById('adaptiveSfx').checked,
       arcsHapticFeedback: getGameCheckedOrSetting('arcsHapticFeedback', 'arcsHapticFeedback', true),
@@ -6086,6 +6513,8 @@ document.querySelectorAll('[data-game-value]').forEach(element => {
 document.getElementById('noTextsAndHuds')?.addEventListener('change', updateAdvancedHudAvailability);
 document.getElementById('manageDisplayScale')?.addEventListener('change', updateDisplayScaleAvailability);
 document.getElementById('noteJumpDurationType')?.addEventListener('change', updateNoteJumpDurationAvailability);
+document.getElementById('applyJdFixerSettings')?.addEventListener('change', updateJdFixerAvailability);
+document.getElementById('jdFixerMode')?.addEventListener('change', updateJdFixerAvailability);
 document.getElementById('audioLevelMode').addEventListener('change', updateAudioLevelTargetConstraints);
 document.getElementById('captureEngine')?.addEventListener('change', updateCaptureEngineWarning);
 document.getElementById('colorPresetSelect')?.addEventListener('change', updateColorPresetActions);
@@ -6507,12 +6936,22 @@ document.getElementById('clearQueue').addEventListener('click', () => runAction(
   showToast('Queue cleared');
 }));
 
+getRecordingNameFormatElements().forEach(select => {
+  select.addEventListener('change', event => {
+    syncRecordingNameFormatControls(event.target);
+  });
+});
+syncRecordingNameFormatControls();
+
+document.getElementById('renameUsedQueueRecordings')?.addEventListener('click', () => runAction(() => openRecordingRenameModal('queue')));
+
 document.getElementById('saveCollection')?.addEventListener('click', () => runAction(saveCurrentCollection));
 document.getElementById('loadCollection')?.addEventListener('click', () => runAction(loadSelectedCollection));
 document.getElementById('exportCollectionCards')?.addEventListener('click', () => runAction(openCollectionMapCardExportModal));
 document.getElementById('collectionPageCreate')?.addEventListener('click', () => runAction(createEmptyCollection));
 document.getElementById('collectionPageSave')?.addEventListener('click', () => runAction(saveCurrentCollection));
 document.getElementById('collectionPageLoad')?.addEventListener('click', () => runAction(loadSelectedCollection));
+document.getElementById('collectionPageRenameRecordings')?.addEventListener('click', () => runAction(() => openRecordingRenameModal('collection')));
 document.getElementById('collectionPageExportCards')?.addEventListener('click', () => runAction(openCollectionMapCardExportModal));
 document.getElementById('collectionPageDelete')?.addEventListener('click', () => runAction(deleteSelectedCollection));
 document.getElementById('collectionPageAddReplays')?.addEventListener('click', openCollectionReplayPicker);
@@ -6549,6 +6988,9 @@ document.getElementById('queueExportFormat')?.addEventListener('change', () => {
 document.getElementById('copyQueueExport')?.addEventListener('click', () => runAction(copyQueueExportText));
 document.getElementById('selectQueueExport')?.addEventListener('click', selectQueueExportText);
 document.getElementById('closeQueueExport')?.addEventListener('click', closeQueueExportModal);
+document.getElementById('applyRecordingRename')?.addEventListener('click', () => runAction(applyRecordingRenameSelection));
+document.getElementById('cancelRecordingRename')?.addEventListener('click', closeRecordingRenameModal);
+document.getElementById('closeRecordingRename')?.addEventListener('click', closeRecordingRenameModal);
 document.getElementById('mapCardDefaultCategory')?.addEventListener('change', applyMapCardDefaultCategory);
 document.getElementById('mapCardCategoriesEnabled')?.addEventListener('change', toggleMapCardCategories);
 document.getElementById('saveMapCardCategories')?.addEventListener('click', () => runAction(saveMapCardCategories));
@@ -6558,6 +7000,9 @@ document.getElementById('closeMapCardExport')?.addEventListener('click', closeMa
 document.getElementById('queueExportModal')?.addEventListener('click', event => {
   if (event.target?.id === 'queueExportModal') closeQueueExportModal();
 });
+document.getElementById('recordingRenameModal')?.addEventListener('click', event => {
+  if (event.target?.id === 'recordingRenameModal') closeRecordingRenameModal();
+});
 document.getElementById('mapCardExportModal')?.addEventListener('click', event => {
   if (event.target?.id === 'mapCardExportModal') closeMapCardExportModal();
 });
@@ -6565,6 +7010,10 @@ document.getElementById('mapCardExportModal')?.addEventListener('click', event =
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !document.getElementById('queueExportModal')?.hidden) {
     closeQueueExportModal();
+  }
+
+  if (event.key === 'Escape' && !document.getElementById('recordingRenameModal')?.hidden) {
+    closeRecordingRenameModal();
   }
 
   if (event.key === 'Escape' && !document.getElementById('mapCardExportModal')?.hidden) {

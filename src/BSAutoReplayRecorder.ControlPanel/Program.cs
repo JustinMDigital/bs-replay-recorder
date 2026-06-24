@@ -98,6 +98,14 @@ app.MapGet("/api/collections/{id}/items/{itemId}/cover", (string id, string item
 
 app.MapPost("/api/queue/clear", (ControlPanelStore store) => Results.Ok(store.ClearQueue()));
 app.MapPost("/api/queue/requeue-all", (ControlPanelStore store) => Results.Ok(store.RequeueAllQueueItems()));
+app.MapGet("/api/queue/recording-name-preview", (ControlPanelStore store) =>
+    ExecuteApi(store.GetCompletedQueueRecordingNamePreview));
+app.MapGet("/api/collections/{id}/recording-name-preview", (string id, ControlPanelStore store) =>
+    ExecuteApi(() => store.GetCollectionRecordingNamePreview(id)));
+app.MapPost("/api/queue/rename-completed-recordings", (RecordingFileRenameRequest request, ControlPanelStore store) =>
+    ExecuteApi(() => store.RenameCompletedQueueRecordings(request)));
+app.MapPost("/api/collections/{id}/rename-recordings", (string id, RecordingFileRenameRequest request, ControlPanelStore store) =>
+    ExecuteApi(() => store.RenameCollectionRecordings(id, request)));
 app.MapPost("/api/queue/{id}/edit", (string id, QueueItemUpdateRequest request, ControlPanelStore store) =>
     ExecuteApi(() => store.UpdateQueueItem(id, request)));
 app.MapPost("/api/queue/{id}/calibration", (string id, ReplayCalibrationRequest request, ControlPanelStore store) =>

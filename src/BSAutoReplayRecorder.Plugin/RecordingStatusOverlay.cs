@@ -73,11 +73,16 @@ public sealed class RecordingStatusOverlay : MonoBehaviour
 
     public static void ShowToast(string header, string detail, TimeSpan duration, bool isError = false)
     {
+        ShowToast(header, detail, isError ? "Check the log for details" : "", duration, isError);
+    }
+
+    public static void ShowToast(string header, string detail, string footer, TimeSpan duration, bool isError = false)
+    {
         var expiresAtUtc = DateTimeOffset.UtcNow + duration;
         SetState(new OverlayState(
             header,
             detail,
-            isError ? "Check the log for details" : "",
+            footer,
             isError,
             expiresAtUtc));
         lock (Gate)

@@ -22,13 +22,15 @@ public sealed class ControlPanelWorkerRunner : IDisposable
     private readonly Logger _logger;
     private readonly Action<string>? _persistWorkerId;
     private readonly Action<string>? _statusChanged;
+    private readonly object _gamePresentationSettingsToastGate = new object();
     private CancellationTokenSource? _cancellation;
     private Task? _task;
     private Task? _idleShutdownTask;
     private bool _disposed;
     private int _appliedGamePresentationSettingsVersion;
     private int _activeAssignment;
-    private int _pendingGamePresentationSettingsToastVersion;
+    private GamePresentationSettings? _appliedGamePresentationSettings;
+    private PendingGamePresentationSettingsToast? _pendingGamePresentationSettingsToast;
     private string _activeAssignmentHeartbeatStatus = "Recording";
     private string _gamePresentationSyncStatus = "Pending";
     private string? _gamePresentationSyncError;
@@ -790,15 +792,22 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         Volatile.Write(ref _activeAssignmentHeartbeatStatus, "Recording");
     }
 
-    private void ShowGamePresentationSettingsUpdatedToastOrDefer(int settingsVersion)
+    private void ShowGamePresentationSettingsUpdatedToastOrDefer(
+        int settingsVersion,
+        GamePresentationSettingsChangeSummary changeSummary)
     {
         if (Volatile.Read(ref _activeAssignment) != 0)
         {
-            Interlocked.Exchange(ref _pendingGamePresentationSettingsToastVersion, settingsVersion);
+            lock (_gamePresentationSettingsToastGate)
+            {
+                _pendingGamePresentationSettingsToast = new PendingGamePresentationSettingsToast(
+                    settingsVersion,
+                    changeSummary);
+            }
             return;
         }
 
-        ShowGamePresentationSettingsUpdatedToast(settingsVersion);
+        ShowGamePresentationSettingsUpdatedToast(settingsVersion, changeSummary);
     }
 
     private void TryShowDeferredGamePresentationSettingsUpdatedToast()
@@ -808,22 +817,48 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             return;
         }
 
-        var settingsVersion = Interlocked.Exchange(ref _pendingGamePresentationSettingsToastVersion, 0);
-        if (settingsVersion <= 0)
+        PendingGamePresentationSettingsToast? pendingToast;
+        lock (_gamePresentationSettingsToastGate)
+        {
+            pendingToast = _pendingGamePresentationSettingsToast;
+            _pendingGamePresentationSettingsToast = null;
+        }
+
+        if (pendingToast == null)
         {
             return;
         }
 
-        ShowGamePresentationSettingsUpdatedToast(settingsVersion);
+        ShowGamePresentationSettingsUpdatedToast(pendingToast.SettingsVersion, pendingToast.ChangeSummary);
     }
 
-    private static void ShowGamePresentationSettingsUpdatedToast(int settingsVersion)
+    private static void ShowGamePresentationSettingsUpdatedToast(
+        int settingsVersion,
+        GamePresentationSettingsChangeSummary changeSummary)
     {
         RecordingStatusOverlay.SetStatusPanelVisible(true);
+        var detail = changeSummary.Lines.Count > 0
+            ? changeSummary.Lines[0]
+            : "Game settings v" + settingsVersion + " applied.";
+        var footer = "";
+        if (changeSummary.Lines.Count > 1)
+        {
+            footer = changeSummary.Lines[1];
+            if (changeSummary.AdditionalChanges > 0)
+            {
+                footer += " (+" + changeSummary.AdditionalChanges + " more)";
+            }
+        }
+        else if (changeSummary.HasChanges)
+        {
+            footer = "Game settings v" + settingsVersion + " applied.";
+        }
+
         RecordingStatusOverlay.ShowToast(
-            "Settings updated!",
-            "Game settings v" + settingsVersion + " applied.",
-            TimeSpan.FromSeconds(4));
+            changeSummary.HasChanges ? "Settings Saved" : "Settings updated",
+            detail,
+            footer,
+            changeSummary.HasChanges ? TimeSpan.FromSeconds(6) : TimeSpan.FromSeconds(4));
     }
 
     private ControlPanelWorkerHeartbeatRequest CreateHeartbeatRequest(
@@ -878,13 +913,18 @@ public sealed class ControlPanelWorkerRunner : IDisposable
 
         try
         {
+            var changeSummary = GamePresentationSettingsChangeSummary.Create(
+                _appliedGamePresentationSettings,
+                settings,
+                maximumLines: 2);
             await UnityMainThreadTaskScheduler.Factory.StartNew(
                 () => GamePresentationSettingsApplier.Apply(settings, _logger),
                 cancellationToken).ConfigureAwait(false);
             _appliedGamePresentationSettingsVersion = settingsVersion;
+            _appliedGamePresentationSettings = settings.Clone();
             _gamePresentationSyncStatus = "Applied";
             _gamePresentationSyncError = null;
-            ShowGamePresentationSettingsUpdatedToastOrDefer(settingsVersion);
+            ShowGamePresentationSettingsUpdatedToastOrDefer(settingsVersion, changeSummary);
         }
         catch (Exception ex)
         {
@@ -988,6 +1028,21 @@ public sealed class ControlPanelWorkerRunner : IDisposable
     {
         var trimmed = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private sealed class PendingGamePresentationSettingsToast
+    {
+        public PendingGamePresentationSettingsToast(
+            int settingsVersion,
+            GamePresentationSettingsChangeSummary changeSummary)
+        {
+            SettingsVersion = settingsVersion;
+            ChangeSummary = changeSummary;
+        }
+
+        public int SettingsVersion { get; }
+
+        public GamePresentationSettingsChangeSummary ChangeSummary { get; }
     }
 
     private sealed class AssignmentCancellationDetails

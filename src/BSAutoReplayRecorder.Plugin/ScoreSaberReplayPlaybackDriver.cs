@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -75,6 +76,49 @@ public sealed class ScoreSaberReplayPlaybackDriver : IReplayPlaybackDriver
     }
 
     public string DriverName => "ScoreSaber";
+
+    internal static (bool Ready, string Status) CheckRuntimeCompatibility()
+    {
+        try
+        {
+            var assembly = FindScoreSaberAssembly();
+            if (assembly == null)
+            {
+                return (false, "ScoreSaber.dll is not loaded");
+            }
+
+            var pluginType = FindScoreSaberPluginType(assembly);
+            var replayLoaderType = FindReplayLoaderType(assembly);
+            if (pluginType == null || replayLoaderType == null)
+            {
+                return (false, "ScoreSaber replay loader types were not found");
+            }
+
+            if (ResolveScoreSaberContainer(pluginType, replayLoaderType) == null)
+            {
+                return (false, "ScoreSaber Zenject container is not available yet");
+            }
+
+            var loadMethod = TryFindReplayLoaderLoadMethod(replayLoaderType);
+            if (loadMethod == null)
+            {
+                return (false, "ScoreSaber ReplayLoader.Load(byte[], ..., ..., ..., string) was not found. " +
+                               FormatAvailableLoadMethods(replayLoaderType));
+            }
+
+            if (FindReplayEndMethod(replayLoaderType) == null)
+            {
+                return (false, "ScoreSaber ReplayLoader.ReplayEnd was not found");
+            }
+
+            return (true, "ScoreSaber replay loader ready (" + replayLoaderType.FullName + "): " +
+                          FormatMethodSignature(loadMethod));
+        }
+        catch (Exception ex)
+        {
+            return (false, "ScoreSaber readiness check failed: " + ex.Message);
+        }
+    }
 
     public bool CanPlay(ReplayReference replayReference)
     {
@@ -375,6 +419,17 @@ public sealed class ScoreSaberReplayPlaybackDriver : IReplayPlaybackDriver
             return true;
         }
 
+        if (fullName.IndexOf("ScoreSaber.Features.Replays", StringComparison.OrdinalIgnoreCase) >= 0 &&
+            (fullName.IndexOf("UI", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             fullName.IndexOf("View", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             fullName.IndexOf("Controller", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             fullName.IndexOf("Results", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             fullName.IndexOf("Menu", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             fullName.IndexOf("Replay", StringComparison.OrdinalIgnoreCase) >= 0))
+        {
+            return true;
+        }
+
         if (fullName.IndexOf("ScoreSaber.Core.ReplaySystem", StringComparison.OrdinalIgnoreCase) >= 0 &&
             (fullName.IndexOf("UI", StringComparison.OrdinalIgnoreCase) >= 0 ||
              fullName.IndexOf("View", StringComparison.OrdinalIgnoreCase) >= 0 ||
@@ -476,23 +531,20 @@ public sealed class ScoreSaberReplayPlaybackDriver : IReplayPlaybackDriver
 
     private object ResolveReplayLoader()
     {
-        var assembly = AppDomain.CurrentDomain
-            .GetAssemblies()
-            .FirstOrDefault(candidate => string.Equals(candidate.GetName().Name, "ScoreSaber", StringComparison.OrdinalIgnoreCase));
+        var assembly = FindScoreSaberAssembly();
         if (assembly == null)
         {
             throw new InvalidOperationException("ScoreSaber.dll is not loaded.");
         }
 
-        var pluginType = assembly.GetType("ScoreSaber.Plugin", throwOnError: false);
-        var replayLoaderType = assembly.GetType("ScoreSaber.Core.ReplaySystem.ReplayLoader", throwOnError: false);
+        var pluginType = FindScoreSaberPluginType(assembly);
+        var replayLoaderType = FindReplayLoaderType(assembly);
         if (pluginType == null || replayLoaderType == null)
         {
             throw new InvalidOperationException("ScoreSaber replay loader types were not found.");
         }
 
-        var containerField = pluginType.GetField("Container", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        var container = containerField?.GetValue(null);
+        var container = ResolveScoreSaberContainer(pluginType, replayLoaderType);
         if (container == null)
         {
             throw new InvalidOperationException("ScoreSaber Zenject container is not available yet.");
@@ -545,10 +597,7 @@ public sealed class ScoreSaberReplayPlaybackDriver : IReplayPlaybackDriver
 
     private static object CreateReplayLoader(object container, MethodInfo resolveMethod, Type replayLoaderType)
     {
-        var constructor = replayLoaderType
-            .GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .OrderByDescending(candidate => candidate.GetParameters().Length)
-            .FirstOrDefault();
+        var constructor = FindReplayLoaderConstructor(replayLoaderType);
         if (constructor == null)
         {
             throw new InvalidOperationException("ScoreSaber ReplayLoader constructor was not found.");
@@ -575,13 +624,9 @@ public sealed class ScoreSaberReplayPlaybackDriver : IReplayPlaybackDriver
                 return;
             }
 
-            var assembly = AppDomain.CurrentDomain
-                .GetAssemblies()
-                .FirstOrDefault(candidate => string.Equals(candidate.GetName().Name, "ScoreSaber", StringComparison.OrdinalIgnoreCase));
-            var replayLoaderType = assembly?.GetType("ScoreSaber.Core.ReplaySystem.ReplayLoader", throwOnError: false);
-            var replayEndMethod = replayLoaderType?.GetMethod(
-                "ReplayEnd",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var assembly = FindScoreSaberAssembly();
+            var replayLoaderType = assembly == null ? null : FindReplayLoaderType(assembly);
+            var replayEndMethod = replayLoaderType == null ? null : FindReplayEndMethod(replayLoaderType);
             if (replayEndMethod == null)
             {
                 throw new InvalidOperationException("ScoreSaber ReplayLoader.ReplayEnd was not found.");
@@ -605,13 +650,223 @@ public sealed class ScoreSaberReplayPlaybackDriver : IReplayPlaybackDriver
 
     private static MethodInfo FindReplayLoaderLoadMethod(Type replayLoaderType)
     {
-        var method = replayLoaderType
+        var method = TryFindReplayLoaderLoadMethod(replayLoaderType);
+        return method ?? throw new InvalidOperationException(
+            "ScoreSaber ReplayLoader.Load(byte[], ..., ..., ..., string) was not found. " +
+            FormatAvailableLoadMethods(replayLoaderType));
+    }
+
+    private static Assembly? FindScoreSaberAssembly()
+    {
+        return AppDomain.CurrentDomain
+            .GetAssemblies()
+            .FirstOrDefault(candidate => string.Equals(
+                candidate.GetName().Name,
+                "ScoreSaber",
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static Type? FindScoreSaberPluginType(Assembly assembly)
+    {
+        return assembly.GetType("ScoreSaber.Plugin", throwOnError: false);
+    }
+
+    private static Type? FindReplayLoaderType(Assembly assembly)
+    {
+        return assembly.GetType("ScoreSaber.Core.ReplaySystem.ReplayLoader", throwOnError: false) ??
+               assembly.GetType("ScoreSaber.Features.Replays.ReplayLoader", throwOnError: false);
+    }
+
+    private static object? ResolveScoreSaberContainer(Type pluginType, Type replayLoaderType)
+    {
+        var containerField = pluginType.GetField(
+            "Container",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        var container = containerField?.GetValue(null);
+        if (container != null)
+        {
+            return container;
+        }
+
+        foreach (var candidate in ResolveZenjectContainers())
+        {
+            var resolveMethod = FindContainerResolveMethod(candidate);
+            if (resolveMethod == null)
+            {
+                continue;
+            }
+
+            if (CanResolveReplayLoader(candidate, resolveMethod, replayLoaderType))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<object> ResolveZenjectContainers()
+    {
+        var projectContextType = FindType("Zenject.ProjectContext");
+        if (projectContextType != null &&
+            projectContextType.GetProperty("HasInstance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null) is bool hasProjectContext &&
+            hasProjectContext &&
+            projectContextType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null) is object projectContext)
+        {
+            var container = projectContextType
+                .GetProperty("Container", BindingFlags.Public | BindingFlags.Instance)
+                ?.GetValue(projectContext, null);
+            if (container != null)
+            {
+                yield return container;
+            }
+        }
+
+        var zenUtilType = FindType("Zenject.Internal.ZenUtilInternal");
+        var sceneContexts = zenUtilType
+            ?.GetMethod("GetAllSceneContexts", BindingFlags.Public | BindingFlags.Static)
+            ?.Invoke(null, null) as IEnumerable;
+        if (sceneContexts == null)
+        {
+            yield break;
+        }
+
+        foreach (var sceneContext in sceneContexts)
+        {
+            if (sceneContext == null)
+            {
+                continue;
+            }
+
+            var container = sceneContext.GetType()
+                .GetProperty("Container", BindingFlags.Public | BindingFlags.Instance)
+                ?.GetValue(sceneContext, null);
+            if (container != null)
+            {
+                yield return container;
+            }
+        }
+    }
+
+    private static bool CanResolveReplayLoader(object container, MethodInfo resolveMethod, Type replayLoaderType)
+    {
+        if (TryResolveFromContainer(container, resolveMethod, replayLoaderType) != null)
+        {
+            return true;
+        }
+
+        var constructor = FindReplayLoaderConstructor(replayLoaderType);
+        if (constructor == null)
+        {
+            return false;
+        }
+
+        return constructor
+            .GetParameters()
+            .All(parameter => TryResolveFromContainer(container, resolveMethod, parameter.ParameterType) != null);
+    }
+
+    private static object? TryResolveFromContainer(object container, MethodInfo resolveMethod, Type type)
+    {
+        try
+        {
+            return ResolveFromContainer(container, resolveMethod, type);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static ConstructorInfo? FindReplayLoaderConstructor(Type replayLoaderType)
+    {
+        return replayLoaderType
+            .GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .OrderByDescending(candidate => candidate.GetParameters().Length)
+            .FirstOrDefault();
+    }
+
+    private static Type? FindType(string fullName)
+    {
+        var type = Type.GetType(fullName, throwOnError: false);
+        if (type != null)
+        {
+            return type;
+        }
+
+        return AppDomain.CurrentDomain
+            .GetAssemblies()
+            .Select(assembly => assembly.GetType(fullName, throwOnError: false))
+            .FirstOrDefault(candidate => candidate != null);
+    }
+
+    private static MethodInfo? FindReplayEndMethod(Type replayLoaderType)
+    {
+        return replayLoaderType.GetMethod(
+            "ReplayEnd",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+    }
+
+    private static MethodInfo? TryFindReplayLoaderLoadMethod(Type replayLoaderType)
+    {
+        return replayLoaderType
             .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .FirstOrDefault(candidate =>
-                string.Equals(candidate.Name, "Load", StringComparison.Ordinal) &&
-                candidate.GetParameters().Length == 5 &&
-                candidate.GetParameters()[0].ParameterType == typeof(byte[]));
-        return method ?? throw new InvalidOperationException("ScoreSaber ReplayLoader.Load(byte[], ...) was not found.");
+            .FirstOrDefault(IsCompatibleReplayLoaderLoadMethod);
+    }
+
+    private static bool IsCompatibleReplayLoaderLoadMethod(MethodInfo candidate)
+    {
+        if (!string.Equals(candidate.Name, "Load", StringComparison.Ordinal) ||
+            !typeof(Task).IsAssignableFrom(candidate.ReturnType))
+        {
+            return false;
+        }
+
+        var parameters = candidate.GetParameters();
+        return parameters.Length == 5 &&
+               parameters[0].ParameterType == typeof(byte[]) &&
+               parameters[4].ParameterType == typeof(string) &&
+               !parameters[1].ParameterType.IsByRef &&
+               !parameters[2].ParameterType.IsByRef &&
+               !parameters[3].ParameterType.IsByRef;
+    }
+
+    private static string FormatAvailableLoadMethods(Type replayLoaderType)
+    {
+        var overloads = replayLoaderType
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(method => string.Equals(method.Name, "Load", StringComparison.Ordinal))
+            .Select(FormatMethodSignature)
+            .ToArray();
+
+        return overloads.Length == 0
+            ? "No Load overloads were found."
+            : "Available Load overloads: " + string.Join("; ", overloads) + ".";
+    }
+
+    private static string FormatMethodSignature(MethodInfo method)
+    {
+        var parameters = method.GetParameters()
+            .Select(parameter => FormatTypeName(parameter.ParameterType))
+            .ToArray();
+        return FormatTypeName(method.ReturnType) + " " + method.Name + "(" + string.Join(", ", parameters) + ")";
+    }
+
+    private static string FormatTypeName(Type type)
+    {
+        if (!type.IsGenericType)
+        {
+            return type.Name;
+        }
+
+        var name = type.Name;
+        var tickIndex = name.IndexOf('`');
+        if (tickIndex >= 0)
+        {
+            name = name.Substring(0, tickIndex);
+        }
+
+        return name + "<" + string.Join(", ", type.GetGenericArguments().Select(FormatTypeName)) + ">";
     }
 
     private static ReplayReference NormalizeReplayReference(ReplayReference replayReference)

@@ -11,12 +11,16 @@ public sealed class GamePresentationSettings
     public const string EnvironmentEffectsAllEffects = "AllEffects";
     public const string EnvironmentEffectsStrobeFilter = "StrobeFilter";
     public const string EnvironmentEffectsNoEffects = "NoEffects";
+    public const string JdFixerModeJumpDistance = "JumpDistance";
+    public const string JdFixerModeReactionTime = "ReactionTime";
 
     public bool NoHud { get; set; } = true;
 
     public bool LoadPlayerEnvironment { get; set; }
 
     public bool LoadPlayerJumpDistance { get; set; }
+
+    public bool OverrideReplayPlayerSettings { get; set; }
 
     public bool IgnoreModifiers { get; set; }
 
@@ -66,6 +70,14 @@ public sealed class GamePresentationSettings
 
     public float NoteJumpStartBeatOffset { get; set; }
 
+    public bool ApplyJdFixerSettings { get; set; }
+
+    public string JdFixerMode { get; set; } = JdFixerModeReactionTime;
+
+    public float JdFixerJumpDistance { get; set; } = 18f;
+
+    public float JdFixerReactionTime { get; set; } = 450f;
+
     public bool HideNoteSpawnEffect { get; set; }
 
     public bool AdaptiveSfx { get; set; } = true;
@@ -79,6 +91,54 @@ public sealed class GamePresentationSettings
     public string EnvironmentEffectsFilterExpertPlusPreset { get; set; } = EnvironmentEffectsAllEffects;
 
     public float HeadsetHapticIntensity { get; set; } = 0.7f;
+
+    public GamePresentationSettings Clone()
+    {
+        var clone = new GamePresentationSettings
+        {
+            NoHud = NoHud,
+            LoadPlayerEnvironment = LoadPlayerEnvironment,
+            LoadPlayerJumpDistance = LoadPlayerJumpDistance,
+            OverrideReplayPlayerSettings = OverrideReplayPlayerSettings,
+            IgnoreModifiers = IgnoreModifiers,
+            ShowHead = ShowHead,
+            ShowLeftSaber = ShowLeftSaber,
+            ShowRightSaber = ShowRightSaber,
+            ShowWatermark = ShowWatermark,
+            ShowTimelineMisses = ShowTimelineMisses,
+            ShowTimelineBombs = ShowTimelineBombs,
+            ShowTimelinePauses = ShowTimelinePauses,
+            SfxVolume = SfxVolume,
+            NoTextsAndHuds = NoTextsAndHuds,
+            AdvancedHud = AdvancedHud,
+            ReduceDebris = ReduceDebris,
+            NoFailEffects = NoFailEffects,
+            SaberTrailIntensity = SaberTrailIntensity,
+            LeftSaberColor = LeftSaberColor,
+            RightSaberColor = RightSaberColor,
+            LightColorA = LightColorA,
+            LightColorB = LightColorB,
+            BoostLightColorA = BoostLightColorA,
+            BoostLightColorB = BoostLightColorB,
+            WallColor = WallColor,
+            NoteJumpDurationType = NoteJumpDurationType,
+            NoteJumpFixedDuration = NoteJumpFixedDuration,
+            NoteJumpStartBeatOffset = NoteJumpStartBeatOffset,
+            ApplyJdFixerSettings = ApplyJdFixerSettings,
+            JdFixerMode = JdFixerMode,
+            JdFixerJumpDistance = JdFixerJumpDistance,
+            JdFixerReactionTime = JdFixerReactionTime,
+            HideNoteSpawnEffect = HideNoteSpawnEffect,
+            AdaptiveSfx = AdaptiveSfx,
+            ArcsHapticFeedback = ArcsHapticFeedback,
+            ArcVisibility = ArcVisibility,
+            EnvironmentEffectsFilterDefaultPreset = EnvironmentEffectsFilterDefaultPreset,
+            EnvironmentEffectsFilterExpertPlusPreset = EnvironmentEffectsFilterExpertPlusPreset,
+            HeadsetHapticIntensity = HeadsetHapticIntensity
+        };
+        clone.Normalize();
+        return clone;
+    }
 
     public void Normalize()
     {
@@ -98,6 +158,13 @@ public sealed class GamePresentationSettings
             NoteJumpDurationTypeStatic);
         NoteJumpFixedDuration = ClampFinite(NoteJumpFixedDuration, 0.1f, 1f, 0.2f);
         NoteJumpStartBeatOffset = ClampFinite(NoteJumpStartBeatOffset, -1f, 1f, 0f);
+        JdFixerMode = NormalizeChoice(
+            JdFixerMode,
+            JdFixerModeReactionTime,
+            JdFixerModeJumpDistance,
+            JdFixerModeReactionTime);
+        JdFixerJumpDistance = ClampFinite(JdFixerJumpDistance, 12f, 35f, 18f);
+        JdFixerReactionTime = ClampFinite(JdFixerReactionTime, 300f, 1600f, 450f);
         ArcVisibility = NormalizeChoice(
             ArcVisibility,
             ArcVisibilityLow,

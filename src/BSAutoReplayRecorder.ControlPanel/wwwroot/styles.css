@@ -4580,7 +4580,8 @@ textarea {
   transition-delay: 0s;
 }
 
-.queueExportModal {
+.queueExportModal,
+.recordingRenameModal {
   position: fixed;
   inset: 0;
   z-index: 9000;
@@ -4591,11 +4592,13 @@ textarea {
   backdrop-filter: blur(10px);
 }
 
-.queueExportModal[hidden] {
+.queueExportModal[hidden],
+.recordingRenameModal[hidden] {
   display: none;
 }
 
-.queueExportPanel {
+.queueExportPanel,
+.recordingRenamePanel {
   display: grid;
   gap: 14px;
   width: min(760px, 100%);
@@ -4605,6 +4608,10 @@ textarea {
   background: #0f161e;
   padding: 18px;
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.48);
+}
+
+.recordingRenamePanel {
+  overflow: auto;
 }
 
 .queueExportHeader,
@@ -4639,6 +4646,78 @@ textarea {
   flex-wrap: wrap;
 }
 
+.recordingRenameScope {
+  min-height: 34px;
+  border: 1px solid rgba(121, 149, 176, 0.18);
+  border-radius: 5px;
+  background: rgba(5, 12, 20, 0.62);
+  color: #c7d4df;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.recordingRenameOptions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.recordingRenameOption {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-height: 58px;
+  border: 1px solid rgba(121, 149, 176, 0.2);
+  border-radius: 6px;
+  background: rgba(8, 15, 23, 0.74);
+  padding: 10px;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+
+.recordingRenameOption:hover {
+  border-color: rgba(121, 149, 176, 0.38);
+  background: rgba(16, 28, 42, 0.84);
+}
+
+.recordingRenameOption:has(input:checked) {
+  border-color: rgba(73, 163, 255, 0.72);
+  background: rgba(35, 136, 255, 0.13);
+}
+
+.recordingRenameOption input {
+  margin: 2px 0 0;
+  accent-color: var(--blue);
+}
+
+.recordingRenameOption span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.recordingRenameOption strong {
+  overflow-wrap: anywhere;
+  color: #edf5ff;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.recordingRenameOption small {
+  overflow-wrap: anywhere;
+  color: #91a2b3;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
 .queueExportControls label {
   display: grid;
   grid-template-columns: auto minmax(180px, 240px);
@@ -4666,6 +4745,12 @@ textarea {
 .queueExportActions {
   justify-content: end;
   flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .recordingRenameOptions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .mapCardExportModal {
@@ -6408,6 +6493,14 @@ body:has(.settingsView.active) .appHeader.commandBar {
   padding: 0;
 }
 
+.settingsView .gameSettingsPriority {
+  grid-column: 1 / -1;
+  min-height: 36px;
+  margin-bottom: 2px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--settings-line);
+}
+
 .settingsView .gameSettingsSectionTitle {
   display: grid;
   grid-template-columns: max-content minmax(24px, 1fr);
@@ -6457,6 +6550,17 @@ body:has(.settingsView.active) .appHeader.commandBar {
 .settingsView .gameSelectRow:hover,
 .settingsView .gameColorRow:hover {
   background: transparent;
+}
+
+.settingsView .gameValueRow.isDisabled,
+.settingsView .gameSelectRow.isDisabled {
+  opacity: 0.52;
+  background: transparent;
+}
+
+.settingsView .gameValueRow.isDisabled input,
+.settingsView .gameSelectRow.isDisabled select {
+  cursor: not-allowed;
 }
 
 .settingsView .gameToggle {

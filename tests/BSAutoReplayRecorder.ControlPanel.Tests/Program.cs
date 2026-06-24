@@ -76,6 +76,7 @@ try
     RunReplayCalibrationCheck(Path.Combine(tempRoot, "replay-calibration"));
     RunDiskSpaceAndEventLogCheck(Path.Combine(tempRoot, "disk-events"));
     RunCompletedRecordingUriCheck(Path.Combine(tempRoot, "recording-uri"));
+    RunRenameCompletedQueueRecordingsCheck(Path.Combine(tempRoot, "rename-used-recordings"));
     RunRequeueAllQueueItemsCheck(Path.Combine(tempRoot, "requeue-all"));
     RunMapCollectionSaveLoadCheck(Path.Combine(tempRoot, "map-collections"));
     RunMapCollectionCardExportCheck(Path.Combine(tempRoot, "map-card-export"));
@@ -1475,6 +1476,8 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     var initial = store.Snapshot();
     AssertEqual(1, initial.Settings.GamePresentationSettingsVersion, "default game presentation version");
     AssertEqual(true, initial.Settings.GamePresentation.NoHud, "default no HUD setting");
+    AssertEqual(false, initial.Settings.GamePresentation.OverrideReplayPlayerSettings, "default replay player settings override");
+    AssertEqual(false, initial.Settings.GamePresentation.ApplyJdFixerSettings, "default JDFixer apply setting");
     AssertEqual(0.3f, initial.Settings.GamePresentation.SfxVolume, "default SFX volume setting");
 
     var worker = store.RegisterWorker(new WorkerRegisterRequest
@@ -1489,12 +1492,15 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
         worker.Settings.GamePresentationSettingsVersion,
         "registration game presentation version");
     AssertEqual(true, worker.Settings.GamePresentation.NoHud, "registration no HUD setting");
+    AssertEqual(false, worker.Settings.GamePresentation.OverrideReplayPlayerSettings, "registration replay player settings override");
+    AssertEqual(false, worker.Settings.GamePresentation.ApplyJdFixerSettings, "registration JDFixer apply setting");
     AssertEqual(0.3f, worker.Settings.GamePresentation.SfxVolume, "registration SFX volume setting");
 
     var request = CreateSettingsUpdateRequest(initial.Settings);
     request.GamePresentation = new GamePresentationSettings
     {
         NoHud = false,
+        OverrideReplayPlayerSettings = true,
         ShowWatermark = false,
         ShowLeftSaber = true,
         ShowRightSaber = true,
@@ -1510,15 +1516,24 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
         ArcVisibility = GamePresentationSettings.ArcVisibilityStandard,
         EnvironmentEffectsFilterDefaultPreset = GamePresentationSettings.EnvironmentEffectsStrobeFilter,
         EnvironmentEffectsFilterExpertPlusPreset = GamePresentationSettings.EnvironmentEffectsNoEffects,
-        HeadsetHapticIntensity = 0.65f
+        HeadsetHapticIntensity = 0.65f,
+        ApplyJdFixerSettings = true,
+        JdFixerMode = GamePresentationSettings.JdFixerModeReactionTime,
+        JdFixerJumpDistance = 19.25f,
+        JdFixerReactionTime = 475f
     };
 
     var updated = store.UpdateSettings(request);
     AssertEqual(false, updated.Settings.GamePresentation.NoHud, "updated no HUD setting");
+    AssertEqual(true, updated.Settings.GamePresentation.OverrideReplayPlayerSettings, "updated replay player settings override");
     AssertEqual(false, updated.Settings.GamePresentation.ShowWatermark, "updated watermark setting");
     AssertEqual(0.45f, updated.Settings.GamePresentation.SfxVolume, "updated SFX volume setting");
     AssertEqual(false, updated.Settings.GamePresentation.NoTextsAndHuds, "updated no texts and HUDs setting");
     AssertEqual(GamePresentationSettings.ArcVisibilityStandard, updated.Settings.GamePresentation.ArcVisibility, "updated arc visibility setting");
+    AssertEqual(true, updated.Settings.GamePresentation.ApplyJdFixerSettings, "updated JDFixer apply setting");
+    AssertEqual(GamePresentationSettings.JdFixerModeReactionTime, updated.Settings.GamePresentation.JdFixerMode, "updated JDFixer mode");
+    AssertEqual(19.25f, updated.Settings.GamePresentation.JdFixerJumpDistance, "updated JDFixer jump distance");
+    AssertEqual(475f, updated.Settings.GamePresentation.JdFixerReactionTime, "updated JDFixer reaction time");
     AssertEqual(2, updated.Settings.GamePresentationSettingsVersion, "updated game presentation version");
 
     var heartbeat = store.Heartbeat(new WorkerHeartbeatRequest
@@ -1530,9 +1545,12 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     });
     AssertEqual(2, heartbeat.GamePresentationSettingsVersion, "heartbeat game presentation version");
     AssertEqual(false, heartbeat.GamePresentation.NoHud, "heartbeat no HUD setting");
+    AssertEqual(true, heartbeat.GamePresentation.OverrideReplayPlayerSettings, "heartbeat replay player settings override");
     AssertEqual(false, heartbeat.GamePresentation.ShowWatermark, "heartbeat watermark setting");
     AssertEqual(0.45f, heartbeat.GamePresentation.SfxVolume, "heartbeat SFX volume setting");
     AssertEqual(false, heartbeat.GamePresentation.NoTextsAndHuds, "heartbeat no texts and HUDs setting");
+    AssertEqual(true, heartbeat.GamePresentation.ApplyJdFixerSettings, "heartbeat JDFixer apply setting");
+    AssertEqual(475f, heartbeat.GamePresentation.JdFixerReactionTime, "heartbeat JDFixer reaction time");
 
     var snapshot = store.Snapshot();
     AssertEqual(1, snapshot.Instances[0].AppliedGamePresentationSettingsVersion, "worker reported applied game presentation version");
@@ -1541,8 +1559,11 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     var assignment = store.GetAssignment(worker.WorkerId);
     AssertEqual(2, assignment.GamePresentationSettingsVersion, "assignment game presentation version");
     AssertEqual(false, assignment.GamePresentation.NoHud, "assignment no HUD setting");
+    AssertEqual(true, assignment.GamePresentation.OverrideReplayPlayerSettings, "assignment replay player settings override");
     AssertEqual(false, assignment.GamePresentation.ShowWatermark, "assignment watermark setting");
     AssertEqual(0.45f, assignment.GamePresentation.SfxVolume, "assignment SFX volume setting");
+    AssertEqual(true, assignment.GamePresentation.ApplyJdFixerSettings, "assignment JDFixer apply setting");
+    AssertEqual(475f, assignment.GamePresentation.JdFixerReactionTime, "assignment JDFixer reaction time");
     AssertEqual(GamePresentationSettings.EnvironmentEffectsNoEffects, assignment.GamePresentation.EnvironmentEffectsFilterExpertPlusPreset, "assignment expert plus effects setting");
 
     var preserveRequest = CreateSettingsUpdateRequest(updated.Settings);
@@ -1550,6 +1571,8 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     preserveRequest.TargetFps = 72;
     var preserved = store.UpdateSettings(preserveRequest);
     AssertEqual(false, preserved.Settings.GamePresentation.NoHud, "omitted game presentation keeps no HUD setting");
+    AssertEqual(true, preserved.Settings.GamePresentation.OverrideReplayPlayerSettings, "omitted game presentation keeps replay player settings override");
+    AssertEqual(true, preserved.Settings.GamePresentation.ApplyJdFixerSettings, "omitted game presentation keeps JDFixer apply setting");
     AssertEqual(0.45f, preserved.Settings.GamePresentation.SfxVolume, "omitted game presentation keeps SFX volume");
     AssertEqual(2, preserved.Settings.GamePresentationSettingsVersion, "omitted game presentation keeps version");
 }
@@ -2930,6 +2953,154 @@ static void RunCompletedRecordingUriCheck(string workspace)
     AssertEqual<string?>(null, replay.OutputPath, "requeued output path");
 }
 
+static void RunRenameCompletedQueueRecordingsCheck(string workspace)
+{
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        mapDownloader: new FakeBeatSaverMapDownloader(downloadsMap: true));
+    using var files = CreateReplayFiles(1, distinctLevelHashes: true);
+    var imported = store.ImportFiles(files.Collection);
+    var replaySourcePath = imported[0].Path;
+    var collection = store.SaveMapCollection(new SaveMapCollectionRequest
+    {
+        Name = "Rename Pack"
+    });
+
+    var worker = store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "worker-0",
+        WorkerName = "Worker 0",
+        PreferredInstanceIndex = 0
+    });
+    SetGameProcessIds(store, 4100);
+    store.StartRun();
+    var assignment = store.GetAssignment(worker.WorkerId);
+    var originalOutputPath = Path.Combine(workspace, "Recordings", "recorded.mp4");
+    Directory.CreateDirectory(Path.GetDirectoryName(originalOutputPath)!);
+    File.WriteAllText(originalOutputPath, "recorded");
+    store.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = worker.WorkerId,
+        AssignmentId = assignment.AssignmentId!,
+        Status = "Completed",
+        OutputPath = originalOutputPath
+    });
+
+    AssertEqual(true, File.Exists(replaySourcePath), "rename recording replay source stays before rename");
+    AssertEqual(true, File.Exists(originalOutputPath), "rename recording original output exists");
+
+    var collectionBeforeRename = store.GetMapCollections().Single(item => item.Id == collection.Id);
+    AssertEqual(
+        Path.GetFullPath(originalOutputPath),
+        Path.GetFullPath(collectionBeforeRename.Items.Single().CompletedOutputPath!),
+        "rename recording collection starts with original output");
+
+    var queuePreview = store.GetCompletedQueueRecordingNamePreview();
+    AssertEqual("Song 0", queuePreview.SourceLabel, "rename recording queue preview source");
+    AssertEqual("001 - Song 0 [ExpertPlus]", queuePreview.Examples["Default"], "rename recording default preview");
+    AssertEqual("Song 0 - BeatSaver Artist - Player", queuePreview.Examples["SongArtistPlayer"], "rename recording artist player preview");
+
+    var renamed = store.RenameCompletedQueueRecordings(new RecordingFileRenameRequest
+    {
+        Format = "SongArtistPlayer"
+    });
+    AssertEqual(1, renamed.RenamedCount, "rename recording queue count");
+    AssertEqual(0, renamed.SkippedCount, "rename recording queue skipped count");
+
+    var renamedReplay = renamed.State.Queue.Single(item => item.Id == assignment.ReplayId);
+    var expectedOutputPath = Path.Combine(
+        Path.GetDirectoryName(originalOutputPath)!,
+        "Song 0 - BeatSaver Artist - Player" + Path.GetExtension(originalOutputPath));
+    AssertEqual(Path.GetFullPath(expectedOutputPath), Path.GetFullPath(renamedReplay.OutputPath!), "rename recording output path");
+    AssertEqual(Path.GetFullPath(replaySourcePath), Path.GetFullPath(renamedReplay.Path), "rename recording source replay path unchanged");
+    AssertEqual(true, File.Exists(replaySourcePath), "rename recording source replay still exists");
+    AssertEqual(false, File.Exists(originalOutputPath), "rename recording old output removed");
+    AssertEqual(true, File.Exists(expectedOutputPath), "rename recording new output exists");
+    AssertEqual(Path.GetFullPath(expectedOutputPath), store.GetRecordedFilePath(assignment.ReplayId!), "rename recording recorded file path");
+
+    var collectionAfterRename = renamed.State.Collections.Single(item => item.Id == collection.Id);
+    AssertEqual(
+        Path.GetFullPath(expectedOutputPath),
+        Path.GetFullPath(collectionAfterRename.Items.Single().CompletedOutputPath!),
+        "rename recording updates collection output path");
+
+    var defaultRenamed = store.RenameCompletedQueueRecordings(new RecordingFileRenameRequest
+    {
+        Format = "Default"
+    });
+    AssertEqual(1, defaultRenamed.RenamedCount, "rename recording default count");
+    var defaultOutputPath = Path.Combine(
+        Path.GetDirectoryName(originalOutputPath)!,
+        "001 - Song 0 [ExpertPlus]" + Path.GetExtension(originalOutputPath));
+    var defaultReplay = defaultRenamed.State.Queue.Single(item => item.Id == assignment.ReplayId);
+    AssertEqual(Path.GetFullPath(defaultOutputPath), Path.GetFullPath(defaultReplay.OutputPath!), "rename recording default output path");
+    AssertEqual(false, File.Exists(expectedOutputPath), "rename recording formatted output removed after default rename");
+    AssertEqual(true, File.Exists(defaultOutputPath), "rename recording default output exists");
+
+    var repeated = store.RenameCompletedQueueRecordings(new RecordingFileRenameRequest
+    {
+        Format = "Default"
+    });
+    AssertEqual(0, repeated.RenamedCount, "rename recording repeat count");
+    AssertEqual(1, repeated.SkippedCount, "rename recording repeat skipped count");
+
+    var collectionStore = CreateStore(
+        Path.Combine(workspace, "collection-only"),
+        instanceCount: 1,
+        mapDownloader: new FakeBeatSaverMapDownloader(downloadsMap: true));
+    using var collectionFiles = CreateReplayFiles(1, distinctLevelHashes: true);
+    collectionStore.ImportFiles(collectionFiles.Collection);
+    var selectedCollection = collectionStore.SaveMapCollection(new SaveMapCollectionRequest
+    {
+        Name = "Collection Rename Pack"
+    });
+    var collectionWorker = collectionStore.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "collection-worker-0",
+        WorkerName = "Collection Worker 0",
+        PreferredInstanceIndex = 0
+    });
+    SetGameProcessIds(collectionStore, 4200);
+    collectionStore.StartRun();
+    var collectionAssignment = collectionStore.GetAssignment(collectionWorker.WorkerId);
+    var collectionOriginalOutputPath = Path.Combine(workspace, "collection-only", "Recordings", "collection-recorded.mkv");
+    Directory.CreateDirectory(Path.GetDirectoryName(collectionOriginalOutputPath)!);
+    File.WriteAllText(collectionOriginalOutputPath, "recorded");
+    collectionStore.ReportAssignment(new WorkerReportRequest
+    {
+        WorkerId = collectionWorker.WorkerId,
+        AssignmentId = collectionAssignment.AssignmentId!,
+        Status = "Completed",
+        OutputPath = collectionOriginalOutputPath
+    });
+    collectionStore.ClearQueue();
+
+    var collectionPreview = collectionStore.GetCollectionRecordingNamePreview(selectedCollection.Id);
+    AssertEqual("Song 0", collectionPreview.SourceLabel, "rename collection preview source");
+    AssertEqual("4fc4b", collectionPreview.Examples["Key"], "rename collection key preview");
+
+    var collectionRenamed = collectionStore.RenameCollectionRecordings(
+        selectedCollection.Id,
+        new RecordingFileRenameRequest
+        {
+            Format = "Key"
+        });
+    AssertEqual(1, collectionRenamed.RenamedCount, "rename collection recording count");
+    AssertEqual(0, collectionRenamed.SkippedCount, "rename collection recording skipped count");
+
+    var collectionExpectedOutputPath = Path.Combine(
+        Path.GetDirectoryName(collectionOriginalOutputPath)!,
+        "4fc4b" + Path.GetExtension(collectionOriginalOutputPath));
+    var updatedCollection = collectionRenamed.State.Collections.Single(item => item.Id == selectedCollection.Id);
+    AssertEqual(false, File.Exists(collectionOriginalOutputPath), "rename collection old output removed");
+    AssertEqual(true, File.Exists(collectionExpectedOutputPath), "rename collection new output exists");
+    AssertEqual(
+        Path.GetFullPath(collectionExpectedOutputPath),
+        Path.GetFullPath(updatedCollection.Items.Single().CompletedOutputPath!),
+        "rename collection updates collection output path");
+}
+
 static void RunRequeueAllQueueItemsCheck(string workspace)
 {
     var store = CreateStore(workspace, instanceCount: 3);
@@ -3533,6 +3704,7 @@ static SettingsUpdateRequest CreateSettingsUpdateRequest(ControlPanelSettings se
             NoHud = settings.GamePresentation?.NoHud ?? true,
             LoadPlayerEnvironment = settings.GamePresentation?.LoadPlayerEnvironment ?? false,
             LoadPlayerJumpDistance = settings.GamePresentation?.LoadPlayerJumpDistance ?? false,
+            OverrideReplayPlayerSettings = settings.GamePresentation?.OverrideReplayPlayerSettings ?? false,
             IgnoreModifiers = settings.GamePresentation?.IgnoreModifiers ?? false,
             ShowHead = settings.GamePresentation?.ShowHead ?? false,
             ShowLeftSaber = settings.GamePresentation?.ShowLeftSaber ?? true,
@@ -3551,6 +3723,10 @@ static SettingsUpdateRequest CreateSettingsUpdateRequest(ControlPanelSettings se
                                    GamePresentationSettings.NoteJumpDurationTypeDynamic,
             NoteJumpFixedDuration = settings.GamePresentation?.NoteJumpFixedDuration ?? 0.2f,
             NoteJumpStartBeatOffset = settings.GamePresentation?.NoteJumpStartBeatOffset ?? 0f,
+            ApplyJdFixerSettings = settings.GamePresentation?.ApplyJdFixerSettings ?? false,
+            JdFixerMode = settings.GamePresentation?.JdFixerMode ?? GamePresentationSettings.JdFixerModeReactionTime,
+            JdFixerJumpDistance = settings.GamePresentation?.JdFixerJumpDistance ?? 18f,
+            JdFixerReactionTime = settings.GamePresentation?.JdFixerReactionTime ?? 450f,
             HideNoteSpawnEffect = settings.GamePresentation?.HideNoteSpawnEffect ?? false,
             AdaptiveSfx = settings.GamePresentation?.AdaptiveSfx ?? true,
             ArcsHapticFeedback = settings.GamePresentation?.ArcsHapticFeedback ?? true,

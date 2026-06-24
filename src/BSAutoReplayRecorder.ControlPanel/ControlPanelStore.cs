@@ -14,6 +14,19 @@ namespace BSAutoReplayRecorder.ControlPanel;
 public sealed class ControlPanelStore
 {
     private static readonly TimeSpan WorkerStaleAfter = TimeSpan.FromSeconds(30);
+    private static readonly string[] RecordingRenameFormats =
+    {
+        "Default",
+        "Key",
+        "KeySong",
+        "Song",
+        "SongArtist",
+        "SongArtistPlayer",
+        "SongPlayer",
+        "SongMapper",
+        "SongDifficulty",
+        "PlayerSong"
+    };
     private const string BeatSaberExecutableName = "Beat Saber.exe";
     private const string BeatSaberProcessName = "Beat Saber";
     private const string BeatSaberSteamAppId = "620980";
@@ -1107,6 +1120,84 @@ public sealed class ControlPanelStore
                 null);
             SaveNoLock();
             return Clone(_state);
+        }
+    }
+
+    public RecordingFileRenameResult RenameCompletedQueueRecordings(RecordingFileRenameRequest? request = null)
+    {
+        lock (_sync)
+        {
+            ExpireStaleWorkersNoLock(DateTimeOffset.UtcNow);
+            EnsureRecordingFilesCanBeRenamedNoLock();
+            return RenameRecordingFilesNoLock(
+                _state.Queue
+                    .Where(IsRecordedReplay)
+                    .Select(CreateRecordingRenameTarget),
+                NormalizeRecordingRenameFormat(request?.Format),
+                "completed queue recording",
+                "Queue");
+        }
+    }
+
+    public RecordingFileRenameResult RenameCollectionRecordings(string id, RecordingFileRenameRequest? request = null)
+    {
+        lock (_sync)
+        {
+            ExpireStaleWorkersNoLock(DateTimeOffset.UtcNow);
+            EnsureRecordingFilesCanBeRenamedNoLock();
+            var collection = FindMapCollectionNoLock(id);
+            return RenameRecordingFilesNoLock(
+                collection.Items
+                    .Where(IsRecordedCollectionItem)
+                    .Select(CreateRecordingRenameTarget),
+                NormalizeRecordingRenameFormat(request?.Format),
+                "collection recording",
+                "Collections");
+        }
+    }
+
+    public RecordingFileRenamePreviewResult GetCompletedQueueRecordingNamePreview()
+    {
+        lock (_sync)
+        {
+            var target =
+                _state.Queue
+                    .Where(IsRecordedReplay)
+                    .Select(CreateRecordingRenameTarget)
+                    .FirstOrDefault() ??
+                _state.Queue
+                    .Select(CreateRecordingRenameTarget)
+                    .FirstOrDefault();
+
+            return CreateRecordingRenamePreviewNoLock(target);
+        }
+    }
+
+    public RecordingFileRenamePreviewResult GetCollectionRecordingNamePreview(string id)
+    {
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(id);
+            var target =
+                collection.Items
+                    .Where(IsRecordedCollectionItem)
+                    .Select(CreateRecordingRenameTarget)
+                    .FirstOrDefault() ??
+                collection.Items
+                    .Select(CreateRecordingRenameTarget)
+                    .FirstOrDefault();
+
+            return CreateRecordingRenamePreviewNoLock(target);
+        }
+    }
+
+    private void EnsureRecordingFilesCanBeRenamedNoLock()
+    {
+        if (_state.Run.IsRunning ||
+            _state.Run.CancellationRequested ||
+            _state.Queue.Any(replay => IsActiveReplayStatus(replay.Status)))
+        {
+            throw new InvalidOperationException("Stop the active queue before renaming recording files.");
         }
     }
 
@@ -6461,6 +6552,41 @@ public sealed class ControlPanelStore
         throw new InvalidOperationException("Could not create a filename for " + safeFileName + ".");
     }
 
+    private static string CreateUniqueRecordingFilePath(string directory, string fileName, string currentPath)
+    {
+        var currentFullPath = Path.GetFullPath(currentPath);
+        var safeFileName = Path.GetFileName(fileName);
+        var targetPath = Path.Combine(directory, safeFileName);
+        if (IsRecordingFileRenameTargetAvailable(targetPath, currentFullPath))
+        {
+            return targetPath;
+        }
+
+        var baseName = Path.GetFileNameWithoutExtension(safeFileName);
+        var extension = Path.GetExtension(safeFileName);
+        for (var index = 2; index < 10_000; index++)
+        {
+            targetPath = Path.Combine(directory, baseName + " (" + index + ")" + extension);
+            if (IsRecordingFileRenameTargetAvailable(targetPath, currentFullPath))
+            {
+                return targetPath;
+            }
+        }
+
+        throw new InvalidOperationException("Could not create a filename for " + safeFileName + ".");
+    }
+
+    private static bool IsRecordingFileRenameTargetAvailable(string targetPath, string currentFullPath)
+    {
+        var fullTargetPath = Path.GetFullPath(targetPath);
+        if (string.Equals(fullTargetPath, currentFullPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return !File.Exists(fullTargetPath);
+    }
+
     private static void TryDeleteFile(string path)
     {
         try
@@ -7217,6 +7343,369 @@ public sealed class ControlPanelStore
         return "file|" + NormalizeKeyPart(fileName);
     }
 
+    private RecordingFileRenameResult RenameRecordingFilesNoLock(
+        IEnumerable<RecordingRenameTarget> targets,
+        string format,
+        string eventLabel,
+        string eventTag)
+    {
+        var renamedCount = 0;
+        var skippedCount = 0;
+        var visitedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var target in targets)
+        {
+            var outputPath = NormalizeNullable(target.OutputPath);
+            if (outputPath == null)
+            {
+                skippedCount++;
+                continue;
+            }
+
+            var fullOutputPath = Path.GetFullPath(outputPath);
+            if (!visitedPaths.Add(fullOutputPath))
+            {
+                continue;
+            }
+
+            if (TryRenameRecordingFileNoLock(target, format, fullOutputPath, out var renamedPath))
+            {
+                UpdateRecordingOutputPathReferencesNoLock(fullOutputPath, renamedPath);
+                renamedCount++;
+            }
+            else
+            {
+                skippedCount++;
+            }
+        }
+
+        if (renamedCount > 0)
+        {
+            AddEventNoLock(
+                "Info",
+                eventTag,
+                "Renamed " + renamedCount + " " + eventLabel + (renamedCount == 1 ? "" : "s") +
+                " using " + DescribeRecordingRenameFormat(format) +
+                (skippedCount > 0 ? " (" + skippedCount + " skipped)." : "."),
+                null);
+            SaveNoLock();
+        }
+
+        return new RecordingFileRenameResult
+        {
+            State = Clone(_state),
+            RenamedCount = renamedCount,
+            SkippedCount = skippedCount
+        };
+    }
+
+    private RecordingFileRenamePreviewResult CreateRecordingRenamePreviewNoLock(RecordingRenameTarget? target)
+    {
+        var result = new RecordingFileRenamePreviewResult();
+        if (target == null)
+        {
+            return result;
+        }
+
+        var metadata = ResolveRecordingRenameMetadataNoLock(target);
+        result.SourceLabel = NormalizeNullable(metadata.SongName) ??
+                             NormalizeNullable(target.SongName) ??
+                             NormalizeNullable(Path.GetFileNameWithoutExtension(target.FileName)) ??
+                             "Recording";
+
+        foreach (var format in RecordingRenameFormats)
+        {
+            var baseName = NormalizeNullable(CreateRecordingRenameBaseName(target, format, metadata)) ??
+                           CreateDefaultRecordingBaseName(target);
+            result.Examples[format] = FileNameSanitizer.SanitizeBaseName(baseName);
+        }
+
+        return result;
+    }
+
+    private bool TryRenameRecordingFileNoLock(
+        RecordingRenameTarget target,
+        string format,
+        string fullOutputPath,
+        out string renamedPath)
+    {
+        renamedPath = "";
+        if (!File.Exists(fullOutputPath) || !IsSupportedRecordingFileName(fullOutputPath))
+        {
+            return false;
+        }
+
+        var baseName = NormalizeNullable(CreateRecordingRenameBaseNameNoLock(target, format));
+        if (baseName == null)
+        {
+            return false;
+        }
+
+        var extension = Path.GetExtension(fullOutputPath);
+        var targetFileName = FileNameSanitizer.SanitizeBaseName(baseName) + extension;
+        var targetPath = CreateUniqueRecordingFilePath(
+            Path.GetDirectoryName(fullOutputPath) ?? _state.Settings.RecordingOutputDirectory,
+            targetFileName,
+            fullOutputPath);
+        if (string.Equals(fullOutputPath, Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        try
+        {
+            File.Move(fullOutputPath, targetPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        renamedPath = Path.GetFullPath(targetPath);
+        return true;
+    }
+
+    private void UpdateRecordingOutputPathReferencesNoLock(string oldOutputPath, string newOutputPath)
+    {
+        foreach (var replay in _state.Queue)
+        {
+            if (PathEquals(replay.OutputPath, oldOutputPath))
+            {
+                replay.OutputPath = newOutputPath;
+            }
+        }
+
+        foreach (var collection in _state.Collections)
+        {
+            var changed = false;
+            foreach (var item in collection.Items)
+            {
+                if (!PathEquals(item.CompletedOutputPath, oldOutputPath))
+                {
+                    continue;
+                }
+
+                item.CompletedOutputPath = newOutputPath;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                collection.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            }
+        }
+    }
+
+    private RecordingRenameTarget CreateRecordingRenameTarget(ReplayQueueRecord replay)
+    {
+        return new RecordingRenameTarget
+        {
+            SequenceNumber = replay.SequenceNumber,
+            OutputPath = replay.OutputPath,
+            FileName = replay.FileName,
+            SongName = replay.SongName,
+            Mapper = replay.Mapper,
+            PlayerName = replay.PlayerName,
+            SourceUrl = replay.SourceUrl,
+            LevelHash = replay.LevelHash,
+            Difficulty = replay.Difficulty,
+            Mode = replay.Mode,
+            EstimatedSeconds = replay.EstimatedSeconds
+        };
+    }
+
+    private RecordingRenameTarget CreateRecordingRenameTarget(MapCollectionItemRecord item)
+    {
+        return new RecordingRenameTarget
+        {
+            SequenceNumber = item.SequenceNumber,
+            OutputPath = item.CompletedOutputPath,
+            FileName = item.FileName,
+            SongName = item.SongName,
+            Mapper = item.Mapper,
+            PlayerName = item.PlayerName,
+            SourceUrl = item.SourceUrl,
+            LevelHash = item.LevelHash,
+            Difficulty = item.Difficulty,
+            Mode = item.Mode,
+            EstimatedSeconds = item.EstimatedSeconds
+        };
+    }
+
+    private string CreateRecordingRenameBaseNameNoLock(RecordingRenameTarget target, string format)
+    {
+        var metadata = ResolveRecordingRenameMetadataNoLock(target);
+        return CreateRecordingRenameBaseName(target, format, metadata);
+    }
+
+    private static string CreateRecordingRenameBaseName(
+        RecordingRenameTarget target,
+        string format,
+        RecordingRenameMetadata metadata)
+    {
+        var candidate = format switch
+        {
+            "Key" => metadata.Key,
+            "KeySong" => JoinRecordingNameParts(metadata.Key, metadata.SongName),
+            "Song" => metadata.SongName,
+            "SongArtist" => JoinRecordingNameParts(metadata.SongName, metadata.Artist),
+            "SongArtistPlayer" => JoinRecordingNameParts(metadata.SongName, metadata.Artist, metadata.PlayerName),
+            "SongPlayer" => JoinRecordingNameParts(metadata.SongName, metadata.PlayerName),
+            "SongMapper" => JoinRecordingNameParts(metadata.SongName, metadata.Mapper),
+            "SongDifficulty" => JoinRecordingNameParts(metadata.SongName, metadata.Difficulty),
+            "PlayerSong" => JoinRecordingNameParts(metadata.PlayerName, metadata.SongName),
+            _ => CreateDefaultRecordingBaseName(target)
+        };
+
+        return NormalizeNullable(candidate) ?? CreateDefaultRecordingBaseName(target);
+    }
+
+    private RecordingRenameMetadata ResolveRecordingRenameMetadataNoLock(RecordingRenameTarget target)
+    {
+        BeatSaverMapCardMetadata? beatSaver = null;
+        if (!string.IsNullOrWhiteSpace(target.LevelHash))
+        {
+            try
+            {
+                beatSaver = _mapDownloader.GetMapCardMetadataByHash(target.LevelHash, target.Difficulty, target.Mode);
+            }
+            catch (Exception ex) when (ex is IOException or HttpRequestException or InvalidOperationException or JsonException or TaskCanceledException)
+            {
+            }
+        }
+
+        var replay = new ReplayQueueRecord
+        {
+            FileName = target.FileName,
+            SongName = target.SongName,
+            Mapper = target.Mapper,
+            Difficulty = target.Difficulty,
+            Mode = target.Mode,
+            LevelHash = target.LevelHash,
+            EstimatedSeconds = target.EstimatedSeconds
+        };
+        var levelDirectory = ResolveLevelDirectoryNoLock(replay);
+        var local = levelDirectory == null
+            ? null
+            : LocalMapCardMetadataReader.TryRead(
+                levelDirectory,
+                target.Difficulty,
+                target.Mode,
+                target.EstimatedSeconds);
+
+        return new RecordingRenameMetadata
+        {
+            Key = ResolveRecordingSongKey(target, beatSaver),
+            SongName = Prefer(target.SongName, Prefer(local?.SongName, beatSaver?.SongName)),
+            Artist = Prefer(local?.Artist, beatSaver?.Artist),
+            Mapper = Prefer(target.Mapper, Prefer(local?.MapAuthor, beatSaver?.MapAuthor)),
+            PlayerName = NormalizeNullable(target.PlayerName) ?? "",
+            Difficulty = MapCardMetadataText.DisplayDifficulty(target.Difficulty)
+        };
+    }
+
+    private static string CreateDefaultRecordingBaseName(RecordingRenameTarget target)
+    {
+        var songName = NormalizeNullable(target.SongName) ??
+                       NormalizeNullable(Path.GetFileNameWithoutExtension(target.FileName)) ??
+                       "recording";
+        var difficulty = NormalizeNullable(target.Difficulty) == null
+            ? ""
+            : " [" + target.Difficulty + "]";
+        var prefix = target.SequenceNumber > 0
+            ? target.SequenceNumber.ToString("000", CultureInfo.InvariantCulture) + " - "
+            : "";
+        return prefix + songName + difficulty;
+    }
+
+    private static string ResolveRecordingSongKey(
+        RecordingRenameTarget target,
+        BeatSaverMapCardMetadata? beatSaver)
+    {
+        var beatSaverKey = NormalizeNullable(TryExtractBeatSaverKey(target.SourceUrl));
+        if (beatSaverKey != null)
+        {
+            return beatSaverKey;
+        }
+
+        beatSaverKey = NormalizeNullable(beatSaver?.BeatSaverKey);
+        if (beatSaverKey != null)
+        {
+            return beatSaverKey;
+        }
+
+        if (!string.IsNullOrWhiteSpace(target.LevelHash))
+        {
+            return target.LevelHash.Trim().ToUpperInvariant();
+        }
+
+        return "";
+    }
+
+    private static string JoinRecordingNameParts(params string?[] parts)
+    {
+        return string.Join(
+            " - ",
+            parts
+                .Select(NormalizeNullable)
+                .Where(value => value != null)
+                .Cast<string>());
+    }
+
+    private static string NormalizeRecordingRenameFormat(string? format)
+    {
+        var normalized = (format ?? "")
+            .Trim()
+            .Replace("_", "", StringComparison.Ordinal)
+            .Replace("-", "", StringComparison.Ordinal)
+            .Replace(" ", "", StringComparison.Ordinal)
+            .ToLowerInvariant();
+        return normalized switch
+        {
+            "key" or "keyonly" or "songkey" => "Key",
+            "keysong" or "keyandsong" => "KeySong",
+            "song" or "songonly" => "Song",
+            "songartist" or "songartistname" => "SongArtist",
+            "songartistplayer" or "songartistplayername" => "SongArtistPlayer",
+            "songplayer" or "songplayername" => "SongPlayer",
+            "songmapper" or "songmapauthor" => "SongMapper",
+            "songdifficulty" or "songdiff" => "SongDifficulty",
+            "playersong" or "playernamesong" => "PlayerSong",
+            _ => "Default"
+        };
+    }
+
+    private static string DescribeRecordingRenameFormat(string format)
+    {
+        return format switch
+        {
+            "Key" => "key only",
+            "KeySong" => "key + song",
+            "Song" => "song only",
+            "SongArtist" => "song + artist",
+            "SongArtistPlayer" => "song + artist + player",
+            "SongPlayer" => "song + player",
+            "SongMapper" => "song + mapper",
+            "SongDifficulty" => "song + difficulty",
+            "PlayerSong" => "player + song",
+            _ => "default names"
+        };
+    }
+
+    private static bool IsSupportedRecordingFileName(string fileName)
+    {
+        var extension = Path.GetExtension(fileName);
+        return string.Equals(extension, ".mkv", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(extension, ".mp4", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool PathEquals(string? left, string right)
+    {
+        var normalizedLeft = NormalizeNullable(left);
+        return normalizedLeft != null &&
+               string.Equals(Path.GetFullPath(normalizedLeft), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string NormalizeKeyPart(string? value)
     {
         return (value ?? "").Trim().ToUpperInvariant();
@@ -7497,6 +7986,7 @@ public sealed class ControlPanelStore
             NoHud = settings?.NoHud ?? true,
             LoadPlayerEnvironment = settings?.LoadPlayerEnvironment ?? false,
             LoadPlayerJumpDistance = settings?.LoadPlayerJumpDistance ?? false,
+            OverrideReplayPlayerSettings = settings?.OverrideReplayPlayerSettings ?? false,
             IgnoreModifiers = settings?.IgnoreModifiers ?? false,
             ShowHead = settings?.ShowHead ?? false,
             ShowLeftSaber = settings?.ShowLeftSaber ?? true,
@@ -7521,6 +8011,10 @@ public sealed class ControlPanelStore
             NoteJumpDurationType = settings?.NoteJumpDurationType ?? GamePresentationSettings.NoteJumpDurationTypeDynamic,
             NoteJumpFixedDuration = settings?.NoteJumpFixedDuration ?? 0.2f,
             NoteJumpStartBeatOffset = settings?.NoteJumpStartBeatOffset ?? 0f,
+            ApplyJdFixerSettings = settings?.ApplyJdFixerSettings ?? false,
+            JdFixerMode = settings?.JdFixerMode ?? GamePresentationSettings.JdFixerModeReactionTime,
+            JdFixerJumpDistance = settings?.JdFixerJumpDistance ?? 18f,
+            JdFixerReactionTime = settings?.JdFixerReactionTime ?? 450f,
             HideNoteSpawnEffect = settings?.HideNoteSpawnEffect ?? false,
             AdaptiveSfx = settings?.AdaptiveSfx ?? true,
             ArcsHapticFeedback = settings?.ArcsHapticFeedback ?? true,
@@ -7544,6 +8038,7 @@ public sealed class ControlPanelStore
         return normalizedLeft.NoHud == normalizedRight.NoHud &&
                normalizedLeft.LoadPlayerEnvironment == normalizedRight.LoadPlayerEnvironment &&
                normalizedLeft.LoadPlayerJumpDistance == normalizedRight.LoadPlayerJumpDistance &&
+               normalizedLeft.OverrideReplayPlayerSettings == normalizedRight.OverrideReplayPlayerSettings &&
                normalizedLeft.IgnoreModifiers == normalizedRight.IgnoreModifiers &&
                normalizedLeft.ShowHead == normalizedRight.ShowHead &&
                normalizedLeft.ShowLeftSaber == normalizedRight.ShowLeftSaber &&
@@ -7568,6 +8063,10 @@ public sealed class ControlPanelStore
                string.Equals(normalizedLeft.NoteJumpDurationType, normalizedRight.NoteJumpDurationType, StringComparison.Ordinal) &&
                normalizedLeft.NoteJumpFixedDuration == normalizedRight.NoteJumpFixedDuration &&
                normalizedLeft.NoteJumpStartBeatOffset == normalizedRight.NoteJumpStartBeatOffset &&
+               normalizedLeft.ApplyJdFixerSettings == normalizedRight.ApplyJdFixerSettings &&
+               string.Equals(normalizedLeft.JdFixerMode, normalizedRight.JdFixerMode, StringComparison.Ordinal) &&
+               normalizedLeft.JdFixerJumpDistance == normalizedRight.JdFixerJumpDistance &&
+               normalizedLeft.JdFixerReactionTime == normalizedRight.JdFixerReactionTime &&
                normalizedLeft.HideNoteSpawnEffect == normalizedRight.HideNoteSpawnEffect &&
                normalizedLeft.AdaptiveSfx == normalizedRight.AdaptiveSfx &&
                normalizedLeft.ArcsHapticFeedback == normalizedRight.ArcsHapticFeedback &&
@@ -7864,6 +8363,46 @@ public sealed class ControlPanelStore
         public List<string> ImportedPaths { get; } = new List<string>();
 
         public List<string> Failures { get; } = new List<string>();
+    }
+
+    private sealed class RecordingRenameTarget
+    {
+        public int SequenceNumber { get; set; }
+
+        public string? OutputPath { get; set; }
+
+        public string FileName { get; set; } = "";
+
+        public string SongName { get; set; } = "";
+
+        public string Mapper { get; set; } = "";
+
+        public string PlayerName { get; set; } = "";
+
+        public string SourceUrl { get; set; } = "";
+
+        public string LevelHash { get; set; } = "";
+
+        public string Difficulty { get; set; } = "";
+
+        public string Mode { get; set; } = "";
+
+        public double EstimatedSeconds { get; set; }
+    }
+
+    private sealed class RecordingRenameMetadata
+    {
+        public string Key { get; set; } = "";
+
+        public string SongName { get; set; } = "";
+
+        public string Artist { get; set; } = "";
+
+        public string Mapper { get; set; } = "";
+
+        public string PlayerName { get; set; } = "";
+
+        public string Difficulty { get; set; } = "";
     }
 
     private sealed class RecordingSyncVerificationResult

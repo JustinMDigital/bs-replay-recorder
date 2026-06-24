@@ -51,50 +51,8 @@ internal sealed class ReplayProviderReadiness
 
     private void CheckScoreSaber()
     {
-        try
-        {
-            var assembly = AppDomain.CurrentDomain
-                .GetAssemblies()
-                .FirstOrDefault(candidate => string.Equals(
-                    candidate.GetName().Name,
-                    "ScoreSaber",
-                    StringComparison.OrdinalIgnoreCase));
-            if (assembly == null)
-            {
-                ScoreSaberReady = false;
-                ScoreSaberStatus = "ScoreSaber.dll is not loaded";
-                return;
-            }
-
-            var pluginType = assembly.GetType("ScoreSaber.Plugin", throwOnError: false);
-            var replayLoaderType = assembly.GetType("ScoreSaber.Core.ReplaySystem.ReplayLoader", throwOnError: false);
-            if (pluginType == null || replayLoaderType == null)
-            {
-                ScoreSaberReady = false;
-                ScoreSaberStatus = "ScoreSaber replay loader types were not found";
-                return;
-            }
-
-            var containerField = pluginType.GetField(
-                "Container",
-                System.Reflection.BindingFlags.Public |
-                System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Static);
-            var container = containerField?.GetValue(null);
-            if (container == null)
-            {
-                ScoreSaberReady = false;
-                ScoreSaberStatus = "ScoreSaber Zenject container is not available yet";
-                return;
-            }
-
-            ScoreSaberReady = true;
-            ScoreSaberStatus = "ScoreSaber replay loader ready";
-        }
-        catch (Exception ex)
-        {
-            ScoreSaberReady = false;
-            ScoreSaberStatus = "ScoreSaber readiness check failed: " + ex.Message;
-        }
+        var compatibility = ScoreSaberReplayPlaybackDriver.CheckRuntimeCompatibility();
+        ScoreSaberReady = compatibility.Ready;
+        ScoreSaberStatus = compatibility.Status;
     }
 }

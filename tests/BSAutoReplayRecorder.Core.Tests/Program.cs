@@ -78,6 +78,29 @@ try
     AssertEqual(ReplayReferenceKind.ScoreSaber2ScoreUrl, scoreSaberApiReplayReference.Kind, "scoresaber api replay kind");
     AssertEqual("88905556", scoreSaberApiReplayReference.ScoreId, "scoresaber api score id");
 
+    var previousGamePresentation = new GamePresentationSettings
+    {
+        NoTextsAndHuds = false,
+        SaberTrailIntensity = 1f,
+        SfxVolume = 0.3f
+    };
+    var nextGamePresentation = previousGamePresentation.Clone();
+    nextGamePresentation.NoTextsAndHuds = true;
+    nextGamePresentation.SaberTrailIntensity = 0.4f;
+    nextGamePresentation.SfxVolume = 0.5f;
+    var gamePresentationSummary = GamePresentationSettingsChangeSummary.Create(
+        previousGamePresentation,
+        nextGamePresentation,
+        maximumLines: 2);
+    AssertEqual(3, gamePresentationSummary.TotalChanges, "game presentation change count");
+    AssertEqual(2, gamePresentationSummary.Lines.Count, "game presentation shown change count");
+    AssertEqual(1, gamePresentationSummary.AdditionalChanges, "game presentation hidden change count");
+    AssertEqual("HUDs: Enabled -> Disabled", gamePresentationSummary.Lines[0], "game presentation HUD summary");
+    AssertEqual("Saber trail: 100% -> 40%", gamePresentationSummary.Lines[1], "game presentation trail summary");
+
+    var initialGamePresentationSummary = GamePresentationSettingsChangeSummary.Create(null, nextGamePresentation);
+    AssertEqual(0, initialGamePresentationSummary.TotalChanges, "initial game presentation summary count");
+
     var scoreSaberReplay = Path.Combine(tempDir, "76561198117409561-200cc-Expert-Standard-7F60329C289BC6D4BB683AB8F52A613ED6A225C1.dat");
     WriteSampleScoreSaberReplay(scoreSaberReplay);
     var scoreSaberInfo = new ScoreSaberReplayInfoReader().Read(scoreSaberReplay);

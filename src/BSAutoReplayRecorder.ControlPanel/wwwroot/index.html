@@ -59,6 +59,7 @@
             <div class="panelActions">
               <button class="textButton" type="button" data-settings-target="gameSettings">Presentation</button>
               <button id="exportQueue" class="textButton" type="button" hidden>Export list</button>
+              <button id="renameUsedQueueRecordings" class="textButton" type="button" hidden>Rename recordings</button>
               <button id="requeueAll" class="textButton" type="button" hidden>Requeue All</button>
               <button id="clearQueue" class="textButton dangerText" type="button" hidden>Clear queue</button>
             </div>
@@ -266,6 +267,7 @@
               <span>Overwrite recorded outputs when loading</span>
             </label>
             <button id="collectionPageLoad" class="primaryButton fullWidth" type="button">Load collection</button>
+            <button id="collectionPageRenameRecordings" class="secondaryButton fullWidth" type="button">Rename recordings</button>
             <button id="collectionPageExportCards" class="secondaryButton fullWidth" type="button">Export map cards</button>
             <button id="collectionPageDelete" class="textButton dangerText fullWidth" type="button">Delete collection</button>
           </div>
@@ -435,6 +437,15 @@
               <span id="gamePresentationVersion" class="gameSettingsVersion">v1</span>
             </div>
             <div class="gameSettingsSurface" aria-label="Replay settings">
+              <label class="gameToggle gameSettingsPriority">
+                <input id="overrideReplayPlayerSettings" type="checkbox">
+                <span class="gameToggleCopy">
+                  <span class="gameToggleText">Override player settings</span>
+                  <span class="gameToggleHint">Forces these recorder settings instead of recorded ScoreSaber player settings when available.</span>
+                </span>
+                <span class="gameSwitch" aria-hidden="true"></span>
+              </label>
+
               <div class="gameSettingsSection">
                 <span class="gameSettingsSectionTitle">Interface</span>
                 <div class="gameToggleGrid">
@@ -574,6 +585,31 @@
                     </span>
                     <output id="noteJumpStartBeatOffsetValue">0.0</output>
                     <input id="noteJumpStartBeatOffset" type="range" min="-1" max="1" step="0.25" data-game-value="offset">
+                  </label>
+                  <label class="gameToggle">
+                    <input id="applyJdFixerSettings" type="checkbox">
+                    <span class="gameToggleCopy">
+                      <span class="gameToggleText">Apply JDFixer settings</span>
+                      <span class="gameToggleHint">Uses JDFixer when the mod is installed.</span>
+                    </span>
+                    <span class="gameSwitch" aria-hidden="true"></span>
+                  </label>
+                  <label id="jdFixerModeRow" class="gameSelectRow">
+                    <span>JDFixer mode</span>
+                    <select id="jdFixerMode">
+                      <option value="ReactionTime">Reaction time</option>
+                      <option value="JumpDistance">Jump distance</option>
+                    </select>
+                  </label>
+                  <label id="jdFixerJumpDistanceRow" class="gameValueRow">
+                    <span>Jump distance</span>
+                    <output id="jdFixerJumpDistanceValue">18.00</output>
+                    <input id="jdFixerJumpDistance" type="range" min="12" max="35" step="0.25" data-game-value="distance">
+                  </label>
+                  <label id="jdFixerReactionTimeRow" class="gameValueRow">
+                    <span>Reaction time</span>
+                    <output id="jdFixerReactionTimeValue">450ms</output>
+                    <input id="jdFixerReactionTime" type="range" min="300" max="1600" step="25" data-game-value="milliseconds">
                   </label>
                 </div>
               </div>
@@ -858,6 +894,94 @@
     <span>Settings not saved</span>
     <strong>Click here to Save</strong>
   </button>
+  <div id="recordingRenameModal" class="recordingRenameModal" role="dialog" aria-modal="true" aria-labelledby="recordingRenameTitle" hidden>
+    <div class="recordingRenamePanel">
+      <div class="queueExportHeader">
+        <div>
+          <span id="recordingRenameKicker" class="queueExportKicker">Recording Names</span>
+          <h2 id="recordingRenameTitle">Rename recordings</h2>
+        </div>
+        <button id="closeRecordingRename" class="iconButton" type="button" aria-label="Close recording rename">&#215;</button>
+      </div>
+      <div id="recordingRenameScope" class="recordingRenameScope">Completed recordings</div>
+      <fieldset class="recordingRenameOptions" aria-label="Recording filename format">
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="Default" checked>
+          <span>
+            <strong>Default</strong>
+            <small data-recording-rename-example="Default">001 - Song [Difficulty]</small>
+          </span>
+        </label>
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="Key">
+          <span>
+            <strong>Key only</strong>
+            <small data-recording-rename-example="Key">4fc4b</small>
+          </span>
+        </label>
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="KeySong">
+          <span>
+            <strong>Key - song</strong>
+            <small data-recording-rename-example="KeySong">4fc4b - Song</small>
+          </span>
+        </label>
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="Song">
+          <span>
+            <strong>Song</strong>
+            <small data-recording-rename-example="Song">Song</small>
+          </span>
+        </label>
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="SongArtist">
+          <span>
+            <strong>Song - artist</strong>
+            <small data-recording-rename-example="SongArtist">Song - Artist</small>
+          </span>
+        </label>
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="SongArtistPlayer">
+          <span>
+            <strong>Song - artist - player</strong>
+            <small data-recording-rename-example="SongArtistPlayer">Song - Artist - Player</small>
+          </span>
+        </label>
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="SongPlayer">
+          <span>
+            <strong>Song - player</strong>
+            <small data-recording-rename-example="SongPlayer">Song - Player</small>
+          </span>
+        </label>
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="SongMapper">
+          <span>
+            <strong>Song - mapper</strong>
+            <small data-recording-rename-example="SongMapper">Song - Mapper</small>
+          </span>
+        </label>
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="SongDifficulty">
+          <span>
+            <strong>Song - difficulty</strong>
+            <small data-recording-rename-example="SongDifficulty">Song - ExpertPlus</small>
+          </span>
+        </label>
+        <label class="recordingRenameOption">
+          <input type="radio" name="recordingNameFormat" value="PlayerSong">
+          <span>
+            <strong>Player - song</strong>
+            <small data-recording-rename-example="PlayerSong">Player - Song</small>
+          </span>
+        </label>
+      </fieldset>
+      <div class="queueExportActions">
+        <button id="cancelRecordingRename" class="secondaryButton" type="button">Cancel</button>
+        <button id="applyRecordingRename" class="primaryButton" type="button">Rename recordings</button>
+      </div>
+    </div>
+  </div>
   <div id="queueExportModal" class="queueExportModal" role="dialog" aria-modal="true" aria-labelledby="queueExportTitle" hidden>
     <div class="queueExportPanel">
       <div class="queueExportHeader">

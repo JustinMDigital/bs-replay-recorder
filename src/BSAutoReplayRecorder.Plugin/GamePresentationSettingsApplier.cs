@@ -14,6 +14,8 @@ internal static class GamePresentationSettingsApplier
     private static readonly IGamePresentationSettingsSectionApplier[] SectionAppliers =
     {
         new BeatLeaderReplayerSettingsApplier(),
+        new JdFixerSettingsApplier(),
+        new ScoreSaberReplaySettingsApplier(),
         new BeatSaberPlayerSpecificSettingsApplier()
     };
 
@@ -105,6 +107,48 @@ internal static class GamePresentationSettingsApplier
         }
     }
 
+    private sealed class JdFixerSettingsApplier : IGamePresentationSettingsSectionApplier
+    {
+        public string Name => "JDFixer settings";
+
+        public GamePresentationSettingsApplyResult Apply(GamePresentationSettings settings)
+        {
+            if (!settings.ApplyJdFixerSettings)
+            {
+                return new GamePresentationSettingsApplyResult(false);
+            }
+
+            var config = ResolveJdFixerPluginConfig();
+            if (config == null)
+            {
+                return new GamePresentationSettingsApplyResult(false);
+            }
+
+            var useReactionTime = string.Equals(
+                settings.JdFixerMode,
+                GamePresentationSettings.JdFixerModeReactionTime,
+                StringComparison.OrdinalIgnoreCase);
+            var changed = false;
+
+            changed |= SetBooleanMemberIfAvailable(config, "enabled", true);
+            changed |= SetInt32MemberIfAvailable(config, "slider_setting", useReactionTime ? 1 : 0);
+            changed |= SetInt32MemberIfAvailable(config, "pref_selected", 0);
+            changed |= SetBooleanMemberIfAvailable(config, "use_jd_pref", false);
+            changed |= SetBooleanMemberIfAvailable(config, "use_rt_pref", false);
+            changed |= useReactionTime
+                ? SetSingleMemberIfAvailable(config, "reactionTime", settings.JdFixerReactionTime)
+                : SetSingleMemberIfAvailable(config, "jumpDistance", settings.JdFixerJumpDistance);
+
+            if (changed)
+            {
+                NotifyJdFixerConfigChanged(config);
+                RefreshJdFixerUi();
+            }
+
+            return new GamePresentationSettingsApplyResult(changed);
+        }
+    }
+
     private sealed class BeatSaberPlayerSpecificSettingsApplier : IGamePresentationSettingsSectionApplier
     {
         public string Name => "Beat Saber player settings";
@@ -169,7 +213,7 @@ internal static class GamePresentationSettingsApplier
                 : colorSchemeId;
 
             var nextColorScheme = CreateColorScheme(
-                selectedColorScheme.GetType(),
+                selectedColorScheme,
                 colorSchemeId,
                 settings);
 
@@ -195,6 +239,40 @@ internal static class GamePresentationSettingsApplier
         }
     }
 
+    private sealed class ScoreSaberReplaySettingsApplier : IGamePresentationSettingsSectionApplier
+    {
+        public string Name => "ScoreSaber replay settings";
+
+        public GamePresentationSettingsApplyResult Apply(GamePresentationSettings settings)
+        {
+            var settingsService = ResolveScoreSaberSettingsService();
+            if (settingsService == null)
+            {
+                return new GamePresentationSettingsApplyResult(false);
+            }
+
+            var current = GetInstancePropertyValue(settingsService, "Current");
+            if (current == null)
+            {
+                return new GamePresentationSettingsApplyResult(false);
+            }
+
+            var useRecordedPlayerSettings = !settings.OverrideReplayPlayerSettings;
+            if (!TrySetBooleanMember(
+                    current,
+                    "useRecordedPlayerSettings",
+                    useRecordedPlayerSettings,
+                    out var changed) ||
+                !changed)
+            {
+                return new GamePresentationSettingsApplyResult(false);
+            }
+
+            SaveScoreSaberSettings(settingsService);
+            return new GamePresentationSettingsApplyResult(true);
+        }
+    }
+
     private static void ApplyRuntimeAudioSettings(GamePresentationSettings settings)
     {
         var audioManagerType = FindType("AudioManagerSO");
@@ -212,6 +290,34 @@ internal static class GamePresentationSettingsApplier
                 .GetProperty("sfxEnabled", BindingFlags.Public | BindingFlags.Instance)
                 ?.SetValue(audioManager, true, null);
         }
+    }
+
+    private static object? ResolveJdFixerPluginConfig()
+    {
+        var pluginConfigType = FindType("JDFixer.PluginConfig");
+        return pluginConfigType == null
+            ? null
+            : GetStaticMemberValue(pluginConfigType, "Instance");
+    }
+
+    private static object? ResolveScoreSaberSettingsService()
+    {
+        var settingsServiceType = FindType("ScoreSaber.Core.Configuration.SettingsService");
+        if (settingsServiceType == null)
+        {
+            return null;
+        }
+
+        foreach (var container in ResolveZenjectContainers())
+        {
+            var resolved = TryResolve(container, settingsServiceType);
+            if (resolved != null)
+            {
+                return resolved;
+            }
+        }
+
+        return null;
     }
 
     private static IPlayerDataModel? ResolvePlayerDataModel()
@@ -286,6 +392,200 @@ internal static class GamePresentationSettingsApplier
         }
     }
 
+    private static object? GetStaticMemberValue(Type targetType, string memberName)
+    {
+        var property = targetType.GetProperty(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (property != null)
+        {
+            return property.GetValue(null, null);
+        }
+
+        return targetType
+            .GetField(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            ?.GetValue(null);
+    }
+
+    private static object? GetInstancePropertyValue(object target, string propertyName)
+    {
+        return target.GetType()
+            .GetProperty(propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.GetValue(target, null);
+    }
+
+    private static bool SetBooleanMemberIfAvailable(object target, string memberName, bool nextValue)
+    {
+        return TrySetBooleanMember(target, memberName, nextValue, out var changed) && changed;
+    }
+
+    private static bool SetSingleMemberIfAvailable(object target, string memberName, float nextValue)
+    {
+        return TrySetSingleMember(target, memberName, nextValue, out var changed) && changed;
+    }
+
+    private static bool SetInt32MemberIfAvailable(object target, string memberName, int nextValue)
+    {
+        return TrySetInt32Member(target, memberName, nextValue, out var changed) && changed;
+    }
+
+    private static bool TrySetBooleanMember(object target, string memberName, bool nextValue, out bool changed)
+    {
+        changed = false;
+        var targetType = target.GetType();
+        var property = targetType.GetProperty(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (property?.PropertyType == typeof(bool) && property.CanRead && property.CanWrite)
+        {
+            var currentValue = property.GetValue(target, null) is bool value && value;
+            if (currentValue == nextValue)
+            {
+                return true;
+            }
+
+            property.SetValue(target, nextValue, null);
+            changed = true;
+            return true;
+        }
+
+        var field = targetType.GetField(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field?.FieldType != typeof(bool))
+        {
+            return false;
+        }
+
+        var fieldValue = field.GetValue(target) is bool valueFromField && valueFromField;
+        if (fieldValue == nextValue)
+        {
+            return true;
+        }
+
+        field.SetValue(target, nextValue);
+        changed = true;
+        return true;
+    }
+
+    private static bool TrySetSingleMember(object target, string memberName, float nextValue, out bool changed)
+    {
+        changed = false;
+        var targetType = target.GetType();
+        var property = targetType.GetProperty(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (property?.PropertyType == typeof(float) && property.CanRead && property.CanWrite)
+        {
+            var currentValue = property.GetValue(target, null) is float value ? value : 0f;
+            if (Math.Abs(currentValue - nextValue) < 0.0001f)
+            {
+                return true;
+            }
+
+            property.SetValue(target, nextValue, null);
+            changed = true;
+            return true;
+        }
+
+        var field = targetType.GetField(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field?.FieldType != typeof(float))
+        {
+            return false;
+        }
+
+        var fieldValue = field.GetValue(target) is float valueFromField ? valueFromField : 0f;
+        if (Math.Abs(fieldValue - nextValue) < 0.0001f)
+        {
+            return true;
+        }
+
+        field.SetValue(target, nextValue);
+        changed = true;
+        return true;
+    }
+
+    private static bool TrySetInt32Member(object target, string memberName, int nextValue, out bool changed)
+    {
+        changed = false;
+        var targetType = target.GetType();
+        var property = targetType.GetProperty(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (property?.PropertyType == typeof(int) && property.CanRead && property.CanWrite)
+        {
+            var currentValue = property.GetValue(target, null) is int value ? value : 0;
+            if (currentValue == nextValue)
+            {
+                return true;
+            }
+
+            property.SetValue(target, nextValue, null);
+            changed = true;
+            return true;
+        }
+
+        var field = targetType.GetField(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field?.FieldType != typeof(int))
+        {
+            return false;
+        }
+
+        var fieldValue = field.GetValue(target) is int valueFromField ? valueFromField : 0;
+        if (fieldValue == nextValue)
+        {
+            return true;
+        }
+
+        field.SetValue(target, nextValue);
+        changed = true;
+        return true;
+    }
+
+    private static void NotifyJdFixerConfigChanged(object config)
+    {
+        config.GetType()
+            .GetMethod("Changed", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.Invoke(config, null);
+    }
+
+    private static void RefreshJdFixerUi()
+    {
+        foreach (var typeName in new[]
+                 {
+                     "JDFixer.UI.ModifierUI",
+                     "JDFixer.UI.LegacyModifierUI",
+                     "JDFixer.UI.CustomOnlineUI"
+                 })
+        {
+            var type = FindType(typeName);
+            if (type == null)
+            {
+                continue;
+            }
+
+            var instance = GetStaticMemberValue(type, "Instance");
+            if (instance == null)
+            {
+                continue;
+            }
+
+            type.GetMethod("Refresh", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.Invoke(instance, null);
+        }
+    }
+
+    private static void SaveScoreSaberSettings(object settingsService)
+    {
+        settingsService.GetType()
+            .GetMethod("Save", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.Invoke(settingsService, null);
+    }
+
     private static void SavePlayerData(IPlayerDataModel playerDataModel)
     {
         if (playerDataModel is PlayerDataModel concretePlayerDataModel)
@@ -324,36 +624,136 @@ internal static class GamePresentationSettingsApplier
         return new Color(red / 255f, green / 255f, blue / 255f, 1f);
     }
 
-    private static object CreateColorScheme(Type colorSchemeType, string colorSchemeId, GamePresentationSettings settings)
+    private static object CreateColorScheme(object currentColorScheme, string colorSchemeId, GamePresentationSettings settings)
     {
-        return colorSchemeType
-            .GetConstructor(new[]
+        var colorSchemeType = currentColorScheme.GetType();
+        var leftSaberColor = ParseColor(settings.LeftSaberColor);
+        var rightSaberColor = ParseColor(settings.RightSaberColor);
+        var wallColor = ParseColor(settings.WallColor);
+        var lightColorA = ParseColor(settings.LightColorA);
+        var lightColorB = ParseColor(settings.LightColorB);
+        var lightColorW = GetColorPropertyOrDefault(currentColorScheme, "environmentColorW", Color.white);
+        var boostLightColorA = ParseColor(settings.BoostLightColorA);
+        var boostLightColorB = ParseColor(settings.BoostLightColorB);
+        var boostLightColorW = GetColorPropertyOrDefault(currentColorScheme, "environmentColorWBoost", Color.white);
+
+        var copyConstructor = colorSchemeType.GetConstructor(new[]
+        {
+            colorSchemeType,
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color)
+        });
+        if (copyConstructor != null)
+        {
+            return copyConstructor.Invoke(new[]
             {
-                typeof(string),
-                typeof(bool),
-                typeof(Color),
-                typeof(Color),
-                typeof(Color),
-                typeof(bool),
-                typeof(Color),
-                typeof(Color),
-                typeof(Color),
-                typeof(Color)
-            })
-            ?.Invoke(new object[]
+                currentColorScheme,
+                true,
+                leftSaberColor,
+                rightSaberColor,
+                true,
+                lightColorA,
+                lightColorB,
+                lightColorW,
+                true,
+                boostLightColorA,
+                boostLightColorB,
+                boostLightColorW,
+                wallColor
+            });
+        }
+
+        var currentConstructor = colorSchemeType.GetConstructor(new[]
+        {
+            typeof(string),
+            typeof(string),
+            typeof(bool),
+            typeof(string),
+            typeof(bool),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color)
+        });
+        if (currentConstructor != null)
+        {
+            var nonLocalizedName = GetStringProperty(currentColorScheme, "nonLocalizedName");
+            if (string.IsNullOrWhiteSpace(nonLocalizedName))
+            {
+                nonLocalizedName = "Replay Recorder";
+            }
+
+            return currentConstructor.Invoke(new object[]
+            {
+                colorSchemeId,
+                GetStringProperty(currentColorScheme, "colorSchemeNameLocalizationKey"),
+                GetBooleanProperty(currentColorScheme, "useNonLocalizedName", true),
+                nonLocalizedName,
+                GetBooleanProperty(currentColorScheme, "isEditable", true),
+                true,
+                leftSaberColor,
+                rightSaberColor,
+                true,
+                lightColorA,
+                lightColorB,
+                lightColorW,
+                true,
+                boostLightColorA,
+                boostLightColorB,
+                boostLightColorW,
+                wallColor
+            });
+        }
+
+        var legacyConstructor = colorSchemeType.GetConstructor(new[]
+        {
+            typeof(string),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color)
+        });
+        if (legacyConstructor != null)
+        {
+            return legacyConstructor.Invoke(new object[]
             {
                 colorSchemeId,
                 true,
-                ParseColor(settings.LeftSaberColor),
-                ParseColor(settings.RightSaberColor),
-                ParseColor(settings.WallColor),
+                leftSaberColor,
+                rightSaberColor,
+                wallColor,
                 true,
-                ParseColor(settings.LightColorA),
-                ParseColor(settings.LightColorB),
-                ParseColor(settings.BoostLightColorA),
-                ParseColor(settings.BoostLightColorB)
-            })
-            ?? throw new InvalidOperationException("Beat Saber color scheme constructor is not available.");
+                lightColorA,
+                lightColorB,
+                boostLightColorA,
+                boostLightColorB
+            });
+        }
+
+        throw new InvalidOperationException("Beat Saber color scheme constructor is not available.");
     }
 
     private static bool ColorSchemesEqual(object left, object right)
@@ -390,6 +790,22 @@ internal static class GamePresentationSettingsApplier
             .GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
             ?.GetValue(target, null);
         return value is Color color ? color : Color.clear;
+    }
+
+    private static Color GetColorPropertyOrDefault(object target, string propertyName, Color fallback)
+    {
+        var value = target.GetType()
+            .GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+            ?.GetValue(target, null);
+        return value is Color color ? color : fallback;
+    }
+
+    private static bool GetBooleanProperty(object target, string propertyName, bool fallback)
+    {
+        var value = target.GetType()
+            .GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+            ?.GetValue(target, null);
+        return value is bool boolean ? boolean : fallback;
     }
 
     private static string GetEnumPropertyName(object target, string propertyName)

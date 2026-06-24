@@ -593,6 +593,11 @@ public sealed class LoadMapCollectionRequest
     public bool OverwriteRecorded { get; set; }
 }
 
+public sealed class RecordingFileRenameRequest
+{
+    public string Format { get; set; } = "Default";
+}
+
 public sealed class StartRunRequest
 {
     public string? CollectionName { get; set; }
@@ -625,6 +630,22 @@ public sealed class MapCollectionLoadResult
     public int SkippedRecordedCount { get; set; }
 
     public int MissingCount { get; set; }
+}
+
+public sealed class RecordingFileRenameResult
+{
+    public ControlPanelState State { get; set; } = new ControlPanelState();
+
+    public int RenamedCount { get; set; }
+
+    public int SkippedCount { get; set; }
+}
+
+public sealed class RecordingFileRenamePreviewResult
+{
+    public string SourceLabel { get; set; } = "";
+
+    public Dictionary<string, string> Examples { get; set; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class MapCollectionImportResult
