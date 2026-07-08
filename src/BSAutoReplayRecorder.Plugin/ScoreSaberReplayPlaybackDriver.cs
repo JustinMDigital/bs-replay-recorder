@@ -516,17 +516,17 @@ public sealed class ScoreSaberReplayPlaybackDriver : IReplayPlaybackDriver
             throw new InvalidOperationException("BeatLeader ReplayerMenuLoader.Instance is not available yet for map lookup.");
         }
 
-        var loadResult = await loader
+        object? loadResult = await loader
             .LoadBeatmapAsync(info.LevelHash, NormalizeMode(info.Mode), NormalizeDifficulty(info.Difficulty), cancellationToken)
             .ConfigureAwait(false);
 
-        if (loadResult.Item1 == null || !loadResult.Item2.HasValue)
+        if (!BeatLeaderCompatibility.TryExtractBeatmapLevelWithKey(loadResult, out var level, out var beatmapKey))
         {
             throw new InvalidOperationException(
                 "ScoreSaber cannot launch replay. The map may be missing or the replay metadata may not match an installed map.");
         }
 
-        return new LoadedBeatmap(loadResult.Item1, loadResult.Item2.Value);
+        return new LoadedBeatmap(level, beatmapKey);
     }
 
     private object ResolveReplayLoader()

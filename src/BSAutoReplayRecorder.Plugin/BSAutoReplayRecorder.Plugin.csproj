@@ -11,7 +11,7 @@
     <BeatSaberGameVersion Condition="'$(BeatSaberGameVersion)' == ''">1.40.6</BeatSaberGameVersion>
     <PluginVersion Condition="'$(PluginVersion)' == ''">0.1.0</PluginVersion>
     <BSIPADependencyVersion Condition="'$(BSIPADependencyVersion)' == ''">^4.3.6</BSIPADependencyVersion>
-    <BeatLeaderDependencyVersion Condition="'$(BeatLeaderDependencyVersion)' == ''">^0.9.33</BeatLeaderDependencyVersion>
+    <BeatLeaderDependencyVersion Condition="'$(BeatLeaderDependencyVersion)' == ''">&gt;=0.9.33</BeatLeaderDependencyVersion>
     <GeneratedPluginManifestPath>$(IntermediateOutputPath)BSAutoReplayRecorder.Plugin.manifest.json</GeneratedPluginManifestPath>
     <BeatLeaderDllPath Condition="'$(BeatLeaderDllPath)' == ''">$(BeatSaberDir)\Plugins\BeatLeader.dll</BeatLeaderDllPath>
     <HarmonyDllPath Condition="'$(HarmonyDllPath)' == ''">$(BeatSaberDir)\Libs\0Harmony.dll</HarmonyDllPath>

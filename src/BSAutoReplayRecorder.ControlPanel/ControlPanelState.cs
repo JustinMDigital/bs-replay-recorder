@@ -588,6 +588,11 @@ public sealed class SaveMapCollectionRequest
     public bool CreateEmpty { get; set; }
 }
 
+public sealed class RenameMapCollectionRequest
+{
+    public string Name { get; set; } = "";
+}
+
 public sealed class LoadMapCollectionRequest
 {
     public bool OverwriteRecorded { get; set; }

@@ -186,6 +186,12 @@ async function waitForControlPanel(timeoutMs) {
   return false;
 }
 
+function createDashboardUrl() {
+  const url = new URL(controlPanelUrl);
+  url.searchParams.set('v', String(Date.now()));
+  return url.toString();
+}
+
 async function startRecorderStack() {
   resetStartupStatus();
   setStartupStatus('Checking whether the recorder stack is already running...');
@@ -627,7 +633,7 @@ async function createWindow() {
       return;
     }
 
-    await mainWindow.loadURL(controlPanelUrl);
+    await mainWindow.loadURL(createDashboardUrl());
   } catch (error) {
     appendLauncherLog(error.stack || error.message);
     if (mainWindow && !mainWindow.isDestroyed()) {

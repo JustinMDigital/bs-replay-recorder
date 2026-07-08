@@ -926,6 +926,12 @@ public sealed class ControlPanelWorkerRunner : IDisposable
             _gamePresentationSyncError = null;
             ShowGamePresentationSettingsUpdatedToastOrDefer(settingsVersion, changeSummary);
         }
+        catch (GamePresentationSettingsNotReadyException ex)
+        {
+            _gamePresentationSyncStatus = "Waiting";
+            _gamePresentationSyncError = ex.Message;
+            _logger.Debug("Game presentation settings v" + settingsVersion + " not ready yet: " + ex.Message);
+        }
         catch (Exception ex)
         {
             _gamePresentationSyncStatus = "Failed";

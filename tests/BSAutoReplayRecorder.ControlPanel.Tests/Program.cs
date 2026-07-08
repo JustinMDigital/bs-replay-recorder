@@ -53,6 +53,9 @@ try
     RunRequireAudioGuardCheck(Path.Combine(tempRoot, "require-audio-guard"));
     RunProcessLoopbackAudioGuardCheck(Path.Combine(tempRoot, "process-loopback-audio-guard"));
     RunLaunchValidationCheck(Path.Combine(tempRoot, "launch-validation"));
+    RunSteamLaunchCrashMessageCheck(Path.Combine(tempRoot, "steam-launch-crash-message"));
+    RunBeatSaberBlackScreenLaunchGuardCheck(Path.Combine(tempRoot, "black-screen-launch-guard"));
+    RunBeatSaberBlackScreenRotatedLogGuardCheck(Path.Combine(tempRoot, "black-screen-rotated-log-guard"));
     RunSingleInstanceLaunchPluginInstallScopeCheck(Path.Combine(tempRoot, "single-launch-install-scope"));
     RunDisplayScaleOnlyAppliesOnRunCheck(Path.Combine(tempRoot, "display-scale-run-boundary"));
     RunWorkerPluginSettingsIdentityCheck();
@@ -201,6 +204,119 @@ static void RunLaunchValidationCheck(string workspace)
     state = store.LaunchInstance(0);
     AssertEqual("Failed", state.Instances[0].GameLaunchStatus, "missing exe launch status");
     AssertContains("Beat Saber.exe was not found", state.Instances[0].GameLaunchError, "missing exe launch error");
+}
+
+static void RunSteamLaunchCrashMessageCheck(string workspace)
+{
+    var instancesRoot = Path.Combine(workspace, "BSInstances");
+    CreateFakeBeatSaberInstance(instancesRoot, "Steam I-1", 0);
+    var store = CreateStore(
+        workspace,
+        instancesRoot,
+        "Steam I-",
+        instanceCount: 1,
+        workerPluginInstaller: new FakeWorkerPluginInstaller());
+    var launchDirectory = store.Snapshot().Instances[0].LaunchDirectory;
+    WriteFakeFile(
+        launchDirectory,
+        "Logs/2026.07.01.12.00.00.log",
+        """
+        [ERROR @ 12:00:03 | UnityEngine] [Steamworks.NET] SteamAPI_Init() failed.
+        [CRITICAL @ 12:00:05 | UnityEngine] InvalidOperationException: DLC Promo Panel was not initialized because could not initialize platform.
+        """);
+
+    SetStartedGameProcessId(store, 0, 987654, DateTimeOffset.UtcNow);
+
+    var state = store.Snapshot();
+    AssertEqual("Failed", state.Instances[0].GameLaunchStatus, "steam launch crash status");
+    AssertContains("Open Steam", state.Instances[0].GameLaunchError, "steam launch crash error");
+    var launchEvent = state.Events.FirstOrDefault(item =>
+        string.Equals(item.Kind, "Bad", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(item.Tag, "Launch", StringComparison.OrdinalIgnoreCase));
+    if (launchEvent == null)
+    {
+        throw new InvalidOperationException("steam launch crash event failed. Expected bad launch event.");
+    }
+
+    AssertContains("Open Steam", launchEvent.Text, "steam launch crash event");
+}
+
+static void RunBeatSaberBlackScreenLaunchGuardCheck(string workspace)
+{
+    var instancesRoot = Path.Combine(workspace, "BSInstances");
+    CreateFakeBeatSaberInstance(instancesRoot, "BlackScreen I-1", 0);
+    var store = CreateStore(
+        workspace,
+        instancesRoot,
+        "BlackScreen I-",
+        instanceCount: 1,
+        workerPluginInstaller: new FakeWorkerPluginInstaller());
+    var launchDirectory = store.Snapshot().Instances[0].LaunchDirectory;
+    var log = new StringBuilder();
+    log.AppendLine("[DEBUG @ 12:00:01 | BeatLeader] OnMenuInstaller");
+    for (var index = 0; index < 25; index++)
+    {
+        log.AppendLine("[CRITICAL @ 12:00:02 | UnityEngine] NullReferenceException: Object reference not set to an instance of an object");
+        log.AppendLine("[CRITICAL @ 12:00:02 | UnityEngine] VRController.get_thumbstick () (at <game>:0)");
+        log.AppendLine("[CRITICAL @ 12:00:02 | UnityEngine] VRController.get_triggerValue () (at <game>:0)");
+        log.AppendLine("[CRITICAL @ 12:00:02 | UnityEngine] DeactivateVRControllersOnFocusCapture.UpdateVRControllerActiveState () (at <game>:0)");
+    }
+
+    WriteFakeFile(launchDirectory, "Logs/2026.07.01.12.00.01.log", log.ToString());
+
+    SetStartedGameProcessId(store, 0, 987655, DateTimeOffset.UtcNow);
+
+    var state = store.Snapshot();
+    AssertEqual("Failed", state.Instances[0].GameLaunchStatus, "black screen launch status");
+    AssertContains("black screen", state.Instances[0].GameLaunchError, "black screen launch error");
+    AssertContains("VR controller", state.Instances[0].GameLaunchError, "black screen launch diagnosis");
+    var launchEvent = state.Events.FirstOrDefault(item =>
+        string.Equals(item.Kind, "Bad", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(item.Tag, "Launch", StringComparison.OrdinalIgnoreCase));
+    if (launchEvent == null)
+    {
+        throw new InvalidOperationException("black screen launch event failed. Expected bad launch event.");
+    }
+
+    AssertContains("black screen", launchEvent.Text, "black screen launch event");
+}
+
+static void RunBeatSaberBlackScreenRotatedLogGuardCheck(string workspace)
+{
+    var instancesRoot = Path.Combine(workspace, "BSInstances");
+    CreateFakeBeatSaberInstance(instancesRoot, "BlackScreen I-1", 0);
+    var store = CreateStore(
+        workspace,
+        instancesRoot,
+        "BlackScreen I-",
+        instanceCount: 1,
+        workerPluginInstaller: new FakeWorkerPluginInstaller());
+    var launchDirectory = store.Snapshot().Instances[0].LaunchDirectory;
+    var log = new StringBuilder();
+    log.AppendLine("[DEBUG @ 12:00:01 | BeatLeader] OnMenuInstaller");
+    for (var index = 0; index < 25; index++)
+    {
+        log.AppendLine("[CRITICAL @ 12:00:02 | UnityEngine] NullReferenceException: Object reference not set to an instance of an object");
+        log.AppendLine("[CRITICAL @ 12:00:02 | UnityEngine] VRController.get_thumbstick () (at <game>:0)");
+        log.AppendLine("[CRITICAL @ 12:00:02 | UnityEngine] VRController.get_triggerValue () (at <game>:0)");
+        log.AppendLine("[CRITICAL @ 12:00:02 | UnityEngine] DeactivateVRControllersOnFocusCapture.UpdateVRControllerActiveState () (at <game>:0)");
+    }
+
+    var logDirectory = Path.Combine(launchDirectory, "Logs");
+    Directory.CreateDirectory(logDirectory);
+    using (var file = File.Create(Path.Combine(logDirectory, "2026.07.01.12.00.01.log.gz")))
+    using (var gzip = new GZipStream(file, CompressionLevel.Optimal))
+    using (var writer = new StreamWriter(gzip))
+    {
+        writer.Write(log.ToString());
+    }
+
+    SetStartedGameProcessId(store, 0, 987656, DateTimeOffset.UtcNow);
+
+    var state = store.Snapshot();
+    AssertEqual("Failed", state.Instances[0].GameLaunchStatus, "black screen rotated log launch status");
+    AssertContains("black screen", state.Instances[0].GameLaunchError, "black screen rotated log launch error");
+    AssertContains("VR controller", state.Instances[0].GameLaunchError, "black screen rotated log diagnosis");
 }
 
 static void RunSingleInstanceLaunchPluginInstallScopeCheck(string workspace)
@@ -373,6 +489,10 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/BeatLeader/Replays/long-replay-history-file.bsor", "old replay");
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/LocalLeaderboard/Replays/long-local-replay-history-file.bsor", "old local replay");
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/ScoreSaber/Replays/long-scoresaber-replay-history-file.dat", "old scoresaber replay");
+    WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "Plugins/BeatSaverDownloader.dll", "beatsaver downloader");
+    WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "Plugins/DataPuller.dll", "data puller");
+    WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/BeatSaverDownloader.ini", "beatsaver downloader settings");
+    WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "UserData/DataPuller.json", "data puller settings");
     WriteFakeFile(Path.Combine(sourceRoot, "Beat Saber"), "Logs/output.log", "log");
     var sourceDirectory = Path.Combine(sourceRoot, "Beat Saber");
     var instancesRoot = Path.Combine(workspace, "ManagedInstances");
@@ -415,6 +535,10 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
         AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "BeatLeader", "Replays", "long-replay-history-file.bsor")), "provision skipped BeatLeader replay history " + index);
         AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "LocalLeaderboard", "Replays", "long-local-replay-history-file.bsor")), "provision skipped LocalLeaderboard replay history " + index);
         AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "ScoreSaber", "Replays", "long-scoresaber-replay-history-file.dat")), "provision skipped ScoreSaber replay history " + index);
+        AssertEqual(false, File.Exists(Path.Combine(directory, "Plugins", "BeatSaverDownloader.dll")), "provision skipped BeatSaver Downloader " + index);
+        AssertEqual(false, File.Exists(Path.Combine(directory, "Plugins", "DataPuller.dll")), "provision skipped DataPuller " + index);
+        AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "BeatSaverDownloader.ini")), "provision skipped BeatSaver Downloader settings " + index);
+        AssertEqual(false, File.Exists(Path.Combine(directory, "UserData", "DataPuller.json")), "provision skipped DataPuller settings " + index);
         AssertEqual(false, File.Exists(Path.Combine(directory, "Logs", "output.log")), "provision skipped logs " + index);
     }
 
@@ -490,6 +614,7 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
     AssertEqual("Missing", pendingUpgradeState.InstanceProvision.Status, "upgrade provision status is missing");
     AssertEqual(1, pendingUpgradeState.InstanceProvision.CreatedInstanceCount, "upgrade created count before expansion");
     AssertEqual(2, pendingUpgradeState.InstanceProvision.MissingInstanceCount, "upgrade missing count before expansion");
+    WriteFakeFile(Path.Combine(upgradeInstancesRoot, "Managed I-3"), "Beat Saber_Data/partial-copy.txt", "partial copy");
 
     var expandedUpgradeState = upgradeStore.ProvisionManagedInstances(new InstanceProvisionRequest
     {
@@ -509,6 +634,10 @@ static void RunManagedInstanceProvisioningCheck(string workspace)
     }
 
     AssertEqual(false, File.Exists(Path.Combine(upgradeInstancesRoot, "Managed I-2", "Beat Saber_Data", "CustomLevels", "source-song.txt")), "expanded missing instance skips CustomLevels");
+    AssertEqual(false, File.Exists(Path.Combine(upgradeInstancesRoot, "Managed I-3", "Beat Saber_Data", "partial-copy.txt")), "expanded missing instance replaces partial folder");
+    AssertEqual(true, IsReparsePoint(Path.Combine(upgradeInstancesRoot, "Managed I-2", "CustomSabers")), "expanded missing instance links CustomSabers");
+    AssertEqual(false, Directory.EnumerateDirectories(Path.Combine(upgradeInstancesRoot, "Managed I-2"), "CustomSabers.local-*").Any(), "expanded missing instance does not clone CustomSabers backup");
+    AssertEqual(false, Directory.EnumerateDirectories(Path.Combine(upgradeInstancesRoot, "Managed I-3"), "CustomSabers.local-*").Any(), "expanded replaced instance does not clone CustomSabers backup");
 
     var renamedPrefixInstancesRoot = Path.Combine(workspace, "RenamedPrefixInstances");
     var renamedPrefixPluginInstaller = new FakeWorkerPluginInstaller();
@@ -3202,13 +3331,28 @@ static void RunMapCollectionSaveLoadCheck(string workspace)
     AssertEqual(2, collection.Items.Count, "saved collection item count");
     AssertEqual(true, collection.Items.All(item => File.Exists(item.Path)), "saved collection copies replay files");
 
+    AssertThrows<InvalidOperationException>(
+        () => store.RenameMapCollection(collection.Id, new RenameMapCollectionRequest { Name = " " }),
+        "blank collection rename");
+    var renamed = store.RenameMapCollection(collection.Id, new RenameMapCollectionRequest
+    {
+        Name = "Warmups Renamed"
+    });
+    AssertEqual("Warmups Renamed", renamed.Name, "renamed collection name");
+    AssertEqual(collection.Id, renamed.Id, "renamed collection id");
+    AssertEqual(2, renamed.Items.Count, "renamed collection item count");
+    AssertEqual(true, renamed.Items.All(item => File.Exists(item.Path)), "renamed collection keeps replay files");
+    collection = renamed;
+
     var cleared = store.ClearQueue();
     AssertEqual(0, cleared.Queue.Count, "collection queue clear count");
     AssertEqual(1, cleared.Collections.Count, "collection survives queue clear");
+    AssertEqual("Warmups Renamed", cleared.Collections[0].Name, "renamed collection survives queue clear");
     AssertEqual(true, collection.Items.All(item => File.Exists(item.Path)), "collection files survive queue clear");
 
     var loaded = store.LoadMapCollection(collection.Id, new LoadMapCollectionRequest());
     AssertEqual(2, loaded.LoadedCount, "collection load count");
+    AssertEqual("Warmups Renamed", loaded.CollectionName, "loaded renamed collection name");
     AssertEqual(0, loaded.SkippedRecordedCount, "collection initial skipped count");
     AssertEqual(2, loaded.State.Queue.Count, "collection loaded queue count");
     AssertEqual("Song 0", loaded.State.Queue[0].SongName, "collection preserves first order");
@@ -3647,6 +3791,21 @@ static void SetGameProcessIds(ControlPanelStore store, params int[] processIds)
         state.Instances[index].GameProcessId = processIds[index];
         state.Instances[index].GameLaunchStatus = "Failed";
     }
+}
+
+static void SetStartedGameProcessId(
+    ControlPanelStore store,
+    int instanceIndex,
+    int processId,
+    DateTimeOffset launchedAtUtc)
+{
+    var field = typeof(ControlPanelStore).GetField("_state", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(typeof(ControlPanelStore).FullName, "_state");
+    var state = (ControlPanelState?)field.GetValue(store)
+                ?? throw new InvalidOperationException("ControlPanelStore state was null.");
+    state.Instances[instanceIndex].GameProcessId = processId;
+    state.Instances[instanceIndex].GameLaunchedAtUtc = launchedAtUtc;
+    state.Instances[instanceIndex].GameLaunchStatus = "Started";
 }
 
 static SettingsUpdateRequest CreateSettingsUpdateRequest(ControlPanelSettings settings)

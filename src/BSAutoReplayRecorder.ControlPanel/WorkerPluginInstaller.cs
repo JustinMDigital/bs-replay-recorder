@@ -29,6 +29,13 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         "Plugins/.cache/BSAutoReplayRecorder.Plugin.dll",
         "Plugins/.cache/BSAutoReplayRecorder.Plugin.pdb"
     };
+    private static readonly string[] WorkerConflictingModRelativePaths =
+    {
+        "Plugins/BeatSaverDownloader.dll",
+        "Plugins/DataPuller.dll",
+        "UserData/BeatSaverDownloader.ini",
+        "UserData/DataPuller.json"
+    };
 
     public void Install(
         IReadOnlyList<WorkerInstanceRecord> instances,
@@ -132,6 +139,11 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         {
             var instanceDirectory = Path.GetFullPath(instance.LaunchDirectory);
             foreach (var relativePath in StalePluginRelativePaths)
+            {
+                DeleteFileIfExists(Path.Combine(instanceDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+            }
+
+            foreach (var relativePath in WorkerConflictingModRelativePaths)
             {
                 DeleteFileIfExists(Path.Combine(instanceDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar)));
             }

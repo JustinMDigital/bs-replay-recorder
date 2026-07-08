@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
@@ -30,6 +32,15 @@ public sealed class ControlPanelStore
     private const string BeatSaberExecutableName = "Beat Saber.exe";
     private const string BeatSaberProcessName = "Beat Saber";
     private const string BeatSaberSteamAppId = "620980";
+    private const string SteamApiInitFailedLogText = "SteamAPI_Init() failed";
+    private const string SteamUnavailableLaunchMessage =
+        "Beat Saber exited because Steam was not available. Open Steam, make sure you are logged in, then launch the worker again.";
+    private const string VrControllerThumbstickFailureLogText = "VRController.get_thumbstick";
+    private const string VrControllerTriggerFailureLogText = "VRController.get_triggerValue";
+    private const string VrControllerFocusFailureLogText = "DeactivateVRControllersOnFocusCapture";
+    private const string BeatSaberBlackScreenLaunchMessage =
+        "Beat Saber appears stuck on a black screen after launch. The log is repeatedly throwing Unity VR controller errors before BeatLeader's replay loader comes online; the recorder closed the stuck game. Relaunch this worker, or rebuild the instance if it repeats.";
+    private const int VrControllerFailureMinimumOccurrences = 20;
     private const double LagSpikeFramesPerSecondThreshold = 50;
     private const double MinimumRecordingLagSpikeStartupGraceSeconds = 12;
     private static readonly TimeSpan LagSpikeLowFpsDurationThreshold = TimeSpan.FromSeconds(10);
@@ -58,6 +69,13 @@ public sealed class ControlPanelStore
         "UserData/ScoreSaber/Replays",
         "UserData/BSWorldCupReplayRecorder/Recordings",
         "UserData/BSAutoReplayRecorder/Recordings"
+    };
+    private static readonly string[] WorkerConflictingModRelativePaths =
+    {
+        "Plugins/BeatSaverDownloader.dll",
+        "Plugins/DataPuller.dll",
+        "UserData/BeatSaverDownloader.ini",
+        "UserData/DataPuller.json"
     };
 
     private readonly object _sync = new object();
@@ -557,6 +575,36 @@ public sealed class ControlPanelStore
                 copiedPaths,
                 skippedCount,
                 new List<string>());
+        }
+    }
+
+    public MapCollectionRecord RenameMapCollection(string id, RenameMapCollectionRequest request)
+    {
+        if (request == null)
+        {
+            throw new InvalidOperationException("Collection rename request is required.");
+        }
+
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(id);
+            var name = NormalizeNullable(request.Name);
+            if (name == null)
+            {
+                throw new InvalidOperationException("Collection name is required.");
+            }
+
+            if (string.Equals(collection.Name, name, StringComparison.Ordinal))
+            {
+                return CloneMapCollection(collection);
+            }
+
+            var previousName = collection.Name;
+            collection.Name = name;
+            collection.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            AddEventNoLock("Info", "Collections", "Renamed collection: " + previousName + " to " + name + ".");
+            SaveNoLock();
+            return CloneMapCollection(collection);
         }
     }
 
@@ -1546,15 +1594,19 @@ public sealed class ControlPanelStore
                 foreach (var target in targets.Skip(1)
                              .Where(target => !File.Exists(Path.Combine(target.Directory, BeatSaberExecutableName))))
                 {
+                    var replacePartialDirectory = Directory.Exists(target.Directory);
                     CopyManagedInstanceDirectory(
                         sourceDirectory,
                         target.Directory,
-                        overwriteExisting: false,
-                        copyExistingSongs: false);
+                        overwriteExisting: replacePartialDirectory,
+                        copyExistingSongs: false,
+                        skipManagedSharedFolders: true);
                     records.Add(CreateProvisionRecord(
                         target,
                         "Copied",
-                        "Copied from " + baseline.Name + ", excluding existing songs."));
+                        (replacePartialDirectory
+                            ? "Recreated partial folder from "
+                            : "Copied from ") + baseline.Name + ", excluding shared folders already managed by the recorder."));
                 }
             }
             else
@@ -2129,6 +2181,7 @@ public sealed class ControlPanelStore
             var now = DateTimeOffset.UtcNow;
             var instance = FindWorkerNoLock(request.WorkerId);
             instance.LastHeartbeatUtc = now;
+            KeepTaskbarHiddenDuringRunNoLock();
             instance.Status = NormalizeStatus(request.Status, "Online");
             instance.CurrentReplayId = NormalizeNullable(request.CurrentReplayId);
             instance.LastReportedFramesPerSecond = NormalizeFramesPerSecond(request.FramesPerSecond);
@@ -2221,6 +2274,7 @@ public sealed class ControlPanelStore
             var now = DateTimeOffset.UtcNow;
             var instance = FindWorkerNoLock(workerId);
             instance.LastHeartbeatUtc = now;
+            KeepTaskbarHiddenDuringRunNoLock();
 
             if (!instance.Enabled)
             {
@@ -3873,12 +3927,30 @@ public sealed class ControlPanelStore
         }
     }
 
-    private static void CopyManagedInstanceDirectory(
+    private void CopyManagedInstanceDirectory(
         string sourceDirectory,
         string targetDirectory,
         bool overwriteExisting,
         bool copyExistingSongs)
     {
+        CopyManagedInstanceDirectory(
+            sourceDirectory,
+            targetDirectory,
+            overwriteExisting,
+            copyExistingSongs,
+            skipManagedSharedFolders: false);
+    }
+
+    private void CopyManagedInstanceDirectory(
+        string sourceDirectory,
+        string targetDirectory,
+        bool overwriteExisting,
+        bool copyExistingSongs,
+        bool skipManagedSharedFolders)
+    {
+        var targetHadEntries = Directory.Exists(targetDirectory) &&
+                               Directory.EnumerateFileSystemEntries(targetDirectory).Any();
+        var cleanupPartialOnFailure = overwriteExisting || !targetHadEntries;
         if (Directory.Exists(targetDirectory))
         {
             if (Directory.EnumerateFileSystemEntries(targetDirectory).Any() && !overwriteExisting)
@@ -3888,18 +3960,59 @@ public sealed class ControlPanelStore
 
             if (overwriteExisting)
             {
-                Directory.Delete(targetDirectory, recursive: true);
+                DeleteDirectoryWithoutFollowingReparsePoints(targetDirectory);
             }
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(targetDirectory) ?? targetDirectory);
-        CopyDirectory(
-            sourceDirectory,
-            targetDirectory,
-            overwrite: true,
-            relativePath => IsProvisionTransientRelativePath(relativePath) ||
-                            IsPreviousSongLibraryBackupRelativePath(relativePath) ||
-                            (!copyExistingSongs && IsPreviousSongLibraryRelativePath(relativePath)));
+        try
+        {
+            var managedSharedFolderPaths = skipManagedSharedFolders
+                ? CreateSharedFolderDefinitionsNoLock()
+                    .Select(definition => NormalizeProvisionRelativePath(definition.InstanceRelativePath))
+                    .Where(relativePath => !string.IsNullOrWhiteSpace(relativePath))
+                    .ToList()
+                : new List<string>();
+            Directory.CreateDirectory(Path.GetDirectoryName(targetDirectory) ?? targetDirectory);
+            CopyDirectory(
+                sourceDirectory,
+                targetDirectory,
+                overwrite: true,
+                relativePath => IsProvisionTransientRelativePath(relativePath) ||
+                                IsPreviousSongLibraryBackupRelativePath(relativePath) ||
+                                IsWorkerConflictingModRelativePath(relativePath) ||
+                                (!copyExistingSongs && IsPreviousSongLibraryRelativePath(relativePath)) ||
+                                (skipManagedSharedFolders && IsManagedSharedFolderRelativePath(relativePath, managedSharedFolderPaths)));
+        }
+        catch
+        {
+            if (cleanupPartialOnFailure && Directory.Exists(targetDirectory))
+            {
+                DeleteDirectoryWithoutFollowingReparsePoints(targetDirectory);
+            }
+
+            throw;
+        }
+    }
+
+    private static bool IsManagedSharedFolderRelativePath(string relativePath, IReadOnlyList<string> managedSharedFolderPaths)
+    {
+        var normalized = NormalizeProvisionRelativePath(relativePath);
+        foreach (var managedPath in managedSharedFolderPaths)
+        {
+            if (string.Equals(normalized, managedPath, StringComparison.OrdinalIgnoreCase) ||
+                normalized.StartsWith(managedPath + "/", StringComparison.OrdinalIgnoreCase) ||
+                normalized.StartsWith(managedPath + ".local-", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeProvisionRelativePath(string relativePath)
+    {
+        return relativePath.Replace('\\', '/').Trim('/');
     }
 
     private void DeleteManagedInstanceDirectoryNoLock(WorkerInstanceRecord instance)
@@ -4267,6 +4380,47 @@ public sealed class ControlPanelStore
         instance.Status = "Idle";
     }
 
+    private void MarkInstanceLaunchFailedAfterExitNoLock(WorkerInstanceRecord instance, string message)
+    {
+        ReleaseActiveAssignmentNoLock(instance, "Queued");
+        instance.WorkerId = null;
+        instance.GameProcessId = null;
+        instance.GameLaunchStatus = "Failed";
+        instance.GameLaunchError = message;
+        instance.AudioRoutingStatus = "Stopped";
+        instance.AudioRoutingError = null;
+        ResetInactiveInstanceIdentityNoLock(instance);
+        instance.CurrentReplayId = null;
+        instance.ActiveAssignmentId = null;
+        instance.Status = "Idle";
+        AddEventNoLock("Bad", "Launch", instance.Name + ": " + message, instanceIndex: instance.Index);
+    }
+
+    private void FailRunningInstanceLaunchNoLock(WorkerInstanceRecord instance, string message)
+    {
+        try
+        {
+            using var process = FindBeatSaberProcessForInstance(instance);
+            if (process != null && !process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                if (!process.WaitForExit(5000))
+                {
+                    throw new InvalidOperationException("Beat Saber did not exit within 5 seconds.");
+                }
+            }
+
+            MarkInstanceLaunchFailedAfterExitNoLock(instance, message);
+        }
+        catch (Exception ex)
+        {
+            var failureMessage = message + " Could not close the stuck game: " + ex.Message;
+            instance.GameLaunchStatus = "Failed";
+            instance.GameLaunchError = failureMessage;
+            AddEventNoLock("Bad", "Launch", instance.Name + ": " + failureMessage, instanceIndex: instance.Index);
+        }
+    }
+
     private static void ApplyBeatSaberWindowedRegistryState(string launchArguments)
     {
         if (!OperatingSystem.IsWindows())
@@ -4356,6 +4510,13 @@ public sealed class ControlPanelStore
                     changed = true;
                 }
 
+                var runningLaunchFailureMessage = DetectKnownLaunchFailureMessage(instance);
+                if (runningLaunchFailureMessage != null)
+                {
+                    FailRunningInstanceLaunchNoLock(instance, runningLaunchFailureMessage);
+                    changed = true;
+                }
+
                 continue;
             }
 
@@ -4366,9 +4527,19 @@ public sealed class ControlPanelStore
                 continue;
             }
 
+            var wasLaunchAttempt =
+                string.Equals(instance.GameLaunchStatus, "Started", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(instance.GameLaunchStatus, "Already running", StringComparison.OrdinalIgnoreCase);
+            var launchFailureMessage = wasLaunchAttempt ? DetectKnownLaunchFailureMessage(instance) : null;
+            if (launchFailureMessage != null)
+            {
+                MarkInstanceLaunchFailedAfterExitNoLock(instance, launchFailureMessage);
+                changed = true;
+                continue;
+            }
+
             instance.GameProcessId = null;
-            if (string.Equals(instance.GameLaunchStatus, "Started", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(instance.GameLaunchStatus, "Already running", StringComparison.OrdinalIgnoreCase))
+            if (wasLaunchAttempt)
             {
                 instance.GameLaunchStatus = "Exited";
             }
@@ -4377,6 +4548,160 @@ public sealed class ControlPanelStore
         }
 
         return changed;
+    }
+
+    private static string? DetectKnownLaunchFailureMessage(WorkerInstanceRecord instance)
+    {
+        if (!instance.GameLaunchedAtUtc.HasValue)
+        {
+            return null;
+        }
+
+        var logCutoff = instance.GameLaunchedAtUtc.Value.UtcDateTime.AddSeconds(-5);
+        foreach (var log in GetRecentInstanceLogs(instance))
+        {
+            if (log.LastWriteTimeUtc < logCutoff)
+            {
+                continue;
+            }
+
+            if (FileContainsText(log.FullName, SteamApiInitFailedLogText))
+            {
+                return SteamUnavailableLaunchMessage;
+            }
+
+            if (FileContainsVrControllerFailureLoop(log.FullName))
+            {
+                return BeatSaberBlackScreenLaunchMessage;
+            }
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<FileInfo> GetRecentInstanceLogs(WorkerInstanceRecord instance)
+    {
+        var launchDirectory = NormalizeNullable(instance.LaunchDirectory);
+        if (launchDirectory == null)
+        {
+            return Array.Empty<FileInfo>();
+        }
+
+        var logDirectory = Path.Combine(launchDirectory, "Logs");
+        if (!Directory.Exists(logDirectory))
+        {
+            return Array.Empty<FileInfo>();
+        }
+
+        try
+        {
+            return Directory
+                .EnumerateFiles(logDirectory)
+                .Where(IsBeatSaberLogFile)
+                .Select(path => new FileInfo(path))
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .Take(8)
+                .ToList();
+        }
+        catch (IOException)
+        {
+            return Array.Empty<FileInfo>();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Array.Empty<FileInfo>();
+        }
+    }
+
+    private static bool IsBeatSaberLogFile(string path)
+    {
+        var fileName = Path.GetFileName(path);
+        return fileName.EndsWith(".log", StringComparison.OrdinalIgnoreCase) ||
+               fileName.EndsWith(".log.gz", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool FileContainsText(string path, string text)
+    {
+        return VisitLogLines(path, line => line.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool FileContainsVrControllerFailureLoop(string path)
+    {
+        var inputFailures = 0;
+        var focusFailures = 0;
+        var nullReferences = 0;
+        return VisitLogLines(
+            path,
+            line =>
+            {
+                if (line.Contains("NullReferenceException", StringComparison.OrdinalIgnoreCase))
+                {
+                    nullReferences++;
+                }
+
+                if (line.Contains(VrControllerThumbstickFailureLogText, StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains(VrControllerTriggerFailureLogText, StringComparison.OrdinalIgnoreCase))
+                {
+                    inputFailures++;
+                }
+
+                if (line.Contains(VrControllerFocusFailureLogText, StringComparison.OrdinalIgnoreCase))
+                {
+                    focusFailures++;
+                }
+
+                if (nullReferences >= VrControllerFailureMinimumOccurrences &&
+                    inputFailures >= VrControllerFailureMinimumOccurrences &&
+                    focusFailures >= VrControllerFailureMinimumOccurrences)
+                {
+                    return true;
+                }
+
+                return false;
+            });
+    }
+
+    private static bool VisitLogLines(string path, Func<string, bool> visitLine)
+    {
+        try
+        {
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+            {
+                using var gzip = new GZipStream(file, CompressionMode.Decompress);
+                using var reader = new StreamReader(gzip, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                return VisitReaderLines(reader, visitLine);
+            }
+
+            using var plainReader = new StreamReader(file, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            return VisitReaderLines(plainReader, visitLine);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool VisitReaderLines(TextReader reader, Func<string, bool> visitLine)
+    {
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (visitLine(line))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static int? FindBeatSaberProcessIdForInstance(WorkerInstanceRecord instance)
@@ -5084,7 +5409,17 @@ public sealed class ControlPanelStore
     {
         if (_state.Settings.HideTaskbarDuringRun)
         {
-            TaskbarVisibilityController.Hide();
+            TaskbarVisibilityController.HideWithRetries(_state.Settings.MonitorIndex);
+        }
+    }
+
+    private void KeepTaskbarHiddenDuringRunNoLock()
+    {
+        if (_state.Run.IsRunning &&
+            !_state.Run.CancellationRequested &&
+            _state.Settings.HideTaskbarDuringRun)
+        {
+            TaskbarVisibilityController.Hide(_state.Settings.MonitorIndex);
         }
     }
 
@@ -5210,6 +5545,65 @@ public sealed class ControlPanelStore
             _state.Settings.RecordingDisplayScalePercent,
             _state.Settings.MonitorIndex,
             throwOnFailure: true);
+        ReapplyRunningWindowPlacementAfterDisplayScaleNoLock();
+    }
+
+    private void ReapplyRunningWindowPlacementAfterDisplayScaleNoLock()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var monitor = NativeWindowPlacement.TryGetMonitorBounds(_state.Settings.MonitorIndex);
+        if (!monitor.HasValue)
+        {
+            AddEventNoLock(
+                "Warn",
+                "Display",
+                "Display scale changed, but window placement could not find monitor " +
+                (_state.Settings.MonitorIndex + 1).ToString(CultureInfo.InvariantCulture) +
+                ".");
+            return;
+        }
+
+        var enabledInstanceCount = Math.Max(1, _state.Instances.Count(instance => instance.Enabled));
+        var columns = enabledInstanceCount == 1 ? 1 : 2;
+        var rows = enabledInstanceCount == 1 ? 1 : 2;
+        var appliedCount = 0;
+        foreach (var instance in _state.Instances.Where(instance => instance.Enabled))
+        {
+            using var process = FindBeatSaberProcessForInstance(instance);
+            if (process == null || process.HasExited)
+            {
+                continue;
+            }
+
+            var windowHandle = NativeWindowPlacement.FindWindowForProcess(process.Id);
+            if (windowHandle == IntPtr.Zero)
+            {
+                continue;
+            }
+
+            var plan = NativeWindowPlacement.CreatePlacementPlan(
+                monitor.Value,
+                instance.Index,
+                columns,
+                rows);
+            NativeWindowPlacement.Apply(windowHandle, plan);
+            appliedCount++;
+        }
+
+        if (appliedCount > 0)
+        {
+            AddEventNoLock(
+                "Info",
+                "Display",
+                "Reapplied window placement after display scale change for " +
+                appliedCount.ToString(CultureInfo.InvariantCulture) +
+                " running game" +
+                (appliedCount == 1 ? "." : "s."));
+        }
     }
 
     private void RestoreDisplayScaleNoLock()
@@ -7879,6 +8273,13 @@ public sealed class ControlPanelStore
             normalized.StartsWith(transientPath + "/", StringComparison.OrdinalIgnoreCase));
     }
 
+    private static bool IsWorkerConflictingModRelativePath(string relativePath)
+    {
+        var normalized = relativePath.Replace('\\', '/').Trim('/');
+        return WorkerConflictingModRelativePaths.Any(conflictingPath =>
+            string.Equals(normalized, conflictingPath, StringComparison.OrdinalIgnoreCase));
+    }
+
     private void AddEventNoLock(
         string kind,
         string tag,
@@ -8356,6 +8757,172 @@ public sealed class ControlPanelStore
     {
         var bytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value));
         return Convert.ToHexString(bytes).Substring(0, 16).ToLowerInvariant();
+    }
+
+    private static class NativeWindowPlacement
+    {
+        private const int GwlStyle = -16;
+        private const int SwRestore = 9;
+        private const uint SwpNoZOrder = 0x0004;
+        private const uint SwpNoActivate = 0x0010;
+        private const uint SwpFrameChanged = 0x0020;
+        private const uint SwpShowWindow = 0x0040;
+        private const long WsPopup = 0x80000000L;
+        private const long WsVisible = 0x10000000L;
+        private const long WsOverlappedWindow = 0x00CF0000L;
+
+        public static Rect? TryGetMonitorBounds(int monitorIndex)
+        {
+            var monitors = new List<Rect>();
+            var success = NativeMethods.EnumDisplayMonitors(
+                IntPtr.Zero,
+                IntPtr.Zero,
+                (IntPtr hMonitor, IntPtr hdcMonitor, ref Rect monitorRect, IntPtr data) =>
+                {
+                    var monitorInfo = new MonitorInfo
+                    {
+                        Size = Marshal.SizeOf<MonitorInfo>()
+                    };
+                    if (NativeMethods.GetMonitorInfo(hMonitor, ref monitorInfo))
+                    {
+                        monitors.Add(monitorInfo.Monitor);
+                    }
+
+                    return true;
+                },
+                IntPtr.Zero);
+
+            if (!success || monitorIndex < 0 || monitorIndex >= monitors.Count)
+            {
+                return null;
+            }
+
+            return monitors[monitorIndex];
+        }
+
+        public static IntPtr FindWindowForProcess(int processId)
+        {
+            var found = IntPtr.Zero;
+            NativeMethods.EnumWindows(
+                (hWnd, lParam) =>
+                {
+                    if (!NativeMethods.IsWindowVisible(hWnd))
+                    {
+                        return true;
+                    }
+
+                    NativeMethods.GetWindowThreadProcessId(hWnd, out var windowProcessId);
+                    if (windowProcessId != processId)
+                    {
+                        return true;
+                    }
+
+                    found = hWnd;
+                    return false;
+                },
+                IntPtr.Zero);
+            return found;
+        }
+
+        public static PlacementPlan CreatePlacementPlan(Rect monitor, int instanceIndex, int columns, int rows)
+        {
+            columns = Math.Max(1, columns);
+            rows = Math.Max(1, rows);
+            var tileWidth = Math.Max(1, (monitor.Right - monitor.Left) / columns);
+            var tileHeight = Math.Max(1, (monitor.Bottom - monitor.Top) / rows);
+            var column = Math.Max(0, instanceIndex) % columns;
+            var row = Math.Max(0, instanceIndex) / columns;
+            return new PlacementPlan(
+                monitor.Left + column * tileWidth,
+                monitor.Top + row * tileHeight,
+                tileWidth,
+                tileHeight);
+        }
+
+        public static void Apply(IntPtr hWnd, PlacementPlan plan)
+        {
+            NativeMethods.ShowWindow(hWnd, SwRestore);
+            var currentStyle = NativeMethods.GetWindowLongPtr(hWnd, GwlStyle).ToInt64();
+            var windowedStyle = (currentStyle & ~WsOverlappedWindow) | WsPopup | WsVisible;
+            if (windowedStyle != currentStyle)
+            {
+                NativeMethods.SetWindowLongPtr(hWnd, GwlStyle, new IntPtr(windowedStyle));
+            }
+
+            NativeMethods.SetWindowPos(
+                hWnd,
+                IntPtr.Zero,
+                plan.Left,
+                plan.Top,
+                plan.Width,
+                plan.Height,
+                SwpNoZOrder | SwpNoActivate | SwpFrameChanged | SwpShowWindow);
+        }
+
+        public readonly record struct PlacementPlan(int Left, int Top, int Width, int Height);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct Rect
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MonitorInfo
+        {
+            public int Size;
+            public Rect Monitor;
+            public Rect WorkArea;
+            public uint Flags;
+        }
+
+        private static class NativeMethods
+        {
+            public delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref Rect lprcMonitor, IntPtr dwData);
+
+            public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+            [DllImport("user32.dll", SetLastError = true)]
+            public static extern bool EnumDisplayMonitors(
+                IntPtr hdc,
+                IntPtr lprcClip,
+                MonitorEnumProc lpfnEnum,
+                IntPtr dwData);
+
+            [DllImport("user32.dll", SetLastError = true)]
+            public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo lpmi);
+
+            [DllImport("user32.dll")]
+            public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+            [DllImport("user32.dll")]
+            public static extern bool IsWindowVisible(IntPtr hWnd);
+
+            [DllImport("user32.dll")]
+            public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
+
+            [DllImport("user32.dll")]
+            public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+            [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+            public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+            [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+            public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+            [DllImport("user32.dll")]
+            public static extern bool SetWindowPos(
+                IntPtr hWnd,
+                IntPtr hWndInsertAfter,
+                int x,
+                int y,
+                int cx,
+                int cy,
+                uint flags);
+        }
     }
 
     private sealed class ReferenceImportDownloadResult

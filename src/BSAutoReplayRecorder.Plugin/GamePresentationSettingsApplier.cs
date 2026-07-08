@@ -27,6 +27,7 @@ internal static class GamePresentationSettingsApplier
         }
 
         settings.Normalize();
+        BeatLeaderReplayUiSuppressor.Install(logger);
 
         var changedSections = new List<string>();
         foreach (var applier in SectionAppliers)
@@ -75,22 +76,14 @@ internal static class GamePresentationSettingsApplier
                                    ?? new ReplayerSettings();
             var changed = false;
 
-            if (replayerSettings.AutoHideUI != settings.NoHud)
-            {
-                replayerSettings.AutoHideUI = settings.NoHud;
-                changed = true;
-            }
-
-            changed |= SetBoolean(replayerSettings.LoadPlayerEnvironment, settings.LoadPlayerEnvironment, value => replayerSettings.LoadPlayerEnvironment = value);
-            changed |= SetBoolean(replayerSettings.LoadPlayerJumpDistance, settings.LoadPlayerJumpDistance, value => replayerSettings.LoadPlayerJumpDistance = value);
-            changed |= SetBoolean(replayerSettings.IgnoreModifiers, settings.IgnoreModifiers, value => replayerSettings.IgnoreModifiers = value);
-            changed |= SetBoolean(replayerSettings.ShowHead, settings.ShowHead, value => replayerSettings.ShowHead = value);
-            changed |= SetBoolean(replayerSettings.ShowLeftSaber, settings.ShowLeftSaber, value => replayerSettings.ShowLeftSaber = value);
-            changed |= SetBoolean(replayerSettings.ShowRightSaber, settings.ShowRightSaber, value => replayerSettings.ShowRightSaber = value);
-            changed |= SetBoolean(replayerSettings.ShowWatermark, settings.ShowWatermark, value => replayerSettings.ShowWatermark = value);
-            changed |= SetBoolean(replayerSettings.ShowTimelineMisses, settings.ShowTimelineMisses, value => replayerSettings.ShowTimelineMisses = value);
-            changed |= SetBoolean(replayerSettings.ShowTimelineBombs, settings.ShowTimelineBombs, value => replayerSettings.ShowTimelineBombs = value);
-            changed |= SetBoolean(replayerSettings.ShowTimelinePauses, settings.ShowTimelinePauses, value => replayerSettings.ShowTimelinePauses = value);
+            changed |= SetBooleanMemberIfAvailable(replayerSettings, "AutoHideUI", settings.NoHud);
+            changed |= ApplyBeatLeaderReplayUiSuppression(replayerSettings);
+            changed |= SetBooleanMemberIfAvailable(replayerSettings, "LoadPlayerEnvironment", settings.LoadPlayerEnvironment);
+            changed |= SetBooleanMemberIfAvailable(replayerSettings, "LoadPlayerJumpDistance", settings.LoadPlayerJumpDistance);
+            changed |= SetBooleanMemberIfAvailable(replayerSettings, "IgnoreModifiers", settings.IgnoreModifiers);
+            changed |= SetBooleanMemberIfAvailable(replayerSettings, "ShowWatermark", settings.ShowWatermark);
+            changed |= ApplyBeatLeaderBodySettings(replayerSettings, settings);
+            changed |= ApplyBeatLeaderTimelineMarkers(replayerSettings, settings);
 
             if (!ReferenceEquals(GetPluginConfigReplayerSettings(), replayerSettings))
             {
@@ -104,6 +97,93 @@ internal static class GamePresentationSettingsApplier
             }
 
             return new GamePresentationSettingsApplyResult(changed);
+        }
+
+        private static bool ApplyBeatLeaderReplayUiSuppression(ReplayerSettings replayerSettings)
+        {
+            var uiSettings = GetOrCreateMemberObject(
+                replayerSettings,
+                "UISettings",
+                "BeatLeader.Models.ReplayerUISettings",
+                out var created);
+            var changed = created;
+            if (uiSettings == null)
+            {
+                return changed;
+            }
+
+            changed |= SetBooleanMemberIfAvailable(uiSettings, "QuickSettingsEnabled", false);
+            changed |= SetBooleanMemberIfAvailable(uiSettings, "ShowUIOnPause", false);
+            return changed;
+        }
+
+        private static bool ApplyBeatLeaderBodySettings(ReplayerSettings replayerSettings, GamePresentationSettings settings)
+        {
+            var bodySettings = GetOrCreateMemberObject(
+                replayerSettings,
+                "BodySettings",
+                "BeatLeader.Models.BodySettings",
+                out var changed);
+            if (bodySettings == null)
+            {
+                changed |= SetBooleanMemberIfAvailable(replayerSettings, "ShowHead", settings.ShowHead);
+                changed |= SetBooleanMemberIfAvailable(replayerSettings, "ShowLeftSaber", settings.ShowLeftSaber);
+                changed |= SetBooleanMemberIfAvailable(replayerSettings, "ShowRightSaber", settings.ShowRightSaber);
+                return changed;
+            }
+
+            var basicSettings = GetOrCreateBodySettingsConfig(
+                bodySettings,
+                "BeatLeader.Models.BasicBodySettings",
+                out var configChanged);
+            changed |= configChanged;
+            if (basicSettings == null)
+            {
+                return changed;
+            }
+
+            var bodyChanged = false;
+            bodyChanged |= SetBooleanMemberIfAvailable(basicSettings, "HeadEnabled", settings.ShowHead);
+            bodyChanged |= SetBooleanMemberIfAvailable(basicSettings, "LeftHandEnabled", false);
+            bodyChanged |= SetBooleanMemberIfAvailable(basicSettings, "RightHandEnabled", false);
+            bodyChanged |= SetBooleanMemberIfAvailable(basicSettings, "LeftSaberEnabled", settings.ShowLeftSaber);
+            bodyChanged |= SetBooleanMemberIfAvailable(basicSettings, "RightSaberEnabled", settings.ShowRightSaber);
+            if (bodyChanged)
+            {
+                NotifyBodySettingsConfigUpdated(bodySettings, basicSettings);
+            }
+
+            return changed || bodyChanged;
+        }
+
+        private static bool ApplyBeatLeaderTimelineMarkers(ReplayerSettings replayerSettings, GamePresentationSettings settings)
+        {
+            var directChanged = false;
+            directChanged |= SetBooleanMemberIfAvailable(replayerSettings, "ShowTimelineMisses", settings.ShowTimelineMisses);
+            directChanged |= SetBooleanMemberIfAvailable(replayerSettings, "ShowTimelineBombs", settings.ShowTimelineBombs);
+            directChanged |= SetBooleanMemberIfAvailable(replayerSettings, "ShowTimelinePauses", settings.ShowTimelinePauses);
+
+            var uiSettings = GetOrCreateMemberObject(
+                replayerSettings,
+                "UISettings",
+                "BeatLeader.Models.ReplayerUISettings",
+                out var created);
+            if (uiSettings == null)
+            {
+                return directChanged || created;
+            }
+
+            return directChanged ||
+                   created ||
+                   SetEnumFlagsMemberIfAvailable(
+                       uiSettings,
+                       "MarkersMask",
+                       new Dictionary<string, bool>
+                       {
+                           { "Miss", settings.ShowTimelineMisses },
+                           { "Bomb", settings.ShowTimelineBombs },
+                           { "Pause", settings.ShowTimelinePauses }
+                       });
         }
     }
 
@@ -156,11 +236,11 @@ internal static class GamePresentationSettingsApplier
         public GamePresentationSettingsApplyResult Apply(GamePresentationSettings settings)
         {
             var playerDataModel = ResolvePlayerDataModel()
-                                  ?? throw new InvalidOperationException("Beat Saber player data model is not available yet.");
+                                  ?? throw new GamePresentationSettingsNotReadyException("Beat Saber player data model is not available yet.");
             var playerData = playerDataModel.playerData
-                             ?? throw new InvalidOperationException("Beat Saber player data is not loaded yet.");
+                             ?? throw new GamePresentationSettingsNotReadyException("Beat Saber player data is not loaded yet.");
             var current = playerData.playerSpecificSettings
-                          ?? throw new InvalidOperationException("Beat Saber player-specific settings are not loaded yet.");
+                          ?? throw new GamePresentationSettingsNotReadyException("Beat Saber player-specific settings are not loaded yet.");
 
             var next = current.CopyWith(
                 null,
@@ -203,7 +283,7 @@ internal static class GamePresentationSettingsApplier
         private static bool ApplyColorScheme(PlayerData playerData, GamePresentationSettings settings)
         {
             var colorSchemesSettings = playerData.colorSchemesSettings
-                                       ?? throw new InvalidOperationException("Beat Saber color settings are not loaded yet.");
+                                       ?? throw new GamePresentationSettingsNotReadyException("Beat Saber color settings are not loaded yet.");
             var selectedColorScheme = colorSchemesSettings.GetSelectedColorScheme()
                                       ?? colorSchemesSettings.GetColorSchemeForId("User0")
                                       ?? throw new InvalidOperationException("Beat Saber user color scheme is not available yet.");
@@ -414,6 +494,48 @@ internal static class GamePresentationSettingsApplier
             ?.GetValue(target, null);
     }
 
+    private static object? GetInstanceMemberValue(object target, string memberName)
+    {
+        var targetType = target.GetType();
+        var property = targetType.GetProperty(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (property != null && property.CanRead)
+        {
+            return property.GetValue(target, null);
+        }
+
+        return targetType
+            .GetField(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.GetValue(target);
+    }
+
+    private static bool TrySetInstanceMemberValue(object target, string memberName, object value)
+    {
+        var targetType = target.GetType();
+        var property = targetType.GetProperty(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (property != null &&
+            property.CanWrite &&
+            property.PropertyType.IsInstanceOfType(value))
+        {
+            property.SetValue(target, value, null);
+            return true;
+        }
+
+        var field = targetType.GetField(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field == null || !field.FieldType.IsInstanceOfType(value))
+        {
+            return false;
+        }
+
+        field.SetValue(target, value);
+        return true;
+    }
+
     private static bool SetBooleanMemberIfAvailable(object target, string memberName, bool nextValue)
     {
         return TrySetBooleanMember(target, memberName, nextValue, out var changed) && changed;
@@ -427,6 +549,161 @@ internal static class GamePresentationSettingsApplier
     private static bool SetInt32MemberIfAvailable(object target, string memberName, int nextValue)
     {
         return TrySetInt32Member(target, memberName, nextValue, out var changed) && changed;
+    }
+
+    private static object? GetOrCreateMemberObject(
+        object target,
+        string memberName,
+        string memberTypeName,
+        out bool changed)
+    {
+        changed = false;
+
+        var current = GetInstanceMemberValue(target, memberName);
+        if (current != null)
+        {
+            return current;
+        }
+
+        var memberType = FindType(memberTypeName);
+        if (memberType == null)
+        {
+            return null;
+        }
+
+        var created = Activator.CreateInstance(memberType);
+        if (created == null || !TrySetInstanceMemberValue(target, memberName, created))
+        {
+            return null;
+        }
+
+        changed = true;
+        return created;
+    }
+
+    private static object? GetOrCreateBodySettingsConfig(
+        object bodySettings,
+        string configTypeName,
+        out bool changed)
+    {
+        changed = false;
+
+        var configType = FindType(configTypeName);
+        if (configType == null)
+        {
+            return null;
+        }
+
+        var getConfigMethod = FindGenericInstanceMethod(bodySettings.GetType(), "GetConfig", parameterCount: 0);
+        var config = getConfigMethod
+            ?.MakeGenericMethod(configType)
+            .Invoke(bodySettings, null);
+        if (config != null)
+        {
+            return config;
+        }
+
+        config = Activator.CreateInstance(configType);
+        if (config == null)
+        {
+            return null;
+        }
+
+        var setConfigMethod = FindGenericInstanceMethod(bodySettings.GetType(), "SetConfig", parameterCount: 1);
+        if (setConfigMethod == null)
+        {
+            return null;
+        }
+
+        setConfigMethod.MakeGenericMethod(configType).Invoke(bodySettings, new[] { config });
+        changed = true;
+        return config;
+    }
+
+    private static void NotifyBodySettingsConfigUpdated(object bodySettings, object config)
+    {
+        bodySettings
+            .GetType()
+            .GetMethod("NotifyConfigUpdated", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.Invoke(bodySettings, new[] { config });
+    }
+
+    private static bool SetEnumFlagsMemberIfAvailable(
+        object target,
+        string memberName,
+        IReadOnlyDictionary<string, bool> flagValues)
+    {
+        var targetType = target.GetType();
+        var property = targetType.GetProperty(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (property?.PropertyType.IsEnum == true && property.CanRead && property.CanWrite)
+        {
+            var current = property.GetValue(target, null);
+            var nextValue = CreateEnumFlagsValue(property.PropertyType, current, flagValues);
+            if (Equals(current, nextValue))
+            {
+                return false;
+            }
+
+            property.SetValue(target, nextValue, null);
+            return true;
+        }
+
+        var field = targetType.GetField(
+            memberName,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (field?.FieldType.IsEnum != true)
+        {
+            return false;
+        }
+
+        var fieldValue = field.GetValue(target);
+        var nextFieldValue = CreateEnumFlagsValue(field.FieldType, fieldValue, flagValues);
+        if (Equals(fieldValue, nextFieldValue))
+        {
+            return false;
+        }
+
+        field.SetValue(target, nextFieldValue);
+        return true;
+    }
+
+    private static object CreateEnumFlagsValue(
+        Type enumType,
+        object? currentValue,
+        IReadOnlyDictionary<string, bool> flagValues)
+    {
+        var nextBits = currentValue == null ? 0 : Convert.ToInt32(currentValue);
+        foreach (var item in flagValues)
+        {
+            if (!Enum.IsDefined(enumType, item.Key))
+            {
+                continue;
+            }
+
+            var bit = Convert.ToInt32(Enum.Parse(enumType, item.Key));
+            nextBits = item.Value
+                ? nextBits | bit
+                : nextBits & ~bit;
+        }
+
+        return Enum.ToObject(enumType, nextBits);
+    }
+
+    private static MethodInfo? FindGenericInstanceMethod(Type targetType, string methodName, int parameterCount)
+    {
+        foreach (var method in targetType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+        {
+            if (string.Equals(method.Name, methodName, StringComparison.Ordinal) &&
+                method.IsGenericMethodDefinition &&
+                method.GetParameters().Length == parameterCount)
+            {
+                return method;
+            }
+        }
+
+        return null;
     }
 
     private static bool TrySetBooleanMember(object target, string memberName, bool nextValue, out bool changed)

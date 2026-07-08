@@ -30,7 +30,23 @@ builder.Services.AddHostedService<IdleShutdownHostedService>();
 
 var app = builder.Build();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context =>
+    {
+        var extension = Path.GetExtension(context.File.Name);
+        if (!string.Equals(extension, ".html", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(extension, ".js", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(extension, ".css", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        context.Context.Response.Headers["Cache-Control"] = "no-store, no-cache, max-age=0";
+        context.Context.Response.Headers["Pragma"] = "no-cache";
+        context.Context.Response.Headers["Expires"] = "0";
+    }
+});
 AppDomain.CurrentDomain.ProcessExit += (_, _) => SafeRestoreTaskbar();
 Console.CancelKeyPress += (_, _) => SafeRestoreTaskbar();
 
@@ -85,6 +101,12 @@ app.MapPost("/api/collections/{id}/import", async (string id, HttpRequest reques
 });
 app.MapPost("/api/collections/{id}/import-references", (string id, ReplayReferenceImportRequest request, ControlPanelStore store, CancellationToken cancellationToken) =>
     ExecuteApiAsync(() => store.ImportReferencesToMapCollectionAsync(id, request, cancellationToken)));
+app.MapPost("/api/collections/{id}/rename", (string id, RenameMapCollectionRequest request, ControlPanelStore store) =>
+    ExecuteApi(() =>
+    {
+        var collection = store.RenameMapCollection(id, request);
+        return new { collection, state = store.Snapshot() };
+    }));
 app.MapPost("/api/collections/{id}/load", (string id, LoadMapCollectionRequest request, ControlPanelStore store) =>
     ExecuteApi(() => store.LoadMapCollection(id, request)));
 app.MapPost("/api/collections/{id}/delete", (string id, ControlPanelStore store) =>

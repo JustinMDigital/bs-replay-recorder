@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Replay Recorder Control Panel</title>
   <link rel="icon" href="/assets/logo.png">
-  <link rel="stylesheet" href="/styles.css?v=timeline-rail-polish-1">
+  <link rel="stylesheet" href="/styles.css?v=collections-rename-1">
 </head>
 <body>
   <main class="shell dashboardShell">
@@ -262,12 +262,14 @@
               <span>Saved collection</span>
               <select id="collectionPageSelect" class="collectionSelect" data-collection-select aria-label="Saved collection"></select>
             </label>
+            <button id="collectionPageRename" class="secondaryButton fullWidth" type="button">Rename collection</button>
             <label class="collectionOverwrite collectionPageOverwrite">
               <input id="collectionPageOverwriteRecorded" type="checkbox">
               <span>Overwrite recorded outputs when loading</span>
             </label>
             <button id="collectionPageLoad" class="primaryButton fullWidth" type="button">Load collection</button>
             <button id="collectionPageRenameRecordings" class="secondaryButton fullWidth" type="button">Rename recordings</button>
+            <button id="collectionPageExportList" class="secondaryButton fullWidth" type="button">Export replay list</button>
             <button id="collectionPageExportCards" class="secondaryButton fullWidth" type="button">Export map cards</button>
             <button id="collectionPageDelete" class="textButton dangerText fullWidth" type="button">Delete collection</button>
           </div>
@@ -986,7 +988,7 @@
     <div class="queueExportPanel">
       <div class="queueExportHeader">
         <div>
-          <span class="queueExportKicker">Queue Export</span>
+          <span id="queueExportKicker" class="queueExportKicker">Queue Export</span>
           <h2 id="queueExportTitle">Replay List</h2>
         </div>
         <button id="closeQueueExport" class="iconButton" type="button" aria-label="Close export list">&#215;</button>
@@ -1050,6 +1052,6 @@
     </div>
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=run-timeline-controls-4"></script>
+  <script src="/app.js?v=collections-rename-1"></script>
 </body>
 </html>

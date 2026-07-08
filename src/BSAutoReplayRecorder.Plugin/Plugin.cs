@@ -18,6 +18,7 @@ public sealed class Plugin
     public void Init(Logger logger)
     {
         _logger = logger;
+        BeatLeaderReplayUiSuppressor.Install(logger);
         _logger.Info("Beat Saber Auto Replay Recorder initialized.");
     }
 

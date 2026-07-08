@@ -9,7 +9,7 @@ param(
 
     [string]$BSIPADependencyVersion = "^4.3.6",
 
-    [string]$BeatLeaderDependencyVersion = "^0.9.33"
+    [string]$BeatLeaderDependencyVersion = ">=0.9.33"
 )
 
 $ErrorActionPreference = "Stop"

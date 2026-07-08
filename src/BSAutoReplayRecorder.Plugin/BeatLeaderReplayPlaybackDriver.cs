@@ -62,8 +62,8 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
         };
 
         var loader = GetLoader();
-        await loader
-            .StartReplayAsync(replay, null!, ReplayerSettings.UserSettings, finishedCallback, cancellationToken)
+        await BeatLeaderCompatibility
+            .StartReplayAsync(loader, replay, ReplayerSettings.UserSettings, finishedCallback, cancellationToken)
             .ConfigureAwait(false);
 
         return new ReplayPlaybackSession(queueItem, replayReference, DateTimeOffset.Now);
@@ -158,14 +158,15 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var loadResult = await loader
+        object? loadResult = await loader
             .LoadBeatmapAsync(hash, replay.info.mode, replay.info.difficulty, cancellationToken)
             .ConfigureAwait(false);
+        var result = BeatLeaderCompatibility.InspectBeatmapLoadResult(loadResult);
 
         _logger.Warn(
             "BeatLeader beatmap probe for hash '" + hash +
-            "': levelFound=" + (loadResult.Item1 != null) +
-            ", keyFound=" + loadResult.Item2.HasValue + ".");
+            "': levelFound=" + result.LevelFound +
+            ", keyFound=" + result.KeyFound + ".");
     }
 
     private static IReadOnlyList<string> CreateFallbackHashCandidates(string hash)

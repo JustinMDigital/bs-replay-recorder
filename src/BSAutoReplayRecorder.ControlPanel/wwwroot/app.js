@@ -19,6 +19,7 @@ let shutdownModalVisible = false;
 let colorPresetCatalog = { builtIn: [], beatSaber: [], saved: [] };
 let setupSourcePathInfo = null;
 let queueExportLastFocus = null;
+let queueExportContext = null;
 let recordingRenameLastFocus = null;
 let recordingRenameContext = null;
 let mapCardExportLastFocus = null;
@@ -2494,10 +2495,13 @@ function renderCollectionControls() {
 
   for (const id of ['saveCollection', 'collectionPageSave']) setDisabled(id, queue.length === 0);
   for (const id of ['loadCollection', 'collectionPageLoad']) setDisabled(id, collections.length === 0);
+  setDisabled('collectionPageRename', collections.length === 0);
   setDisabled('collectionPageDelete', collections.length === 0);
   for (const id of ['exportCollectionCards', 'collectionPageExportCards']) setDisabled(id, collections.length === 0);
   const selectedCollection = collections.find(collection => collection.id === selectedCollectionId) || collections[0] || null;
+  const selectedCollectionItems = Array.isArray(selectedCollection?.items) ? selectedCollection.items : [];
   const selectedCollectionHasRecordings = Boolean(selectedCollection?.items?.some(item => item.completedOutputPath));
+  setDisabled('collectionPageExportList', selectedCollectionItems.length === 0);
   setDisabled(
     'collectionPageRenameRecordings',
     !selectedCollectionHasRecordings || Boolean(state.run?.isRunning) || queue.some(item => isActiveStatus(item.status)));
@@ -2516,7 +2520,7 @@ function renderCollectionControls() {
   }
   const pageNameInput = document.getElementById('collectionPageNameInput');
   if (pageNameInput) {
-    pageNameInput.placeholder = 'New collection name';
+    pageNameInput.placeholder = selectedCollection?.name || 'New collection name';
   }
 }
 
@@ -2640,6 +2644,35 @@ async function loadSelectedCollection() {
   showToast(`Loaded ${result.loadedCount || 0} replay${result.loadedCount === 1 ? '' : 's'}${suffix ? `, ${suffix}` : ''}`);
 }
 
+async function renameSelectedCollection() {
+  const collectionId = getSelectedCollectionId();
+  if (!collectionId) {
+    showToast('Choose a collection');
+    return;
+  }
+
+  const name = (document.getElementById('collectionPageNameInput')?.value || '').trim();
+  if (!name) {
+    showToast('Enter a collection name');
+    document.getElementById('collectionPageNameInput')?.focus();
+    return;
+  }
+
+  const response = await fetch(`/api/collections/${encodeURIComponent(collectionId)}/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name })
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const result = await response.json();
+  state = result.state;
+  selectedCollectionId = result.collection?.id || collectionId;
+  const nameInput = document.getElementById('collectionPageNameInput');
+  if (nameInput) nameInput.value = '';
+  render();
+  showToast(`Renamed ${result.collection?.name || name}`);
+}
+
 async function deleteSelectedCollection() {
   const collectionId = getSelectedCollectionId();
   if (!collectionId) {
@@ -2757,7 +2790,7 @@ function renderCollectionPreview(collection) {
   }
 
   if (items) {
-    const rows = (collection.items || []).slice(0, 9);
+    const rows = collection.items || [];
     items.innerHTML = rows.length
       ? rows.map(renderCollectionPreviewItem).join('')
       : '<div class="collectionPreviewEmpty">This collection has no saved replays.</div>';
@@ -4011,8 +4044,29 @@ async function uploadQueueMap(id, file) {
   });
 }
 
-function buildQueueExportText(format = getQueueExportFormat()) {
-  const queue = state?.queue || [];
+function createQueueExportContext(overrides = {}) {
+  return {
+    source: 'queue',
+    items: state?.queue || [],
+    kicker: 'Queue Export',
+    title: 'Replay List',
+    emptyToast: 'No replays to export',
+    copiedToast: 'Queue list copied',
+    readyToast: 'Queue export ready',
+    countPrefix: '',
+    ...overrides
+  };
+}
+
+function getQueueExportContext() {
+  if (!queueExportContext) {
+    queueExportContext = createQueueExportContext();
+  }
+  return queueExportContext;
+}
+
+function buildQueueExportText(format = getQueueExportFormat(), items = getQueueExportContext().items) {
+  const queue = Array.isArray(items) ? items : [];
   if (format === 'spreadsheet') {
     return [
       ['Song', 'Player', 'Difficulty', 'Mapper', 'Provider'].join('\t'),
@@ -4108,17 +4162,22 @@ function getQueueExportFormat() {
 }
 
 function refreshQueueExportText() {
-  const text = buildQueueExportText();
+  const context = getQueueExportContext();
+  const items = Array.isArray(context.items) ? context.items : [];
+  const text = buildQueueExportText(getQueueExportFormat(), items);
   const textarea = document.getElementById('queueExportText');
   if (textarea) textarea.value = text;
-  const count = state?.queue?.length || 0;
-  setText('queueExportCount', count ? `${count} replay${count === 1 ? '' : 's'}` : 'No replays');
+  const count = items.length || 0;
+  const prefix = context.countPrefix || '';
+  setText('queueExportCount', count ? `${prefix}${count} replay${count === 1 ? '' : 's'}` : 'No replays');
   return text;
 }
 
-async function openQueueExportModal(copyOnOpen = true) {
-  if (!state?.queue?.length) {
-    showToast('No replays to export');
+async function openQueueExportModal(copyOnOpen = true, context = null) {
+  queueExportContext = createQueueExportContext(context || {});
+  const items = Array.isArray(queueExportContext.items) ? queueExportContext.items : [];
+  if (!items.length) {
+    showToast(queueExportContext.emptyToast || 'No replays to export');
     return;
   }
 
@@ -4127,6 +4186,8 @@ async function openQueueExportModal(copyOnOpen = true) {
   if (!modal || !textarea) return;
 
   queueExportLastFocus = document.activeElement;
+  setText('queueExportKicker', queueExportContext.kicker || 'Queue Export');
+  setText('queueExportTitle', queueExportContext.title || 'Replay List');
   modal.hidden = false;
   const text = refreshQueueExportText();
   textarea.focus();
@@ -4134,7 +4195,9 @@ async function openQueueExportModal(copyOnOpen = true) {
 
   if (copyOnOpen) {
     const copied = await copyTextToClipboard(text);
-    showToast(copied ? 'Queue list copied' : 'Queue export ready');
+    showToast(copied
+      ? (queueExportContext.copiedToast || 'Queue list copied')
+      : (queueExportContext.readyToast || 'Queue export ready'));
   }
 }
 
@@ -4146,6 +4209,7 @@ function closeQueueExportModal() {
     queueExportLastFocus.focus();
   }
   queueExportLastFocus = null;
+  queueExportContext = null;
 }
 
 function selectQueueExportText() {
@@ -4156,10 +4220,32 @@ function selectQueueExportText() {
 }
 
 async function copyQueueExportText() {
+  const context = getQueueExportContext();
   const text = refreshQueueExportText();
   selectQueueExportText();
   const copied = await copyTextToClipboard(text);
-  showToast(copied ? 'Queue list copied' : 'Select the text and copy it');
+  showToast(copied ? (context.copiedToast || 'Queue list copied') : 'Select the text and copy it');
+}
+
+async function openCollectionReplayListExportModal(copyOnOpen = true) {
+  const collectionId = getSelectedCollectionId();
+  const collection = (state?.collections || []).find(item => item.id === collectionId);
+  if (!collection) {
+    showToast('Choose a collection');
+    return;
+  }
+
+  const items = Array.isArray(collection.items) ? collection.items : [];
+  await openQueueExportModal(copyOnOpen, {
+    source: 'collection',
+    items,
+    kicker: 'Collection Export',
+    title: 'Replay List',
+    emptyToast: 'No replays in this collection',
+    copiedToast: 'Collection replay list copied',
+    readyToast: 'Collection replay list ready',
+    countPrefix: collection.name ? `${collection.name}: ` : ''
+  });
 }
 
 async function copyTextToClipboard(text) {
@@ -6951,7 +7037,9 @@ document.getElementById('exportCollectionCards')?.addEventListener('click', () =
 document.getElementById('collectionPageCreate')?.addEventListener('click', () => runAction(createEmptyCollection));
 document.getElementById('collectionPageSave')?.addEventListener('click', () => runAction(saveCurrentCollection));
 document.getElementById('collectionPageLoad')?.addEventListener('click', () => runAction(loadSelectedCollection));
+document.getElementById('collectionPageRename')?.addEventListener('click', () => runAction(renameSelectedCollection));
 document.getElementById('collectionPageRenameRecordings')?.addEventListener('click', () => runAction(() => openRecordingRenameModal('collection')));
+document.getElementById('collectionPageExportList')?.addEventListener('click', () => runAction(() => openCollectionReplayListExportModal(true)));
 document.getElementById('collectionPageExportCards')?.addEventListener('click', () => runAction(openCollectionMapCardExportModal));
 document.getElementById('collectionPageDelete')?.addEventListener('click', () => runAction(deleteSelectedCollection));
 document.getElementById('collectionPageAddReplays')?.addEventListener('click', openCollectionReplayPicker);
