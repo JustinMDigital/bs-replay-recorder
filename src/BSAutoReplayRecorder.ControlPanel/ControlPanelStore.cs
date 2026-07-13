@@ -185,6 +185,25 @@ public sealed class ControlPanelStore
         }
     }
 
+    public ControlPanelState RequestMetaSideloadedAppsEnable()
+    {
+        lock (_sync)
+        {
+            if (MetaSideloadedApps.IsEnabled())
+            {
+                AddEventNoLock("Good", "Meta", "Meta sideloaded apps are already enabled.");
+            }
+            else
+            {
+                MetaSideloadedApps.RequestEnable();
+                AddEventNoLock("Info", "Meta", "Windows approval requested to enable Meta sideloaded apps. Approve it, then recheck the source.");
+            }
+
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
     public GameColorPresetCatalog SaveGameColorPreset(SaveGameColorPresetRequest request)
     {
         if (request == null)
@@ -3970,6 +3989,16 @@ public sealed class ControlPanelStore
             throw new InvalidOperationException(BeatSaberExecutableName + " was not found in source folder: " + sourceDirectory);
         }
 
+        var sourceReport = SetupSourcePathDetector.Detect(sourceDirectory);
+        if (!sourceReport.ConfiguredSourceRecorderReady)
+        {
+            var missing = sourceReport.ConfiguredSourceMissingPrerequisites;
+            throw new InvalidOperationException(
+                "Selected Beat Saber source needs " +
+                (missing.Count > 0 ? string.Join(" + ", missing) : "BSIPA and BeatLeader") +
+                " before it can create a recorder worker.");
+        }
+
         return sourceDirectory;
     }
 
@@ -4304,6 +4333,14 @@ public sealed class ControlPanelStore
             return;
         }
 
+        if (store == BeatSaberStore.MetaPc && !MetaSideloadedApps.IsEnabled())
+        {
+            SetLaunchFailureNoLock(
+                instance,
+                "Meta/Oculus PC workers need Meta sideloaded apps enabled. Open Setup, approve the Meta sideloaded-apps request, then launch this worker again.");
+            return;
+        }
+
         object? restorePlaybackDevice = null;
         try
         {
@@ -4315,7 +4352,14 @@ public sealed class ControlPanelStore
                 UseShellExecute = false
             };
 
-            ApplyBeatSaberWindowedRegistryState(_state.Settings.BeatSaberLaunchArguments);
+            var placementPlan = CreateBeatSaberWindowPlacementPlan(
+                _state.Settings.MonitorIndex,
+                instance.Index,
+                _state.Settings.BeatSaberLaunchArguments);
+            ApplyBeatSaberWindowedRegistryState(_state.Settings.BeatSaberLaunchArguments, placementPlan);
+            ApplyBeatSaberWindowedSettingsFile(
+                GetBeatSaberSettingsFilePath(),
+                _state.Settings.BeatSaberLaunchArguments);
             ApplyStoreLaunchEnvironment(startInfo, store);
 
             foreach (var argument in SplitCommandLine(_state.Settings.BeatSaberLaunchArguments))
@@ -4584,7 +4628,28 @@ public sealed class ControlPanelStore
         }
     }
 
-    private static void ApplyBeatSaberWindowedRegistryState(string launchArguments)
+    private static NativeWindowPlacement.PlacementPlan? CreateBeatSaberWindowPlacementPlan(
+        int monitorIndex,
+        int instanceIndex,
+        string launchArguments)
+    {
+        var monitor = NativeWindowPlacement.TryGetMonitorBounds(monitorIndex);
+        if (!monitor.HasValue)
+        {
+            return null;
+        }
+
+        var (width, height) = GetLaunchResolution(launchArguments);
+        return NativeWindowPlacement.CreateFixedSizePlacementPlan(
+            monitor.Value,
+            instanceIndex,
+            width,
+            height);
+    }
+
+    private static void ApplyBeatSaberWindowedRegistryState(
+        string launchArguments,
+        NativeWindowPlacement.PlacementPlan? placementPlan)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -4610,6 +4675,11 @@ public sealed class ControlPanelStore
         SetDwordValue(key, "Screenmanager Resolution Height_h2627697771", height);
         SetDwordValue(key, "Screenmanager Resolution Window Width_h2524650974", width);
         SetDwordValue(key, "Screenmanager Resolution Window Height_h1684712807", height);
+        if (placementPlan.HasValue)
+        {
+            SetDwordValue(key, "Screenmanager Window Position X_h4088080503", placementPlan.Value.Left);
+            SetDwordValue(key, "Screenmanager Window Position Y_h4088080502", placementPlan.Value.Top);
+        }
     }
 
     private static (int Width, int Height) GetLaunchResolution(string launchArguments)
@@ -4634,6 +4704,65 @@ public sealed class ControlPanelStore
         }
 
         return (width, height);
+    }
+
+    internal static bool ApplyBeatSaberWindowedSettingsFile(string settingsPath, string launchArguments)
+    {
+        if (string.IsNullOrWhiteSpace(settingsPath) || !File.Exists(settingsPath))
+        {
+            return false;
+        }
+
+        var (width, height) = GetLaunchResolution(launchArguments);
+        var lines = File.ReadAllLines(settingsPath).ToList();
+        var changed = false;
+        changed |= SetIniValue(lines, "window.fullscreen", "false");
+        changed |= SetIniValue(lines, "window.resolution.x", width.ToString(CultureInfo.InvariantCulture));
+        changed |= SetIniValue(lines, "window.resolution.y", height.ToString(CultureInfo.InvariantCulture));
+        if (!changed)
+        {
+            return false;
+        }
+
+        File.WriteAllLines(settingsPath, lines);
+        return true;
+    }
+
+    private static string GetBeatSaberSettingsFilePath()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return Path.GetFullPath(Path.Combine(
+            localAppData,
+            "..",
+            "LocalLow",
+            "Hyperbolic Magnetism",
+            "Beat Saber",
+            "settings.ini"));
+    }
+
+    private static bool SetIniValue(List<string> lines, string key, string value)
+    {
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var separatorIndex = lines[index].IndexOf('=');
+            if (separatorIndex < 0 ||
+                !string.Equals(lines[index].Substring(0, separatorIndex).Trim(), key, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var updatedLine = key + "=" + value;
+            if (string.Equals(lines[index], updatedLine, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            lines[index] = updatedLine;
+            return true;
+        }
+
+        lines.Add(key + "=" + value);
+        return true;
     }
 
     [SupportedOSPlatform("windows")]
@@ -5737,7 +5866,7 @@ public sealed class ControlPanelStore
         if (queuedProviders.Contains(ReplayProvider.BeatLeader))
         {
             issues.AddRange(runInstances
-                .Where(instance => !instance.BeatLeaderReady)
+                .Where(instance => !instance.BeatLeaderReady && !IsReplayProviderInitializing(instance.BeatLeaderStatus))
                 .Select(instance =>
                     CreateManagedInstanceName(instance.Index) + " BeatLeader: " +
                     (NormalizeNullable(instance.BeatLeaderStatus) ?? "not ready")));
@@ -5760,6 +5889,12 @@ public sealed class ControlPanelStore
         throw new InvalidOperationException(
             "Replay provider readiness failed. " + string.Join("; ", issues.Take(5)) +
             (issues.Count > 5 ? "; and " + (issues.Count - 5) + " more" : "") + ".");
+    }
+
+    private static bool IsReplayProviderInitializing(string? status)
+    {
+        return !string.IsNullOrWhiteSpace(status) &&
+               status.Contains("not available yet", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ApplyRecordingDisplayScaleNoLock()
@@ -5795,9 +5930,7 @@ public sealed class ControlPanelStore
             return;
         }
 
-        var enabledInstanceCount = Math.Max(1, _state.Instances.Count(instance => instance.Enabled));
-        var columns = enabledInstanceCount == 1 ? 1 : 2;
-        var rows = enabledInstanceCount == 1 ? 1 : 2;
+        var (windowWidth, windowHeight) = GetLaunchResolution(_state.Settings.BeatSaberLaunchArguments);
         var appliedCount = 0;
         foreach (var instance in _state.Instances.Where(instance => instance.Enabled))
         {
@@ -5813,11 +5946,11 @@ public sealed class ControlPanelStore
                 continue;
             }
 
-            var plan = NativeWindowPlacement.CreatePlacementPlan(
+            var plan = NativeWindowPlacement.CreateFixedSizePlacementPlan(
                 monitor.Value,
                 instance.Index,
-                columns,
-                rows);
+                windowWidth,
+                windowHeight);
             NativeWindowPlacement.Apply(windowHandle, plan);
             appliedCount++;
         }
@@ -5832,6 +5965,29 @@ public sealed class ControlPanelStore
                 " running game" +
                 (appliedCount == 1 ? "." : "s."));
         }
+    }
+
+    internal static (int Left, int Top, int Width, int Height) CalculateFixedWindowPlacement(
+        int monitorLeft,
+        int monitorTop,
+        int monitorRight,
+        int monitorBottom,
+        int instanceIndex,
+        int requestedWidth,
+        int requestedHeight)
+    {
+        var plan = NativeWindowPlacement.CreateFixedSizePlacementPlan(
+            new NativeWindowPlacement.Rect
+            {
+                Left = monitorLeft,
+                Top = monitorTop,
+                Right = monitorRight,
+                Bottom = monitorBottom
+            },
+            instanceIndex,
+            requestedWidth,
+            requestedHeight);
+        return (plan.Left, plan.Top, plan.Width, plan.Height);
     }
 
     private void RestoreDisplayScaleNoLock()
@@ -9103,6 +9259,29 @@ public sealed class ControlPanelStore
                 tileHeight);
         }
 
+        public static PlacementPlan CreateFixedSizePlacementPlan(
+            Rect monitor,
+            int instanceIndex,
+            int requestedWidth,
+            int requestedHeight)
+        {
+            var monitorWidth = Math.Max(1, monitor.Right - monitor.Left);
+            var monitorHeight = Math.Max(1, monitor.Bottom - monitor.Top);
+            var width = Math.Clamp(requestedWidth, 1, monitorWidth);
+            var height = Math.Clamp(requestedHeight, 1, monitorHeight);
+            var columns = Math.Max(1, monitorWidth / width);
+            var rows = Math.Max(1, monitorHeight / height);
+            var slotCount = Math.Max(1, columns * rows);
+            var slot = Math.Clamp(instanceIndex, 0, slotCount - 1);
+            var column = slot % columns;
+            var row = slot / columns;
+            return new PlacementPlan(
+                monitor.Left + column * width,
+                monitor.Top + row * height,
+                width,
+                height);
+        }
+
         public static void Apply(IntPtr hWnd, PlacementPlan plan)
         {
             NativeMethods.ShowWindow(hWnd, SwRestore);
@@ -9186,6 +9365,7 @@ public sealed class ControlPanelStore
                 int cx,
                 int cy,
                 uint flags);
+
         }
     }
 

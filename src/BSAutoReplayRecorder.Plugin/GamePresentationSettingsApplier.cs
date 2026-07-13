@@ -50,6 +50,8 @@ internal static class GamePresentationSettingsApplier
             }
         }
 
+        BeatLeaderReplayUiSuppressor.SetShowWatermark(settings.ShowWatermark);
+        ApplyRuntimeBeatLeaderWatermark(settings.ShowWatermark);
         ApplyRuntimeAudioSettings(settings);
 
         if (changedSections.Count > 0)
@@ -372,6 +374,39 @@ internal static class GamePresentationSettingsApplier
     private static void ApplyRuntimeAudioSettings(GamePresentationSettings settings)
     {
         ApplyRuntimeAudioSettings(settings.SfxVolume);
+    }
+
+    private static void ApplyRuntimeBeatLeaderWatermark(bool showWatermark)
+    {
+        var watermarkType = FindType("BeatLeader.Components.ReplayWatermark");
+        if (watermarkType == null)
+        {
+            return;
+        }
+
+        var enabledProperty = watermarkType.GetProperty(
+            "Enabled",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (enabledProperty?.PropertyType != typeof(bool) || !enabledProperty.CanWrite)
+        {
+            return;
+        }
+
+        var canBeDisabledProperty = watermarkType.GetProperty(
+            "CanBeDisabled",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+        foreach (var watermark in Resources.FindObjectsOfTypeAll(watermarkType))
+        {
+            if (!showWatermark &&
+                canBeDisabledProperty?.PropertyType == typeof(bool) &&
+                canBeDisabledProperty.CanWrite)
+            {
+                canBeDisabledProperty.SetValue(watermark, true, null);
+            }
+
+            enabledProperty.SetValue(watermark, showWatermark, null);
+        }
     }
 
     private static void ApplyRuntimeAudioSettings(float sfxVolume)

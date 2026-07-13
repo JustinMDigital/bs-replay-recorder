@@ -22,6 +22,8 @@ dotnet publish $projectPath `
     -r win-x64 `
     --self-contained true `
     -p:PublishSingleFile=true `
+    -p:PublishTrimmed=true `
+    -p:TrimMode=full `
     -p:DebugType=none `
     -p:DebugSymbols=false `
     -o $publishRoot `

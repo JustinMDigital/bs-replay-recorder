@@ -14,6 +14,7 @@ try
     RunStartGuardCheck(Path.Combine(tempRoot, "guard"));
     RunRecorderHostHealthGuardCheck(Path.Combine(tempRoot, "recorder-host-health-guard"));
     RunBeatLeaderReadinessGuardCheck(Path.Combine(tempRoot, "beatleader-readiness-guard"));
+    RunBeatLeaderInitializingStartCheck(Path.Combine(tempRoot, "beatleader-initializing-start"));
     RunWindowsGraphicsCaptureCapabilityGuardCheck(Path.Combine(tempRoot, "wgc-capability-guard"));
     RunParallelAssignmentCheck(Path.Combine(tempRoot, "parallel"));
     RunFourInstanceAssignmentCheck(Path.Combine(tempRoot, "parallel-four"));
@@ -47,6 +48,8 @@ try
     RunLocalSettingsFileCheck(Path.Combine(tempRoot, "local-settings-file"));
     RunSetupSourcePathDetectorCheck(Path.Combine(tempRoot, "setup-source-path"));
     RunLaunchPresetNormalizationCheck();
+    RunFixedWindowPlacementCheck();
+    RunBeatSaberWindowedSettingsFileCheck(Path.Combine(tempRoot, "beat-saber-window-settings"));
     RunCaptureLayoutValidatorCheck();
     RunCapturePreflightFailureClassificationCheck();
     RunCapturePreflightStartRunGuardCheck(Path.Combine(tempRoot, "capture-preflight-run-guard"));
@@ -152,6 +155,27 @@ static void RunBeatLeaderReadinessGuardCheck(string workspace)
     AssertThrows<InvalidOperationException>(
         () => store.StartRun(),
         "beatleader readiness start guard");
+}
+
+static void RunBeatLeaderInitializingStartCheck(string workspace)
+{
+    var store = CreateStore(workspace, instanceCount: 1);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+    var worker = store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "worker-0",
+        WorkerName = "Worker 0",
+        PreferredInstanceIndex = 0,
+        ReplayProviderStatusReported = true,
+        BeatLeaderReady = false,
+        BeatLeaderStatus = "BeatLeader ReplayerMenuLoader is not available yet",
+        ScoreSaberReady = true,
+        ScoreSaberStatus = "ScoreSaber test ready"
+    });
+
+    store.StartRun();
+    AssertEqual(true, store.GetAssignment(worker.WorkerId).HasAssignment, "beatleader initialization allows run start");
 }
 
 static void RunWindowsGraphicsCaptureCapabilityGuardCheck(string workspace)
@@ -471,8 +495,18 @@ static void RunSetupSourcePathDetectorCheck(string workspace)
     File.WriteAllText(Path.Combine(configuredSource, "Beat Saber.exe"), "");
 
     var configured = SetupSourcePathDetector.Detect(configuredSource, new[] { library });
-    AssertEqual("Ready", configured.Status, "setup source configured status");
+    AssertEqual("PrerequisitesMissing", configured.Status, "setup source configured prerequisite status");
+    AssertContains("BSIPA", string.Join(" ", configured.ConfiguredSourceMissingPrerequisites), "setup source configured missing BSIPA");
+    AssertContains("BeatLeader", string.Join(" ", configured.ConfiguredSourceMissingPrerequisites), "setup source configured missing BeatLeader");
     AssertEqual(Path.GetFullPath(configuredSource), configured.EffectiveSourceBeatSaberPath, "setup source configured wins");
+
+    Directory.CreateDirectory(Path.Combine(configuredSource, "Plugins"));
+    File.WriteAllText(Path.Combine(configuredSource, "IPA.exe"), "");
+    File.WriteAllText(Path.Combine(configuredSource, "winhttp.dll"), "");
+    File.WriteAllText(Path.Combine(configuredSource, "Plugins", "BeatLeader.dll"), "");
+    configured = SetupSourcePathDetector.Detect(configuredSource, new[] { library });
+    AssertEqual("Ready", configured.Status, "setup source configured ready status");
+    AssertEqual(true, configured.ConfiguredSourceRecorderReady, "setup source configured recorder readiness");
 
     var metaLibrary = Path.Combine(workspace, "MetaLibrary");
     var metaSource = Path.Combine(metaLibrary, "Software", "hyperbolic-magnetism-beat-saber");
@@ -491,14 +525,15 @@ static void RunSetupSourcePathDetectorCheck(string workspace)
     AssertEqual(2, both.DetectedSources.Count, "both store candidates reported");
     var meta = both.DetectedSources.Single(candidate => candidate.Store == BeatSaberStore.MetaPc);
     AssertEqual("1.44.1_20239", meta.Version, "meta manifest version");
-    AssertEqual(true, meta.RecorderReady, "meta recorder prerequisites ready");
+    AssertEqual(true, meta.VersionSupported, "supported meta version reported");
+    AssertEqual("bs-1.44.1", SetupSourcePathDetector.ResolveWorkerPluginBuild(metaSource, BeatSaberStore.MetaPc), "meta worker plugin build");
 
     var configuredMeta = SetupSourcePathDetector.Detect(
         metaSource,
         new[] { library },
         new[] { metaLibrary },
         BeatSaberStore.MetaPc);
-    AssertEqual("Ready", configuredMeta.Status, "configured Meta source status");
+    AssertEqual(BeatSaberStore.MetaPc, configuredMeta.EffectiveSourceStore, "configured Meta source store");
     AssertEqual(BeatSaberStore.MetaPc, configuredMeta.EffectiveSourceStore, "configured Meta source store");
     AssertEqual(BeatSaberStore.Steam, SetupSourcePathDetector.InferStoreFromDirectory(detectedSource), "steam source store inference");
 
@@ -1099,6 +1134,8 @@ static void RunWorkerPluginSettingsIdentityCheck()
         AssertEqual(5.0, parsed.DelayBetweenRecordingsSeconds, "delay between recordings " + index);
         AssertEqual(7.0, parsed.ControlPanelWorker.IdleShutdownMinutes, "worker idle shutdown timeout " + index);
         AssertEqual(index, parsed.WindowPlacement.InstanceIndex, "window placement index " + index);
+        AssertEqual(1920, parsed.WindowPlacement.Width, "window placement width " + index);
+        AssertEqual(1080, parsed.WindowPlacement.Height, "window placement height " + index);
     }
 }
 
@@ -1606,6 +1643,51 @@ static void RunLaunchPresetNormalizationCheck()
     instanceCountClampSettings.Normalize();
     AssertEqual(4, instanceCountClampSettings.InstanceCount, "instance count clamps to managed maximum");
     AssertEqual(4, instanceCountClampSettings.MaxConcurrentRecordings, "max concurrent follows managed instance count");
+}
+
+static void RunFixedWindowPlacementCheck()
+{
+    var topLeft = ControlPanelStore.CalculateFixedWindowPlacement(0, 0, 3840, 2160, 0, 1920, 1080);
+    AssertEqual((0, 0, 1920, 1080), topLeft, "single 1080p window stays in 4K top-left quadrant");
+
+    var bottomRight = ControlPanelStore.CalculateFixedWindowPlacement(0, 0, 3840, 2160, 3, 1920, 1080);
+    AssertEqual((1920, 1080, 1920, 1080), bottomRight, "fourth 1080p window uses 4K bottom-right quadrant");
+
+    var secondaryMonitor = ControlPanelStore.CalculateFixedWindowPlacement(1920, -200, 5760, 1960, 0, 1920, 1080);
+    AssertEqual((1920, -200, 1920, 1080), secondaryMonitor, "window placement includes selected monitor origin");
+
+    var nativeSize = ControlPanelStore.CalculateFixedWindowPlacement(0, 0, 1920, 1080, 0, 1920, 1080);
+    AssertEqual((0, 0, 1920, 1080), nativeSize, "1080p window fills only a 1080p monitor");
+}
+
+static void RunBeatSaberWindowedSettingsFileCheck(string workspace)
+{
+    Directory.CreateDirectory(workspace);
+    var settingsPath = Path.Combine(workspace, "settings.ini");
+    File.WriteAllText(settingsPath, string.Join(Environment.NewLine, new[]
+    {
+        "# BeatSaber.Settings",
+        "window.fullscreen=true",
+        "window.resolution.x=3840",
+        "window.resolution.y=2160",
+        "quality.vsync_count=0"
+    }));
+
+    var changed = ControlPanelStore.ApplyBeatSaberWindowedSettingsFile(
+        settingsPath,
+        "-screen-fullscreen 0 -screen-width 1920 -screen-height 1080");
+    var content = File.ReadAllText(settingsPath);
+    AssertEqual(true, changed, "Beat Saber settings changed to windowed launch state");
+    AssertContains("window.fullscreen=false", content, "Beat Saber settings force windowed mode");
+    AssertContains("window.resolution.x=1920", content, "Beat Saber settings width");
+    AssertContains("window.resolution.y=1080", content, "Beat Saber settings height");
+    AssertContains("quality.vsync_count=0", content, "Beat Saber settings preserve unrelated values");
+    AssertEqual(
+        false,
+        ControlPanelStore.ApplyBeatSaberWindowedSettingsFile(
+            settingsPath,
+            "-screen-fullscreen 0 -screen-width 1920 -screen-height 1080"),
+        "unchanged Beat Saber settings are not rewritten");
 }
 
 static void RunCaptureLayoutValidatorCheck()
@@ -4152,6 +4234,8 @@ static void CreateFakeBeatSaberInstance(string instancesRoot, string name, int i
 {
     var instanceDirectory = Path.Combine(instancesRoot, name);
     WriteFakeFile(instanceDirectory, "Beat Saber.exe", "game exe");
+    WriteFakeFile(instanceDirectory, "IPA.exe", "ipa installer");
+    WriteFakeFile(instanceDirectory, "winhttp.dll", "bsipa loader");
     WriteFakeFile(instanceDirectory, "Beat Saber_Data/Managed/IPA.Loader.dll", "ipa loader");
     WriteFakeFile(instanceDirectory, "Plugins/BeatLeader.dll", "beatleader");
     WriteFakeFile(instanceDirectory, "Plugins/BSAutoReplayRecorder.Plugin.dll", "recorder plugin");

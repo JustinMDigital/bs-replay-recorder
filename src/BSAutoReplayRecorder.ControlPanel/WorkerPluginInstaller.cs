@@ -70,7 +70,7 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
                 ". Install BeatLeader in the managed baseline instance or reprovision workers from a Beat Saber folder that already has BeatLeader installed.");
         }
 
-        var outputDirectory = ResolveBundledPluginOutput();
+        var outputDirectory = ResolveBundledPluginOutput(settings, baselineDirectory);
         if (outputDirectory == null)
         {
             var pluginProjectPath = ResolvePluginProjectPath()
@@ -257,8 +257,8 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
                 ["MonitorIndex"] = settings.MonitorIndex,
                 ["Columns"] = columns,
                 ["Rows"] = rows,
-                ["Width"] = 0,
-                ["Height"] = 0,
+                ["Width"] = settings.CaptureWidth,
+                ["Height"] = settings.CaptureHeight,
                 ["ApplyDelaySeconds"] = 1,
                 ["RetryCount"] = 60,
                 ["RetryIntervalSeconds"] = 0.5,
@@ -282,12 +282,23 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         return null;
     }
 
-    private static string? ResolveBundledPluginOutput()
+    private static string? ResolveBundledPluginOutput(ControlPanelSettings settings, string baselineDirectory)
     {
+        var pluginBuild = SetupSourcePathDetector.ResolveWorkerPluginBuild(
+            string.IsNullOrWhiteSpace(settings.SourceBeatSaberPath) ? baselineDirectory : settings.SourceBeatSaberPath,
+            settings.SourceBeatSaberStore);
         foreach (var root in EnumerateRepositorySearchRoots())
         {
-            var candidate = Path.Combine(root, "runtime", "worker-plugin", "Release", "netstandard2.1");
+            var candidate = Path.Combine(root, "runtime", "worker-plugin", pluginBuild, "Release", "netstandard2.1");
             if (File.Exists(Path.Combine(candidate, "BSAutoReplayRecorder.Plugin.dll")) &&
+                File.Exists(Path.Combine(candidate, "BSAutoReplayRecorder.Core.dll")))
+            {
+                return Path.GetFullPath(candidate);
+            }
+
+            candidate = Path.Combine(root, "runtime", "worker-plugin", "Release", "netstandard2.1");
+            if (pluginBuild == "bs-1.40.6" &&
+                File.Exists(Path.Combine(candidate, "BSAutoReplayRecorder.Plugin.dll")) &&
                 File.Exists(Path.Combine(candidate, "BSAutoReplayRecorder.Core.dll")))
             {
                 return Path.GetFullPath(candidate);

@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Windows.Forms;
+using System.Runtime.InteropServices;
 
 internal static class Program
 {
@@ -16,12 +16,12 @@ internal static class Program
 
         if (!File.Exists(targetPath))
         {
-            MessageBox.Show(
+            MessageBoxW(
+                IntPtr.Zero,
                 "The packaged Replay Recorder app was not found:\n\n" + targetPath +
                 "\n\nRun npm run electron:pack, or keep this launcher beside the dist folder.",
                 "Replay Recorder",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+                0x00000010);
             return 1;
         }
 
@@ -43,4 +43,7 @@ internal static class Program
         Process.Start(startInfo);
         return 0;
     }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int MessageBoxW(IntPtr windowHandle, string text, string caption, uint type);
 }

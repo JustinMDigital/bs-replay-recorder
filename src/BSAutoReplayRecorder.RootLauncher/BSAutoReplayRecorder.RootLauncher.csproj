@@ -5,6 +5,5 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Replay Recorder</AssemblyName>
-    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 </Project>

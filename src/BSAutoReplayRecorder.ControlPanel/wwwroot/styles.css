@@ -7837,12 +7837,18 @@ body {
 
 .guidedAssistant .workerRow.instanceLane {
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px;
+  grid-template-areas:
+    "identity action"
+    "assignment assignment";
+  grid-auto-rows: auto;
+  align-items: center;
+  gap: 8px 10px;
+  height: auto;
   min-height: 0;
   border: 1px solid rgba(121, 149, 176, 0.14);
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.025);
-  padding: 8px;
+  padding: 9px 10px 10px;
 }
 
 .guidedAssistant .instanceMetric {
@@ -7850,6 +7856,7 @@ body {
 }
 
 .guidedAssistant .instanceIdentity {
+  grid-area: identity;
   min-width: 0;
 }
 
@@ -7862,8 +7869,30 @@ body {
 }
 
 .guidedAssistant .assignmentPreview {
-  grid-column: 1 / -1;
-  min-height: 34px;
+  grid-area: assignment;
+  width: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  border: 0;
+  border-top: 1px solid rgba(121, 149, 176, 0.13);
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 0 0;
+}
+
+.guidedAssistant .assignmentPreview.isIdle > div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.guidedAssistant .assignmentPreview.isIdle strong {
+  flex: 0 1 auto;
+}
+
+.guidedAssistant .assignmentPreview.isIdle span {
+  flex: 0 0 auto;
 }
 
 .guidedAssistant .assignmentPreview .planCover {
@@ -7871,9 +7900,36 @@ body {
   height: 32px;
 }
 
-.guidedAssistant .rowAction {
-  min-height: 30px;
-  align-self: start;
+.guidedAssistant .workerRow.instanceLane .rowAction {
+  grid-area: action;
+  min-height: 28px;
+  align-self: center;
+  justify-self: end;
+  padding-inline: 8px;
+}
+
+.guidedAssistant .workerRow.instanceLane.disabledInstance {
+  grid-template-areas: "identity action";
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.014);
+}
+
+.guidedAssistant .workerRow.instanceLane.disabledInstance .assignmentPreview,
+.guidedAssistant .workerRow.instanceLane.disabledInstance .rowAction:disabled {
+  display: none;
+}
+
+.guidedAssistant .workerRow.instanceLane.disabledInstance .instanceDot {
+  background: #596b7a;
+  box-shadow: none;
+}
+
+.guidedAssistant .workerRow.instanceLane.disabledInstance .instanceIdentity strong {
+  color: #9aaab8;
+}
+
+.guidedAssistant .workerRow.instanceLane.disabledInstance .instanceIdentity span:not(.instanceDot):not(.monitorIcon) {
+  color: #718392;
 }
 
 .runAttentionPanel {
@@ -8792,6 +8848,281 @@ body[data-active-view="collections"] .shell.dashboardShell {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.firstRunWizard {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.26fr) minmax(0, 1fr);
+  min-height: min(650px, calc(100vh - 170px));
+  overflow: hidden;
+  border: 1px solid var(--guided-line);
+  border-radius: 6px;
+  background: #07111b;
+}
+
+.firstRunWizard[hidden] {
+  display: none !important;
+}
+
+.firstRunWizardRail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-right: 1px solid var(--guided-line);
+  background: #0a1724;
+  padding: 28px 24px;
+}
+
+.firstRunWizardKicker,
+.firstRunStepEyebrow {
+  color: var(--blue-strong);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.firstRunWizardRail h2,
+.firstRunWizardStep h3 {
+  margin: 0;
+  color: #f5f8fb;
+  letter-spacing: 0;
+}
+
+.firstRunWizardRail h2 {
+  font-size: 24px;
+  line-height: 1.12;
+}
+
+.firstRunWizardRail p,
+.firstRunWizardStep > p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.firstRunWizardSteps {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.firstRunWizardSteps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.firstRunWizardSteps li span {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid rgba(137, 162, 187, 0.36);
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.firstRunWizardSteps li.isActive {
+  color: #f4f8fc;
+}
+
+.firstRunWizardSteps li.isActive span {
+  border-color: var(--blue-strong);
+  background: #145aa2;
+}
+
+.firstRunWizardSteps li.isComplete span {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.firstRunWizardSurface {
+  display: grid;
+  place-items: center;
+  padding: clamp(28px, 5vw, 72px);
+}
+
+.firstRunWizardStep {
+  display: grid;
+  width: min(680px, 100%);
+  gap: 18px;
+}
+
+.firstRunWizardStep[hidden] {
+  display: none !important;
+}
+
+.firstRunWizardStep h3 {
+  font-size: 25px;
+  line-height: 1.15;
+}
+
+.firstRunChoiceList {
+  display: grid;
+  gap: 10px;
+}
+
+.firstRunChoice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 18px;
+  width: 100%;
+  border: 1px solid rgba(121, 149, 176, 0.24);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+  color: inherit;
+  padding: 15px 16px;
+  text-align: left;
+}
+
+.firstRunChoice:hover,
+.firstRunChoice.isSelected {
+  border-color: rgba(60, 142, 228, 0.72);
+  background: rgba(33, 91, 151, 0.2);
+}
+
+.firstRunChoice strong,
+.firstRunChoice span,
+.firstRunChoice small {
+  min-width: 0;
+}
+
+.firstRunChoice strong {
+  color: #f4f8fb;
+  font-size: 14px;
+}
+
+.firstRunChoice span {
+  color: var(--muted-strong);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.firstRunChoice small {
+  grid-column: 1 / -1;
+  color: var(--green);
+  font-size: 12px;
+}
+
+.firstRunChoice small.isBlocked {
+  color: #f0bf56;
+}
+
+.firstRunPathField {
+  display: grid;
+  gap: 7px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.firstRunPathField input {
+  width: 100%;
+}
+
+.firstRunStatus,
+.firstRunStatusCard {
+  margin: 0;
+  border-left: 3px solid var(--blue-strong);
+  background: rgba(24, 48, 70, 0.42);
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 12px 14px;
+}
+
+.firstRunStatus.isBad,
+.firstRunStatusCard.isBad {
+  border-left-color: #e46565;
+  background: rgba(113, 42, 42, 0.2);
+}
+
+.firstRunStatus.isGood,
+.firstRunStatusCard.isGood {
+  border-left-color: var(--green);
+  background: rgba(33, 91, 66, 0.2);
+}
+
+.firstRunInlineActions,
+.firstRunWizardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.firstRunWizardActions {
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+body.firstRunWizardActive .settingsView > .settingsPageHeader,
+body.firstRunWizardActive .settingsView > #setupAssistant {
+  display: none !important;
+}
+
+/* Keep first-time setup focused until the recorder has passed verification. */
+body.firstRunWizardActive .appHeader .headerControls,
+body.firstRunWizardActive .appHeader .captureProfile,
+body.firstRunWizardActive .appHeader .commandSearch,
+body.firstRunWizardActive .appHeader .headerRunControls {
+  display: none;
+}
+
+@media (max-width: 800px) {
+  .firstRunWizard {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .firstRunWizardRail {
+    gap: 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--guided-line);
+    padding: 20px;
+  }
+
+  .firstRunWizardRail h2 {
+    font-size: 20px;
+  }
+
+  .firstRunWizardSteps {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .firstRunWizardSteps li {
+    justify-content: center;
+  }
+
+  .firstRunWizardSteps li strong {
+    display: none;
+  }
+
+  .firstRunWizardSurface {
+    display: block;
+    padding: 24px 18px;
+  }
+
+  .firstRunWizardStep h3 {
+    font-size: 22px;
+  }
+
+  .firstRunWizardActions {
+    justify-content: stretch;
+  }
+
+  .firstRunWizardActions button {
+    flex: 1 1 140px;
+  }
 }
 
 .settingsView .setupAssistantPanel > .setupWizardProgress {

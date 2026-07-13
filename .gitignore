@@ -16,6 +16,8 @@ dist/
 !/artifacts/worker-plugin/bs-1.40.6/BSAutoReplayRecorder.Core.dll
 !/artifacts/worker-plugin/bs-1.40.6/release.json
 Replay Recorder.exe
+/make-portable-release.bat
+/releases/
 
 # IDE and OS metadata.
 .vs/

@@ -561,7 +561,15 @@ public sealed class SetupSourcePathReport
 
     public bool ConfiguredSourceReady { get; set; }
 
+    public bool ConfiguredSourceRecorderReady { get; set; }
+
+    public List<string> ConfiguredSourceMissingPrerequisites { get; set; } = new List<string>();
+
     public bool DetectedSourceReady { get; set; }
+
+    public bool DetectedSourceRecorderReady { get; set; }
+
+    public List<string> DetectedSourceMissingPrerequisites { get; set; } = new List<string>();
 
     public string ConfiguredSourceStore { get; set; } = "";
 
@@ -583,6 +591,10 @@ public sealed class SetupSourceCandidate
     public bool Ready { get; set; }
 
     public bool RecorderReady { get; set; }
+
+    public bool VersionSupported { get; set; } = true;
+
+    public string VersionCompatibilityDetail { get; set; } = "";
 
     public List<string> MissingPrerequisites { get; set; } = new List<string>();
 }

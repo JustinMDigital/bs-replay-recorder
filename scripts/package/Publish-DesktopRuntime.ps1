@@ -37,7 +37,7 @@ function Publish-Project {
         "-r",
         "win-x64",
         "--self-contained",
-        "true",
+        "false",
         "-o",
         $OutputPath,
         "--nologo"
@@ -47,6 +47,52 @@ function Publish-Project {
     if ($LASTEXITCODE -ne 0) {
         throw "$Name publish failed."
     }
+}
+
+function Publish-PrivateDotNetRuntime {
+    param([string]$MajorMinorVersion = "10.0")
+
+    $dotnetCommand = Get-Command dotnet -ErrorAction Stop
+    $dotnetRoot = Split-Path -Parent $dotnetCommand.Source
+    $targetRoot = Join-Path $runtimeFullPath "dotnet"
+
+    function Resolve-LatestRuntimeDirectory {
+        param([string]$RelativeRoot)
+
+        $root = Join-Path $dotnetRoot $RelativeRoot
+        $match = Get-ChildItem -LiteralPath $root -Directory -ErrorAction Stop |
+            Where-Object { $_.Name -like "$MajorMinorVersion.*" } |
+            Sort-Object { [Version]$_.Name } -Descending |
+            Select-Object -First 1
+        if ($null -eq $match) {
+            throw "The packaging machine does not have $RelativeRoot $MajorMinorVersion installed under $dotnetRoot."
+        }
+
+        return $match
+    }
+
+    $coreRuntime = Resolve-LatestRuntimeDirectory "shared\Microsoft.NETCore.App"
+    $aspNetRuntime = Resolve-LatestRuntimeDirectory "shared\Microsoft.AspNetCore.App"
+    $hostFxr = Resolve-LatestRuntimeDirectory "host\fxr"
+
+    New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $dotnetRoot "dotnet.exe") -Destination $targetRoot -Force
+    foreach ($legalFile in @("LICENSE.txt", "ThirdPartyNotices.txt")) {
+        $source = Join-Path $dotnetRoot $legalFile
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-Item -LiteralPath $source -Destination $targetRoot -Force
+        }
+    }
+
+    $coreTarget = Join-Path $targetRoot "shared\Microsoft.NETCore.App"
+    $aspNetTarget = Join-Path $targetRoot "shared\Microsoft.AspNetCore.App"
+    $hostFxrTarget = Join-Path $targetRoot "host\fxr"
+    New-Item -ItemType Directory -Path $coreTarget, $aspNetTarget, $hostFxrTarget -Force | Out-Null
+    Copy-Item -LiteralPath $coreRuntime.FullName -Destination $coreTarget -Recurse -Force
+    Copy-Item -LiteralPath $aspNetRuntime.FullName -Destination $aspNetTarget -Recurse -Force
+    Copy-Item -LiteralPath $hostFxr.FullName -Destination $hostFxrTarget -Recurse -Force
+
+    Write-Host "Bundled private .NET runtime: Core $($coreRuntime.Name), ASP.NET $($aspNetRuntime.Name), hostfxr $($hostFxr.Name)."
 }
 
 function Resolve-PluginBeatSaberDirectory {
@@ -99,19 +145,31 @@ function Resolve-PluginBeatSaberDirectory {
 }
 
 function Publish-WorkerPlugin {
-    $prebuiltRoot = Join-Path $repoRoot "artifacts\worker-plugin\bs-1.40.6"
-    $prebuiltPlugin = Join-Path $prebuiltRoot "BSAutoReplayRecorder.Plugin.dll"
-    $prebuiltCore = Join-Path $prebuiltRoot "BSAutoReplayRecorder.Core.dll"
+    $prebuiltVersions = @("bs-1.40.6", "bs-1.44.1")
     $pluginOutput = Join-Path $runtimeFullPath "worker-plugin\Release\netstandard2.1"
 
-    if ([string]::IsNullOrWhiteSpace($PluginBeatSaberDir) -and
-        (Test-Path -LiteralPath $prebuiltPlugin -PathType Leaf) -and
-        (Test-Path -LiteralPath $prebuiltCore -PathType Leaf)) {
-        New-Item -ItemType Directory -Path $pluginOutput -Force | Out-Null
-        Copy-Item -LiteralPath $prebuiltPlugin -Destination $pluginOutput -Force
-        Copy-Item -LiteralPath $prebuiltCore -Destination $pluginOutput -Force
-        Write-Host "Using bundled Beat Saber 1.40.6 worker plugin artifact."
-        return
+    if ([string]::IsNullOrWhiteSpace($PluginBeatSaberDir)) {
+        $copiedVersions = @()
+        foreach ($version in $prebuiltVersions) {
+            $prebuiltRoot = Join-Path $repoRoot ("artifacts\worker-plugin\" + $version)
+            $prebuiltPlugin = Join-Path $prebuiltRoot "BSAutoReplayRecorder.Plugin.dll"
+            $prebuiltCore = Join-Path $prebuiltRoot "BSAutoReplayRecorder.Core.dll"
+            if (-not (Test-Path -LiteralPath $prebuiltPlugin -PathType Leaf) -or -not (Test-Path -LiteralPath $prebuiltCore -PathType Leaf)) { continue }
+            $versionOutput = Join-Path $runtimeFullPath ("worker-plugin\" + $version + "\Release\netstandard2.1")
+            New-Item -ItemType Directory -Path $versionOutput -Force | Out-Null
+            Copy-Item -LiteralPath $prebuiltPlugin -Destination $versionOutput -Force
+            Copy-Item -LiteralPath $prebuiltCore -Destination $versionOutput -Force
+            $copiedVersions += $version
+            if ($version -eq "bs-1.40.6") {
+                New-Item -ItemType Directory -Path $pluginOutput -Force | Out-Null
+                Copy-Item -LiteralPath $prebuiltPlugin -Destination $pluginOutput -Force
+                Copy-Item -LiteralPath $prebuiltCore -Destination $pluginOutput -Force
+            }
+        }
+        if ($copiedVersions.Count -gt 0) {
+            Write-Host ("Using bundled worker plugin artifacts: " + ($copiedVersions -join ", ") + ".")
+            return
+        }
     }
 
     $beatSaberDirectory = Resolve-PluginBeatSaberDirectory
@@ -155,6 +213,8 @@ Publish-Project `
     -Name "process-loopback helper" `
     -ProjectPath (Join-Path $repoRoot "tools\ProcessLoopbackCapture.Managed\ProcessLoopbackCapture.Managed.csproj") `
     -OutputPath (Join-Path $runtimeFullPath "tools\ProcessLoopbackCapture.Managed")
+
+Publish-PrivateDotNetRuntime
 
 Publish-Project `
     -Name "windows-graphics-capture helper" `

@@ -1,5 +1,4 @@
 using BSAutoReplayRecorder.ControlPanel;
-using System.Diagnostics;
 
 var settings = LocalSettingsFile.LoadOrDefault();
 var bindUrl = Environment.GetEnvironmentVariable("BSARR_CONTROL_PANEL_URL");
@@ -171,7 +170,7 @@ app.MapGet("/api/queue/{id}/recording", (string id, ControlPanelStore store) =>
 app.MapPost("/api/queue/{id}/recording/open", (string id, ControlPanelStore store) =>
     ExecuteApi(() =>
     {
-        var path = OpenRecordedFileInExplorer(store.GetRecordedFilePath(id));
+        var path = RecordedFileExplorer.Open(store.GetRecordedFilePath(id));
         return new { status = "Recording opened in File Explorer", path };
     }));
 app.MapGet("/api/queue/{id}/cover", (string id, ControlPanelStore store) =>
@@ -208,6 +207,8 @@ app.MapPost("/api/instances/{index:int}/remove", (int index, ControlPanelStore s
     ExecuteApi(() => store.RemoveManagedInstance(index)));
 app.MapPost("/api/instances/provision", (InstanceProvisionRequest request, ControlPanelStore store) =>
     ExecuteApi(() => store.ProvisionManagedInstances(request)));
+app.MapPost("/api/setup/meta-sideloading/enable", (ControlPanelStore store) =>
+    ExecuteApi(store.RequestMetaSideloadedAppsEnable));
 app.MapPost("/api/instances/baseline/check", (ControlPanelStore store) =>
     ExecuteApi(() => store.CheckInstanceBaseline()));
 app.MapPost("/api/song-folders/check", (ControlPanelStore store) =>
@@ -301,37 +302,4 @@ static string GetImageContentType(string path)
     }
 
     return "image/jpeg";
-}
-
-static string OpenRecordedFileInExplorer(string path)
-{
-    var fullPath = Path.GetFullPath(path);
-    if (!File.Exists(fullPath))
-    {
-        throw new InvalidOperationException("Recorded file was not found: " + fullPath);
-    }
-
-    if (!OperatingSystem.IsWindows())
-    {
-        throw new InvalidOperationException("Opening recordings in File Explorer is only supported on Windows.");
-    }
-
-    var startInfo = new ProcessStartInfo
-    {
-        FileName = "explorer.exe",
-        UseShellExecute = false,
-        CreateNoWindow = true
-    };
-    startInfo.ArgumentList.Add("/select," + fullPath);
-
-    try
-    {
-        Process.Start(startInfo);
-    }
-    catch (Exception ex)
-    {
-        throw new InvalidOperationException("Could not open File Explorer for recorded file: " + ex.Message, ex);
-    }
-
-    return fullPath;
 }

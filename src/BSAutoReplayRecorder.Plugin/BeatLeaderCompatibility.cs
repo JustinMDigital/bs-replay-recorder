@@ -23,7 +23,8 @@ internal static class BeatLeaderCompatibility
         }
 
         var method = FindStartReplayAsync(loader.GetType());
-        var args = BuildStartReplayArguments(method, replay, settings, finishedCallback, cancellationToken);
+        var player = CreateReplayPlayer(replay);
+        var args = BuildStartReplayArguments(method, replay, player, settings, finishedCallback, cancellationToken);
 
         object? result;
         try
@@ -130,6 +131,7 @@ internal static class BeatLeaderCompatibility
     private static object?[] BuildStartReplayArguments(
         MethodInfo method,
         Replay replay,
+        IPlayer? player,
         ReplayerSettings settings,
         Action? finishedCallback,
         CancellationToken cancellationToken)
@@ -142,6 +144,10 @@ internal static class BeatLeaderCompatibility
             if (parameterType.IsAssignableFrom(typeof(Replay)))
             {
                 args[index] = replay;
+            }
+            else if (typeof(IPlayer).IsAssignableFrom(parameterType))
+            {
+                args[index] = player;
             }
             else if (parameterType.IsAssignableFrom(typeof(ReplayerSettings)))
             {
@@ -162,6 +168,30 @@ internal static class BeatLeaderCompatibility
         }
 
         return args;
+    }
+
+    private static IPlayer? CreateReplayPlayer(Replay replay)
+    {
+        var info = replay.info;
+        if (info == null || string.IsNullOrWhiteSpace(info.playerName))
+        {
+            return null;
+        }
+
+        return new Player
+        {
+            id = info.playerID ?? "",
+            name = info.playerName.Trim(),
+            avatar = null,
+            country = "not set",
+            rank = -1,
+            countryRank = -1,
+            pp = -1,
+            role = "",
+            friends = Array.Empty<string>(),
+            clans = Array.Empty<Clan>(),
+            socials = Array.Empty<ServiceIntegration>()
+        };
     }
 
     private static bool HasParameter(ParameterInfo[] parameters, Type type)

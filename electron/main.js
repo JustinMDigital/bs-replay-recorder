@@ -1,4 +1,5 @@
-const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain, screen } = require('electron');
+const { resolveRecordingDisplay, shouldMinimizeForRecording } = require('./display-matching');
 const childProcess = require('child_process');
 const fs = require('fs');
 const http = require('http');
@@ -10,6 +11,7 @@ const logDirectory = path.join(repoRoot, 'ControlPanelWorkspace', 'Logs');
 const launcherLogPath = path.join(logDirectory, 'electron-launcher.log');
 const desktopHostExe = path.join(appRoot, 'runtime', 'desktop-host', 'BSAutoReplayRecorder.DesktopHost.exe');
 const desktopHostProject = path.join(repoRoot, 'src', 'BSAutoReplayRecorder.DesktopHost', 'BSAutoReplayRecorder.DesktopHost.csproj');
+const privateDotnetRoot = path.join(appRoot, 'runtime', 'dotnet');
 
 let mainWindow = null;
 let controlPanelUrl = 'http://127.0.0.1:5770';
@@ -95,8 +97,16 @@ function runDesktopHost(command, args = [], timeoutMs = 120000, options = {}) {
     const hostArgs = [...host.args, command, ...args];
     appendLauncherLog(`Desktop host: ${host.fileName} ${hostArgs.join(' ')}`);
 
+    const hostEnvironment = { ...process.env };
+    if (fs.existsSync(path.join(privateDotnetRoot, 'dotnet.exe'))) {
+      hostEnvironment.DOTNET_ROOT = privateDotnetRoot;
+      hostEnvironment.DOTNET_ROOT_X64 = privateDotnetRoot;
+      hostEnvironment.DOTNET_MULTILEVEL_LOOKUP = '0';
+    }
+
     const child = childProcess.spawn(host.fileName, hostArgs, {
       cwd: repoRoot,
+      env: hostEnvironment,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -687,12 +697,22 @@ async function createWindow() {
 
 Menu.setApplicationMenu(null);
 
-ipcMain.handle('replay-recorder:minimize-window', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.minimize();
+ipcMain.handle('replay-recorder:minimize-window', (_event, recordingDisplayTarget) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { minimized: false, reason: 'window-unavailable' };
   }
 
-  return true;
+  const currentDisplay = screen.getDisplayMatching(mainWindow.getBounds());
+  const recordingDisplay = resolveRecordingDisplay(
+    screen.getAllDisplays(),
+    screen.getPrimaryDisplay(),
+    recordingDisplayTarget);
+  if (!shouldMinimizeForRecording(currentDisplay, recordingDisplay)) {
+    return { minimized: false, reason: recordingDisplay ? 'different-display' : 'display-unresolved' };
+  }
+
+  mainWindow.minimize();
+  return { minimized: true, reason: 'same-display' };
 });
 
 app.whenReady().then(createWindow);

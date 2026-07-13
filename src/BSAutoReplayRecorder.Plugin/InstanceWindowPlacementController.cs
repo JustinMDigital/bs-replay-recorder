@@ -76,6 +76,7 @@ public sealed class InstanceWindowPlacementController : MonoBehaviour
         var retryCount = Math.Max(1, _settings.RetryCount);
         var wait = new WaitForSeconds((float)_settings.RetryInterval.TotalSeconds);
         PlacementPlan? lastPlan = null;
+        var unityWindowModeApplied = false;
 
         for (var attempt = 1; attempt <= retryCount; attempt++)
         {
@@ -87,8 +88,13 @@ public sealed class InstanceWindowPlacementController : MonoBehaviour
             }
 
             lastPlan = plan;
-            ApplyUnityWindowMode(plan.Value);
-            if (_settings.UseBorderlessWindow || _settings.UseNativeWindowMove)
+            if (!unityWindowModeApplied)
+            {
+                ApplyUnityWindowMode(plan.Value);
+                unityWindowModeApplied = true;
+            }
+            if ((_settings.UseBorderlessWindow || _settings.UseNativeWindowMove) &&
+                !MatchesNativeWindowPlacement(plan.Value))
             {
                 ApplyNativeWindowPlacement(plan.Value, moveWindow: _settings.UseNativeWindowMove);
             }
@@ -107,11 +113,26 @@ public sealed class InstanceWindowPlacementController : MonoBehaviour
 
         if (lastPlan.HasValue)
         {
-            _logger?.Info("Finished window placement attempts for instance " + (_instanceIndex + 1) + ".");
+            _logger?.Info("Window placement stabilized for instance " + (_instanceIndex + 1) + "; monitoring for graphics-setting changes.");
         }
         else
         {
             _logger?.Warn("Window placement could not find monitor index " + _settings.MonitorIndex + ".");
+        }
+
+        while (true)
+        {
+            var plan = CreatePlacementPlan();
+            if (plan.HasValue && !MatchesNativeWindowPlacement(plan.Value))
+            {
+                ApplyUnityWindowMode(plan.Value);
+                if (_settings.UseBorderlessWindow || _settings.UseNativeWindowMove)
+                {
+                    ApplyNativeWindowPlacement(plan.Value, moveWindow: _settings.UseNativeWindowMove);
+                }
+            }
+
+            yield return wait;
         }
     }
 
@@ -192,6 +213,30 @@ public sealed class InstanceWindowPlacementController : MonoBehaviour
             SwpNoZOrder | SwpNoActivate | SwpFrameChanged | SwpShowWindow);
     }
 
+    private bool MatchesNativeWindowPlacement(PlacementPlan plan)
+    {
+        var hWnd = NativeMethods.FindCurrentProcessWindow();
+        if (hWnd == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var currentStyle = NativeMethods.GetWindowLongPtr(hWnd, GwlStyle).ToInt64();
+        var styleMatches = _settings.UseBorderlessWindow
+            ? (currentStyle & WsPopup) != 0 && (currentStyle & WsOverlappedWindow) == 0
+            : (currentStyle & WsPopup) == 0 && (currentStyle & WsOverlappedWindow) == WsOverlappedWindow;
+        if (!styleMatches || !_settings.UseNativeWindowMove)
+        {
+            return styleMatches;
+        }
+
+        return NativeMethods.GetWindowRect(hWnd, out var rect) &&
+               rect.Left == plan.Left &&
+               rect.Top == plan.Top &&
+               rect.Right - rect.Left == plan.Width &&
+               rect.Bottom - rect.Top == plan.Height;
+    }
+
     private readonly struct PlacementPlan
     {
         public PlacementPlan(int left, int top, int width, int height)
@@ -244,6 +289,9 @@ public sealed class InstanceWindowPlacementController : MonoBehaviour
             int cx,
             int cy,
             uint uFlags);
+
+        [DllImport("user32.dll")]
+        public static extern bool GetWindowRect(IntPtr hWnd, out Rect lpRect);
 
         [DllImport("user32.dll")]
         private static extern bool EnumDisplayMonitors(

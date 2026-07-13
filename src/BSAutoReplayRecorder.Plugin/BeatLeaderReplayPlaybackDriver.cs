@@ -15,6 +15,8 @@ namespace BSAutoReplayRecorder.Plugin;
 public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
 {
     private static readonly TimeSpan FinishEventStartupGrace = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan LoaderReadyTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan LoaderReadyPollInterval = TimeSpan.FromMilliseconds(500);
 
     private readonly Logger _logger;
 
@@ -52,7 +54,8 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
         ReplayReference replayReference,
         CancellationToken cancellationToken)
     {
-        var replay = await LoadLaunchableReplayAsync(replayReference, cancellationToken).ConfigureAwait(false);
+        var loader = await WaitForLoaderAsync(cancellationToken).ConfigureAwait(false);
+        var replay = await LoadLaunchableReplayAsync(replayReference, loader, cancellationToken).ConfigureAwait(false);
 
         _logger.Info("Launching BeatLeader replay: " + replay.info.songName + " [" + replay.info.difficulty + "]");
 
@@ -61,7 +64,6 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
             _logger.Info("BeatLeader replay finished callback fired for: " + replay.info.songName);
         };
 
-        var loader = GetLoader();
         await BeatLeaderCompatibility
             .StartReplayAsync(loader, replay, ReplayerSettings.UserSettings, finishedCallback, cancellationToken)
             .ConfigureAwait(false);
@@ -71,11 +73,13 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
 
     public async Task ValidateReplayAsync(ReplayReference replayReference, CancellationToken cancellationToken)
     {
-        await LoadLaunchableReplayAsync(replayReference, cancellationToken).ConfigureAwait(false);
+        var loader = await WaitForLoaderAsync(cancellationToken).ConfigureAwait(false);
+        await LoadLaunchableReplayAsync(replayReference, loader, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<Replay> LoadLaunchableReplayAsync(
         ReplayReference replayReference,
+        ReplayerMenuLoader loader,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -90,8 +94,6 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
         {
             throw new FileNotFoundException("Replay file was not found.", replayPath);
         }
-
-        var loader = GetLoader();
 
         var replayBytes = File.ReadAllBytes(replayPath);
         var replay = ReplayDecoder.DecodeReplay(replayBytes);
@@ -227,15 +229,24 @@ public sealed class BeatLeaderReplayPlaybackDriver : IReplayPlaybackDriver
                value >= 'A' && value <= 'F';
     }
 
-    private static ReplayerMenuLoader GetLoader()
+    private async Task<ReplayerMenuLoader> WaitForLoaderAsync(CancellationToken cancellationToken)
     {
-        var loader = ReplayerMenuLoader.Instance;
-        if (loader == null)
+        var deadline = DateTimeOffset.UtcNow + LoaderReadyTimeout;
+        while (DateTimeOffset.UtcNow < deadline)
         {
-            throw new InvalidOperationException("BeatLeader ReplayerMenuLoader.Instance is not available yet.");
+            cancellationToken.ThrowIfCancellationRequested();
+            var loader = ReplayerMenuLoader.Instance;
+            if (loader != null)
+            {
+                return loader;
+            }
+
+            await Task.Delay(LoaderReadyPollInterval, cancellationToken).ConfigureAwait(false);
         }
 
-        return loader;
+        throw new TimeoutException(
+            "BeatLeader's replay menu did not finish loading within 45 seconds. " +
+            "Leave the recorder worker at the Beat Saber main menu, then start the run again.");
     }
 
     private sealed class ReplayStartWait : IReplayPlaybackWait

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Replay Recorder Control Panel</title>
   <link rel="icon" href="/assets/logo.png">
-  <link rel="stylesheet" href="/styles.css?v=collections-rename-1">
+  <link rel="stylesheet" href="/styles.css?v=worker-panel-cleanup-1">
 </head>
 <body>
   <main class="shell dashboardShell">
@@ -306,6 +306,98 @@
           <button id="saveSettings" class="secondaryButton" type="button">Save Settings</button>
         </div>
       </div>
+      <section id="firstRunWizard" class="firstRunWizard" hidden aria-label="First-run setup">
+        <aside class="firstRunWizardRail">
+          <span class="firstRunWizardKicker">First-time setup</span>
+          <h2>Set up Replay Recorder</h2>
+          <p id="firstRunWizardIntro">A few short steps, then the recorder will test your capture setup.</p>
+          <ol id="firstRunWizardSteps" class="firstRunWizardSteps">
+            <li data-first-run-step-indicator="source"><span>1</span><strong>Beat Saber</strong></li>
+            <li data-first-run-step-indicator="display"><span>2</span><strong>Recording display</strong></li>
+            <li data-first-run-step-indicator="ffmpeg"><span>3</span><strong>FFmpeg</strong></li>
+            <li data-first-run-step-indicator="worker"><span>4</span><strong>Recorder worker</strong></li>
+            <li data-first-run-step-indicator="verify"><span>5</span><strong>Test capture</strong></li>
+          </ol>
+        </aside>
+        <div class="firstRunWizardSurface">
+          <section class="firstRunWizardStep" data-first-run-step="source">
+            <span class="firstRunStepEyebrow">Step 1 of 5</span>
+            <h3>Choose the Beat Saber install to copy</h3>
+            <p>Use a copy with BSIPA and BeatLeader already installed. Your normal game folder will not be changed.</p>
+            <div id="firstRunSourceChoices" class="firstRunChoiceList"></div>
+            <label class="firstRunPathField">Or enter a different folder
+              <input id="firstRunSourcePath" type="text" placeholder="C:\Program Files (x86)\Steam\steamapps\common\Beat Saber">
+            </label>
+            <p id="firstRunSourceStatus" class="firstRunStatus"></p>
+            <div class="firstRunWizardActions">
+              <button id="firstRunEnableMetaSideloading" class="secondaryButton" type="button" hidden>Enable Meta sideloaded apps</button>
+              <button id="firstRunSourceContinue" class="primaryButton" type="button">Continue</button>
+            </div>
+          </section>
+
+          <section class="firstRunWizardStep" data-first-run-step="display" hidden>
+            <span class="firstRunStepEyebrow">Step 2 of 5</span>
+            <h3>Choose the recording display</h3>
+            <p>Start with one 1080p worker. You can add more workers and change quality later.</p>
+            <div id="firstRunDisplayChoices" class="firstRunChoiceList firstRunDisplayChoices"></div>
+            <p id="firstRunDisplayStatus" class="firstRunStatus"></p>
+            <div class="firstRunWizardActions">
+              <button class="secondaryButton" type="button" data-first-run-back="source">Back</button>
+              <button id="firstRunDisplayContinue" class="primaryButton" type="button">Continue</button>
+            </div>
+          </section>
+
+          <section class="firstRunWizardStep" data-first-run-step="ffmpeg" hidden>
+            <span class="firstRunStepEyebrow">Step 3 of 5</span>
+            <h3>Install or confirm FFmpeg</h3>
+            <p>FFmpeg creates the video file. The next step checks your monitor, encoder, and NVIDIA driver.</p>
+            <div id="firstRunFfmpegStatus" class="firstRunStatusCard"></div>
+            <label id="firstRunFfmpegPathField" class="firstRunPathField">FFmpeg path
+              <input id="firstRunFfmpegPath" type="text" placeholder="C:\path\to\ffmpeg.exe">
+            </label>
+            <div class="firstRunInlineActions">
+              <button id="firstRunInstallFfmpeg" class="secondaryButton" type="button">Install FFmpeg</button>
+              <button id="firstRunUseFfmpegPath" class="secondaryButton" type="button">Use this path</button>
+            </div>
+            <div class="firstRunWizardActions">
+              <button class="secondaryButton" type="button" data-first-run-back="display">Back</button>
+              <button id="firstRunFfmpegContinue" class="primaryButton" type="button">Continue</button>
+            </div>
+          </section>
+
+          <section class="firstRunWizardStep" data-first-run-step="worker" hidden>
+            <span class="firstRunStepEyebrow">Step 4 of 5</span>
+            <h3>Create the recorder worker</h3>
+            <p id="firstRunWorkerSummary">Replay Recorder will create one separate Beat Saber copy for recording.</p>
+            <div id="firstRunWorkerStatus" class="firstRunStatusCard"></div>
+            <div class="firstRunWizardActions">
+              <button class="secondaryButton" type="button" data-first-run-back="ffmpeg">Back</button>
+              <button id="firstRunCreateWorker" class="primaryButton" type="button">Create recorder worker</button>
+            </div>
+          </section>
+
+          <section class="firstRunWizardStep" data-first-run-step="verify" hidden>
+            <span class="firstRunStepEyebrow">Step 5 of 5</span>
+            <h3>Test capture before recording</h3>
+            <p>This starts a short FFmpeg probe using your selected monitor and NVENC encoder. It catches driver or monitor problems before a batch starts.</p>
+            <div id="firstRunVerifyStatus" class="firstRunStatusCard"></div>
+            <div class="firstRunWizardActions">
+              <button class="secondaryButton" type="button" data-first-run-back="worker">Back</button>
+              <button id="firstRunVerifyCapture" class="primaryButton" type="button">Verify</button>
+            </div>
+          </section>
+
+          <section class="firstRunWizardStep" data-first-run-step="done" hidden>
+            <span class="firstRunStepEyebrow">Setup complete</span>
+            <h3>Recorder setup is ready</h3>
+            <p>Your recorder worker is launching. Import a replay when it reports ready.</p>
+            <div id="firstRunDoneStatus" class="firstRunStatusCard"></div>
+            <div class="firstRunWizardActions">
+              <button id="firstRunFinish" class="primaryButton" type="button">Go to recorder</button>
+            </div>
+          </section>
+        </div>
+      </section>
       <section id="setupAssistant" class="panel setupAssistantPanel">
         <div class="panelHeader">
           <div class="panelTitleGroup">
@@ -355,15 +447,6 @@
           <div class="setupWizardColumn">
             <h3>Instances</h3>
             <div class="miniGrid setupWizardFields">
-              <div class="span2 setupPathField">
-                <label for="setupSourceBeatSaberPath">Beat Saber source folder</label>
-                <div class="setupPathInputRow">
-                  <input id="setupSourceBeatSaberPath" type="text" placeholder="C:\Program Files (x86)\Steam\steamapps\common\Beat Saber">
-                  <button id="setupUseDetectedSource" class="secondaryButton" type="button">Use Detected</button>
-                </div>
-                <div id="setupDetectedSources" class="setupProfileList" aria-label="Detected Beat Saber installs"></div>
-                <span id="setupSourceBeatSaberHint" class="setupPathHint">Detecting Beat Saber source...</span>
-              </div>
               <label class="span2">Instances root <input id="beatSaberInstancesRoot" type="text"></label>
               <input id="instanceCount" type="hidden">
               <div class="setupInstanceManager span2" aria-label="Managed instances">

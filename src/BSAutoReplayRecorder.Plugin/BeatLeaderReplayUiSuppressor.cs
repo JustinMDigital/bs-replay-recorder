@@ -16,6 +16,12 @@ internal static class BeatLeaderReplayUiSuppressor
     private static readonly HashSet<string> PatchedMethods = new HashSet<string>(StringComparer.Ordinal);
     private static Harmony? _harmony;
     private static Logger? _logger;
+    private static volatile bool _showWatermark = true;
+
+    public static void SetShowWatermark(bool showWatermark)
+    {
+        _showWatermark = showWatermark;
+    }
 
     public static void Install(Logger logger)
     {
@@ -73,6 +79,18 @@ internal static class BeatLeaderReplayUiSuppressor
     private static int PatchAssembly(Harmony harmony, Assembly assembly)
     {
         var patchCount = 0;
+        patchCount += PatchMethods(
+            harmony,
+            assembly,
+            "BeatLeader.Components.ReplayWatermark",
+            "Awake",
+            nameof(SuppressReplayWatermarkWhenDisabledPrefix));
+        patchCount += PatchMethods(
+            harmony,
+            assembly,
+            "ScoreSaber.Core.ReplaySystem.Legacy.UI.GameReplayUI",
+            "CreateReplayUI",
+            nameof(SuppressReplayWatermarkWhenDisabledPrefix));
         patchCount += PatchMethods(
             harmony,
             assembly,
@@ -203,6 +221,11 @@ internal static class BeatLeaderReplayUiSuppressor
     private static bool SuppressOriginalPrefix()
     {
         return false;
+    }
+
+    private static bool SuppressReplayWatermarkWhenDisabledPrefix()
+    {
+        return _showWatermark;
     }
 
     private static bool SuppressReplayUiVisibilityPrefix(object __instance)

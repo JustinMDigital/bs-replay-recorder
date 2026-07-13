@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -25,32 +26,51 @@ public static class SetupSourcePathDetector
     {
         var configured = NormalizePath(configuredSourceBeatSaberPath);
         var candidates = FindCandidates(steamLibraryCandidates, metaLibraryCandidates);
-        var configuredCandidate = candidates.FirstOrDefault(candidate => PathsEqual(candidate.Path, configured));
         var configuredReady = IsBeatSaberDirectory(configured);
-        var configuredStoreKind = configuredCandidate?.Store ??
+        var detectedConfiguredCandidate = candidates.FirstOrDefault(candidate => PathsEqual(candidate.Path, configured));
+        var configuredStoreKind = detectedConfiguredCandidate?.Store ??
                                   InferStoreFromDirectory(configured, configuredStore);
+        var configuredCandidate = detectedConfiguredCandidate ??
+                                  (configuredReady ? CreateCandidate(configuredStoreKind, configured) : null);
+        var configuredMissingPrerequisites = configuredCandidate?.MissingPrerequisites ?? new List<string>();
+        var configuredRecorderReady = configuredReady && configuredCandidate?.RecorderReady == true;
         var detected = candidates.FirstOrDefault();
         var report = new SetupSourcePathReport
         {
             ConfiguredSourceBeatSaberPath = configured,
             ConfiguredSourceStore = configuredStoreKind,
             ConfiguredSourceReady = configuredReady,
+            ConfiguredSourceRecorderReady = configuredRecorderReady,
+            ConfiguredSourceMissingPrerequisites = configuredMissingPrerequisites,
             DetectedSourceBeatSaberPath = detected?.Path ?? "",
             DetectedSourceReady = detected?.Ready ?? false,
+            DetectedSourceRecorderReady = detected?.RecorderReady ?? false,
+            DetectedSourceMissingPrerequisites = detected?.MissingPrerequisites ?? new List<string>(),
             DetectedSources = candidates
         };
 
-        if (configuredReady)
+        if (configuredRecorderReady)
         {
             report.Status = "Ready";
             report.Summary = "Configured " + BeatSaberStore.DisplayName(configuredStoreKind) + " Beat Saber source is ready.";
             report.EffectiveSourceBeatSaberPath = configured;
             report.EffectiveSourceStore = configuredStoreKind;
         }
+        else if (configuredReady)
+        {
+            report.Status = "PrerequisitesMissing";
+            report.Summary = "Configured " + BeatSaberStore.DisplayName(configuredStoreKind) +
+                             " Beat Saber source needs " + string.Join(" + ", configuredMissingPrerequisites) + ".";
+            report.EffectiveSourceBeatSaberPath = configured;
+            report.EffectiveSourceStore = configuredStoreKind;
+        }
         else if (candidates.Count == 1)
         {
             report.Status = "Detected";
-            report.Summary = "Detected a " + candidates[0].DisplayName + " Beat Saber install.";
+            report.Summary = candidates[0].RecorderReady
+                ? "Detected a " + candidates[0].DisplayName + " Beat Saber install."
+                : "Detected a " + candidates[0].DisplayName + " Beat Saber install that needs " +
+                  string.Join(" + ", candidates[0].MissingPrerequisites) + ".";
             report.EffectiveSourceBeatSaberPath = candidates[0].Path;
             report.EffectiveSourceStore = candidates[0].Store;
         }
@@ -79,6 +99,20 @@ public static class SetupSourcePathDetector
         return BeatSaberStore.Unknown;
     }
 
+    public static string ResolveWorkerPluginBuild(string? directory, string? requestedStore = null)
+    {
+        var path = NormalizePath(directory);
+        var store = InferStoreFromDirectory(path, requestedStore);
+        var version = ReadSourceVersion(path, store);
+        if (version.StartsWith("1.44.1", StringComparison.OrdinalIgnoreCase) ||
+            ReadUnityPlayerVersion(path).StartsWith("6000.0.40", StringComparison.Ordinal))
+        {
+            return "bs-1.44.1";
+        }
+
+        return "bs-1.40.6";
+    }
+
     private static List<SetupSourceCandidate> FindCandidates(
         IEnumerable<string>? steamLibraryCandidates,
         IEnumerable<string>? metaLibraryCandidates)
@@ -101,17 +135,35 @@ public static class SetupSourcePathDetector
     {
         var normalized = NormalizePath(path);
         if (!IsBeatSaberDirectory(normalized) || candidates.Any(candidate => PathsEqual(candidate.Path, normalized))) return;
-        var missing = GetMissingPrerequisites(normalized);
-        candidates.Add(new SetupSourceCandidate
+        candidates.Add(CreateCandidate(store, normalized));
+    }
+
+    private static SetupSourceCandidate CreateCandidate(string store, string path)
+    {
+        var missing = GetMissingPrerequisites(path);
+        var version = ReadSourceVersion(path, store);
+        var compatibility = CheckVersionCompatibility(path, store, version);
+        if (store == BeatSaberStore.MetaPc && !MetaSideloadedApps.IsEnabled())
+        {
+            missing.Add("Meta sideloaded apps");
+        }
+        if (!compatibility.Supported)
+        {
+            missing.Add(compatibility.Detail);
+        }
+
+        return new SetupSourceCandidate
         {
             Store = store,
             DisplayName = BeatSaberStore.DisplayName(store),
-            Path = normalized,
-            Version = ReadMetaVersion(normalized, store),
+            Path = path,
+            Version = version,
             Ready = true,
-            RecorderReady = missing.Count == 0,
+            RecorderReady = missing.Count == 0 && compatibility.Supported,
+            VersionSupported = compatibility.Supported,
+            VersionCompatibilityDetail = compatibility.Detail,
             MissingPrerequisites = missing
-        });
+        };
     }
 
     private static List<string> GetMissingPrerequisites(string path)
@@ -137,6 +189,36 @@ public static class SetupSourcePathDetector
         }
         catch { }
         return "";
+    }
+
+    private static string ReadSourceVersion(string path, string store)
+    {
+        return ReadMetaVersion(path, store);
+    }
+
+    private static (bool Supported, string Detail) CheckVersionCompatibility(string path, string store, string version)
+    {
+        if (store == BeatSaberStore.MetaPc &&
+            !version.StartsWith("1.40.6", StringComparison.OrdinalIgnoreCase) &&
+            !version.StartsWith("1.44.1", StringComparison.OrdinalIgnoreCase))
+        {
+            return (false, "Beat Saber 1.40.6 or 1.44.1 (found Meta " + (string.IsNullOrWhiteSpace(version) ? "version" : version) + ")");
+        }
+
+        var unityVersion = ReadUnityPlayerVersion(path);
+        if (unityVersion.StartsWith("6000.", StringComparison.Ordinal) &&
+            !string.Equals(ResolveWorkerPluginBuild(path, store), "bs-1.44.1", StringComparison.Ordinal))
+        {
+            return (false, "Beat Saber 1.40.6 or 1.44.1 (found an unsupported Unity 6 install)");
+        }
+
+        return (true, "");
+    }
+
+    private static string ReadUnityPlayerVersion(string path)
+    {
+        try { return FileVersionInfo.GetVersionInfo(Path.Combine(path, BeatSaberExecutableName)).ProductVersion ?? ""; }
+        catch { return ""; }
     }
 
     [SupportedOSPlatform("windows")]

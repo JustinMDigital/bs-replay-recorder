@@ -1,6 +1,6 @@
 {
   "name": "bs-replay-recorder",
-  "version": "0.1.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Desktop shell for Beat Saber Auto Replay Recorder.",
   "main": "electron/main.js",
@@ -21,6 +21,9 @@
       "output": "dist/electron"
     },
     "asar": false,
+    "electronLanguages": [
+      "en-US"
+    ],
     "files": [
       "electron/**/*",
       "assets/logo.png",

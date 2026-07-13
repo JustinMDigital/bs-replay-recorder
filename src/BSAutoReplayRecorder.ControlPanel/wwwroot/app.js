@@ -23,6 +23,10 @@ let shutdownModalVisible = false;
 let colorPresetCatalog = { builtIn: [], beatSaber: [], saved: [] };
 let setupSourcePathInfo = null;
 let setupFfmpegInfo = null;
+let firstRunWizardStep = 'source';
+let firstRunWizardFinished = false;
+let firstRunSourceDraft = '';
+let setupSourcePathDraft = '';
 let queueExportLastFocus = null;
 let queueExportContext = null;
 let recordingRenameLastFocus = null;
@@ -5432,6 +5436,8 @@ function getText(id) {
 }
 
 function getSetupSourcePathValue(settings = {}) {
+  if (setupSourcePathDraft) return String(setupSourcePathDraft).trim();
+
   const fieldValue = document.getElementById('setupSourceBeatSaberPath')?.value?.trim() || '';
   return fieldValue ||
     String(settings.sourceBeatSaberPath || '').trim() ||
@@ -5609,7 +5615,13 @@ function buildSetupReadiness(settings = {}) {
   const missingCount = Math.max(0, configuredCount - createdCount);
   const needsSource = createdCount === 0 && missingCount > 0;
   const sourcePath = getSetupSourcePathValue(settings);
-  const sourceReady = !needsSource || Boolean(sourcePath);
+  const sourceCandidate = getDetectedSourceForPath(sourcePath);
+  const configuredSource = sameClientPath(sourcePath, setupSourcePathInfo?.configuredSourceBeatSaberPath);
+  const sourceRecorderReady = Boolean(
+    sourceCandidate?.recorderReady ||
+    (configuredSource && setupSourcePathInfo?.configuredSourceRecorderReady) ||
+    (!sourceCandidate && !configuredSource && !needsSource));
+  const sourceReady = !needsSource || (Boolean(sourcePath) && sourceRecorderReady);
   const instancesReady = missingCount === 0 && createdCount >= configuredCount;
   const ffmpeg = setupFfmpegInfo || state?.ffmpegSetup || {};
   const ffmpegStatus = ffmpeg.status || 'Unchecked';
@@ -5640,6 +5652,7 @@ function buildSetupReadiness(settings = {}) {
     requestedMode,
     sourceReady,
     sourcePath,
+    sourceRecorderReady,
     needsSource,
     ffmpegReady,
     ffmpegCanInstall: Boolean(ffmpeg.canInstall),
@@ -5659,7 +5672,11 @@ function buildSetupReadiness(settings = {}) {
         status: sourceReady ? 'Ready' : 'Missing',
         tone: sourceReady ? 'good' : 'bad',
         detail: needsSource
-          ? (sourcePath ? shortPath(sourcePath) : 'Choose the Beat Saber folder.')
+          ? (sourcePath
+            ? (sourceRecorderReady
+              ? shortPath(sourcePath)
+              : `Needs ${getSelectedSourceMissingPrerequisites(sourcePath).join(' + ') || 'BSIPA + BeatLeader'}.`)
+            : 'Choose the Beat Saber folder.')
           : 'Managed source is already available.'
       },
       {
@@ -5776,6 +5793,193 @@ function renderSetupMode(readiness) {
   }
 }
 
+const firstRunWizardStepOrder = ['source', 'display', 'ffmpeg', 'worker', 'verify', 'done'];
+
+function renderFirstRunWizard(readiness) {
+  const wizard = document.getElementById('firstRunWizard');
+  if (!wizard) return;
+
+  const visible = Boolean(setupModeActive && !firstRunWizardFinished && readiness.needsSetup);
+  document.body.classList.toggle('firstRunWizardActive', visible);
+  wizard.hidden = !visible;
+  if (!visible) return;
+
+  const stepIndex = Math.max(0, firstRunWizardStepOrder.indexOf(firstRunWizardStep));
+  const requiredStep = !readiness.sourceReady
+    ? 0
+    : (!readiness.ffmpegReady ? 2 : (!readiness.instancesReady ? 3 : (!readiness.verificationReady ? 4 : 5)));
+  if (stepIndex > requiredStep) {
+    firstRunWizardStep = firstRunWizardStepOrder[requiredStep];
+  }
+
+  const activeIndex = Math.max(0, firstRunWizardStepOrder.indexOf(firstRunWizardStep));
+  wizard.querySelectorAll('[data-first-run-step]').forEach(section => {
+    section.hidden = section.dataset.firstRunStep !== firstRunWizardStep;
+  });
+  wizard.querySelectorAll('[data-first-run-step-indicator]').forEach((item, index) => {
+    item.classList.toggle('isActive', item.dataset.firstRunStepIndicator === firstRunWizardStep);
+    item.classList.toggle('isComplete', index < activeIndex || firstRunWizardStep === 'done');
+  });
+
+  renderFirstRunSourceStep(readiness);
+  renderFirstRunDisplayStep(readiness);
+  renderFirstRunFfmpegStep(readiness);
+  renderFirstRunWorkerStep(readiness);
+  renderFirstRunVerifyStep(readiness);
+}
+
+function renderFirstRunSourceStep(readiness) {
+  const choices = document.getElementById('firstRunSourceChoices');
+  const input = document.getElementById('firstRunSourcePath');
+  const status = document.getElementById('firstRunSourceStatus');
+  const continueButton = document.getElementById('firstRunSourceContinue');
+  const enableMetaSideloadingButton = document.getElementById('firstRunEnableMetaSideloading');
+  if (!choices || !input || !status || !continueButton) return;
+
+  const settings = buildCurrentSettingsPreview();
+  const persistedSourcePath = getSetupSourcePathValue(settings);
+  const candidates = setupSourcePathInfo?.detectedSources || [];
+  if (!firstRunSourceDraft && !readiness.sourceReady) {
+    const recommendedSource = candidates.find(candidate => candidate.recorderReady);
+    if (recommendedSource) firstRunSourceDraft = recommendedSource.path;
+  }
+  const sourcePath = firstRunSourceDraft || persistedSourcePath;
+  const sourceDraftPending = Boolean(firstRunSourceDraft) && !sameClientPath(firstRunSourceDraft, persistedSourcePath);
+  const missing = getSelectedSourceMissingPrerequisites(sourcePath);
+  const selectedCandidate = getDetectedSourceForPath(sourcePath);
+  input.value = sourcePath || '';
+  choices.innerHTML = candidates.map(candidate => {
+    const selected = sameClientPath(sourcePath, candidate.path);
+    const readyText = candidate.recorderReady
+      ? 'Ready for recorder setup'
+      : (candidate.versionSupported === false
+        ? candidate.versionCompatibilityDetail
+        : `Needs ${(candidate.missingPrerequisites || []).join(' + ') || 'BSIPA + BeatLeader'}`);
+    return `<button class="firstRunChoice ${selected ? 'isSelected' : ''}" type="button" data-first-run-source-path="${escapeHtml(candidate.path)}" ${candidate.recorderReady ? '' : 'disabled aria-disabled="true"'}>
+      <div>
+        <strong>${escapeHtml(candidate.displayName || candidate.store || 'Beat Saber')}</strong>
+        <span>${escapeHtml(candidate.version || shortPath(candidate.path))}</span>
+      </div>
+      <span class="badge ${candidate.recorderReady ? 'good' : 'warn'}">${candidate.recorderReady ? 'Ready' : 'Unavailable'}</span>
+      <small class="${candidate.recorderReady ? '' : 'isBlocked'}">${escapeHtml(readyText)}</small>
+    </button>`;
+  }).join('') || '<p class="firstRunStatus isBad">No Beat Saber installs were detected. Enter the folder that contains Beat Saber.exe.</p>';
+
+  choices.querySelectorAll('[data-first-run-source-path]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      runAction(() => selectFirstRunSource(button.dataset.firstRunSourcePath));
+    });
+  });
+
+  status.className = `firstRunStatus ${sourceDraftPending ? '' : (readiness.sourceReady ? 'isGood' : (sourcePath ? 'isBad' : ''))}`;
+  status.textContent = sourceDraftPending
+    ? 'Continue to validate and save this Beat Saber folder.'
+    : readiness.sourceReady
+    ? 'This source is ready. Replay Recorder will copy it into a separate worker folder.'
+    : (sourcePath
+      ? `This source cannot be used yet. Install ${missing.join(' + ') || 'BSIPA and BeatLeader'} in it first.`
+      : 'Choose a detected install or enter a folder to continue.');
+  continueButton.disabled = sourceDraftPending ? false : !readiness.sourceReady;
+  continueButton.title = sourceDraftPending || readiness.sourceReady
+    ? ''
+    : (sourcePath ? `Install ${missing.join(' + ') || 'BSIPA and BeatLeader'} first.` : 'Choose a Beat Saber source first.');
+  if (enableMetaSideloadingButton) {
+    enableMetaSideloadingButton.hidden = selectedCandidate?.store !== 'MetaPc' || !missing.includes('Meta sideloaded apps');
+  }
+}
+
+function renderFirstRunDisplayStep(readiness) {
+  const choices = document.getElementById('firstRunDisplayChoices');
+  const status = document.getElementById('firstRunDisplayStatus');
+  const continueButton = document.getElementById('firstRunDisplayContinue');
+  if (!choices || !status || !continueButton) return;
+
+  const selectedIndex = Number(document.getElementById('monitorIndex')?.value || state?.settings?.monitorIndex || 0);
+  const displays = displayInfo?.displays || [];
+  choices.innerHTML = displays.map(display => {
+    const index = Number(display.index ?? 0);
+    const selected = index === selectedIndex;
+    const name = display.friendlyName || `Monitor ${index + 1}`;
+    const resolution = display.width && display.height ? `${display.width} x ${display.height}` : 'Resolution unavailable';
+    return `<button class="firstRunChoice ${selected ? 'isSelected' : ''}" type="button" data-first-run-monitor-index="${index}">
+      <div><strong>Monitor ${index + 1}: ${escapeHtml(name)}</strong><span>${escapeHtml(resolution)}${display.isPrimary ? ' | Primary' : ''}</span></div>
+      <span class="badge ${selected ? 'good' : 'neutral'}">${selected ? 'Selected' : 'Use this'}</span>
+      <small>${escapeHtml(selected ? 'One 1080p worker is selected for the first test.' : 'Choose this display for recording.')}</small>
+    </button>`;
+  }).join('') || '<p class="firstRunStatus isBad">Windows display detection is unavailable. Choose a monitor in Settings after setup.</p>';
+
+  status.className = `firstRunStatus ${displays.length > 0 ? 'isGood' : 'isBad'}`;
+  status.textContent = displays.length > 0
+    ? 'The default first test records one 1080p worker on this display.'
+    : 'No monitors were detected yet.';
+  continueButton.disabled = displays.length === 0 || !readiness.sourceReady;
+}
+
+function renderFirstRunFfmpegStep(readiness) {
+  const status = document.getElementById('firstRunFfmpegStatus');
+  const pathField = document.getElementById('firstRunFfmpegPath');
+  const installButton = document.getElementById('firstRunInstallFfmpeg');
+  const continueButton = document.getElementById('firstRunFfmpegContinue');
+  if (!status || !pathField || !installButton || !continueButton) return;
+
+  const ffmpeg = setupFfmpegInfo || state?.ffmpegSetup || {};
+  pathField.value = state?.settings?.ffmpegPath || ffmpeg.ffmpegPath || '';
+  status.className = `firstRunStatusCard ${readiness.ffmpegReady ? 'isGood' : 'isBad'}`;
+  status.textContent = ffmpeg.detail || ffmpeg.summary || 'Checking FFmpeg and ffprobe.';
+  installButton.hidden = readiness.ffmpegReady;
+  installButton.disabled = !readiness.ffmpegCanInstall;
+  installButton.title = readiness.ffmpegCanInstall
+    ? 'Install Gyan.FFmpeg with WinGet.'
+    : 'WinGet is unavailable. Enter a full ffmpeg.exe path instead.';
+  continueButton.disabled = !readiness.ffmpegReady;
+}
+
+function renderFirstRunWorkerStep(readiness) {
+  const summary = document.getElementById('firstRunWorkerSummary');
+  const status = document.getElementById('firstRunWorkerStatus');
+  const button = document.getElementById('firstRunCreateWorker');
+  if (!summary || !status || !button) return;
+
+  const provision = state?.instanceProvision || {};
+  summary.textContent = readiness.instancesReady
+    ? 'Your separate recorder worker has been created.'
+    : 'Replay Recorder will create one separate Beat Saber copy for recording. Your normal game folder will not be changed.';
+  status.className = `firstRunStatusCard ${readiness.instancesReady ? 'isGood' : ''}`;
+  status.textContent = provision.summary || (readiness.instancesReady
+    ? 'Worker created.'
+    : `The worker will be stored under ${shortPath(state?.settings?.beatSaberInstancesRoot || '')}.`);
+  button.disabled = pendingSetupInstanceCreation || !readiness.sourceReady || !readiness.ffmpegReady;
+  button.textContent = pendingSetupInstanceCreation
+    ? 'Creating recorder worker'
+    : (readiness.instancesReady ? 'Continue' : 'Create recorder worker');
+}
+
+function renderFirstRunVerifyStep(readiness) {
+  const status = document.getElementById('firstRunVerifyStatus');
+  const button = document.getElementById('firstRunVerifyCapture');
+  const done = document.getElementById('firstRunDoneStatus');
+  if (!status || !button || !done) return;
+
+  const preflight = state?.capturePreflight || {};
+  status.className = `firstRunStatusCard ${readiness.captureReady ? 'isGood' : (preflight.status === 'Failed' ? 'isBad' : '')}`;
+  status.textContent = preflight.detail || preflight.summary || 'This test checks FFmpeg, the selected monitor, NVENC, and your NVIDIA driver.';
+  button.disabled = pendingSetupInstanceCreation || !readiness.instancesReady || !readiness.ffmpegReady;
+  button.textContent = readiness.captureReady ? 'Verify again' : 'Verify';
+  done.className = 'firstRunStatusCard isGood';
+  done.textContent = readiness.captureReady
+    ? 'Capture preflight passed. Start the recorder from the Run page when you are ready.'
+    : 'Finish capture verification before starting a run.';
+}
+
+function moveFirstRunWizard(step) {
+  const nextIndex = firstRunWizardStepOrder.indexOf(step);
+  if (nextIndex < 0) return;
+  firstRunWizardStep = step;
+  render();
+}
+
 function renderSetupAssistant() {
   ensureGameSettingsPlacement();
 
@@ -5799,6 +6003,7 @@ function renderSetupAssistant() {
   renderSetupInstanceList(settings, configuredCount, createdCount, missingCount);
   renderSetupSourcePath(settings, configuredCount, createdCount, missingCount);
   renderSetupMode(readiness);
+  renderFirstRunWizard(readiness);
 
   const summary = document.getElementById('setupAssistantSummary');
   if (summary) {
@@ -5819,6 +6024,11 @@ function renderSetupSourcePath(settings = {}, configuredCount = null, createdCou
   const detectedPath = setupSourcePathInfo?.detectedSourceBeatSaberPath || '';
   const effectivePath = setupSourcePathInfo?.effectiveSourceBeatSaberPath || '';
   const selectedCandidate = getDetectedSourceForPath(sourcePath);
+  const selectedMissingPrerequisites = getSelectedSourceMissingPrerequisites(sourcePath);
+  const sourceRecorderReady = Boolean(
+    selectedCandidate?.recorderReady ||
+    (sameClientPath(sourcePath, setupSourcePathInfo?.configuredSourceBeatSaberPath) &&
+      setupSourcePathInfo?.configuredSourceRecorderReady));
   const sourceList = document.getElementById('setupDetectedSources');
 
   if (useDetectedButton) {
@@ -5845,12 +6055,12 @@ function renderSetupSourcePath(settings = {}, configuredCount = null, createdCou
   if (hint) {
     let statusClass = 'missing';
     let text = 'Choose the folder containing Beat Saber.exe.';
-    if (sourcePath && sameClientPath(sourcePath, setupSourcePathInfo?.configuredSourceBeatSaberPath) && setupSourcePathInfo?.configuredSourceReady) {
+    if (sourcePath && sourceRecorderReady) {
       statusClass = 'ready';
-      text = `Configured ${selectedCandidate?.displayName || setupSourcePathInfo?.configuredSourceStore || 'Beat Saber'} source is ready.`;
-    } else if (sourcePath && sameClientPath(sourcePath, detectedPath) && setupSourcePathInfo?.detectedSourceReady) {
-      statusClass = 'detected';
-      text = `Detected ${selectedCandidate?.displayName || 'Beat Saber'} source is ready.`;
+      text = `${selectedCandidate?.displayName || setupSourcePathInfo?.configuredSourceStore || 'Beat Saber'} source is ready.`;
+    } else if (sourcePath && selectedMissingPrerequisites.length > 0) {
+      statusClass = 'missing';
+      text = `This Beat Saber install needs ${selectedMissingPrerequisites.join(' + ')} before it can be used for recording.`;
     } else if (sourcePath) {
       statusClass = 'detected';
       text = 'This source path will be validated when setup runs.';
@@ -5870,14 +6080,26 @@ function renderSetupSourcePath(settings = {}, configuredCount = null, createdCou
     const needsProvision = currentMissingCount > 0;
     const needsSource = currentCreatedCount === 0;
     setupButton.hidden = !needsProvision;
-    setupButton.disabled = Boolean(pendingSetupInstanceCreation || (needsSource && !sourcePath));
+    setupButton.disabled = Boolean(pendingSetupInstanceCreation || (needsSource && (!sourcePath || !sourceRecorderReady)));
     setupButton.innerHTML = pendingSetupInstanceCreation
       ? '<span class="setupSpinner tiny" aria-hidden="true"></span>Running Setup'
       : escapeHtml(needsSource ? 'Run Setup' : `Create ${currentMissingCount} Missing Instance${currentMissingCount === 1 ? '' : 's'}`);
     setupButton.title = needsSource && !sourcePath
       ? 'Choose the Beat Saber source folder first.'
-      : '';
+      : (needsSource && !sourceRecorderReady
+        ? `Install ${selectedMissingPrerequisites.join(' + ') || 'BSIPA and BeatLeader'} in the selected source first.`
+        : '');
   }
+}
+
+function getSelectedSourceMissingPrerequisites(sourcePath) {
+  const candidate = getDetectedSourceForPath(sourcePath);
+  if (candidate) return candidate.missingPrerequisites || [];
+  if (sameClientPath(sourcePath, setupSourcePathInfo?.configuredSourceBeatSaberPath)) {
+    return setupSourcePathInfo?.configuredSourceMissingPrerequisites || [];
+  }
+
+  return [];
 }
 
 function renderSetupInstanceList(settings, configuredCount, createdCount, missingCount) {
@@ -6366,11 +6588,14 @@ function revealSettingsTarget(targetId) {
   }
 }
 
-async function persistSettings() {
+async function persistSettings(overrides = {}) {
   const enabledInstanceCount = pendingSetupEnabledInstanceCount;
-  const request = buildSettingsRequest();
+  const request = { ...buildSettingsRequest(), ...overrides };
   const restartRecommendation = getSettingsRestartRecommendation(state?.settings, request);
   await postJson('/api/settings', request);
+  if (sameClientPath(request.sourceBeatSaberPath, state?.settings?.sourceBeatSaberPath)) {
+    setupSourcePathDraft = '';
+  }
   if (enabledInstanceCount != null) {
     await applySetupEnabledInstanceCount(enabledInstanceCount);
     pendingSetupEnabledInstanceCount = null;
@@ -6662,10 +6887,129 @@ async function runSetupWizardVerify() {
   showToast('Launch requested; verification is updating');
 }
 
+async function continueFirstRunSource() {
+  const input = document.getElementById('firstRunSourcePath');
+  const sourcePath = input?.value.trim() || firstRunSourceDraft;
+  const sourceStore = getDetectedSourceForPath(sourcePath)?.store || getSetupSourceStore(state?.settings);
+  await persistSettings({
+    sourceBeatSaberPath: sourcePath,
+    sourceBeatSaberStore: sourceStore
+  });
+  await loadSetupSourcePath();
+  firstRunSourceDraft = '';
+  const readiness = buildSetupReadiness(buildCurrentSettingsPreview());
+  if (!readiness.sourceReady) {
+    const missing = getSelectedSourceMissingPrerequisites(readiness.sourcePath);
+    throw new Error(`The selected Beat Saber install needs ${missing.join(' + ') || 'BSIPA and BeatLeader'} before it can create a recorder worker.`);
+  }
+
+  moveFirstRunWizard('display');
+}
+
+async function selectFirstRunSource(path) {
+  const sourcePath = String(path || '').trim();
+  if (!sourcePath) return;
+
+  firstRunSourceDraft = sourcePath;
+  render();
+}
+
+async function enableFirstRunMetaSideloading() {
+  await postJson('/api/setup/meta-sideloading/enable');
+  showToast('Approve the Windows prompt, then select the Meta source again to recheck it.');
+}
+
+async function continueFirstRunDisplay() {
+  await persistSettings();
+  moveFirstRunWizard('ffmpeg');
+}
+
+async function selectFirstRunMonitor(index) {
+  setValue('monitorIndex', index);
+  markSettingsDirty();
+  await persistSettings();
+  render();
+}
+
+async function useFirstRunFfmpegPath() {
+  const input = document.getElementById('firstRunFfmpegPath');
+  if (!input) return;
+  state.settings.ffmpegPath = input.value.trim();
+  await persistSettings();
+  await loadSetupFfmpeg();
+  const readiness = buildSetupReadiness(buildCurrentSettingsPreview());
+  if (!readiness.ffmpegReady) {
+    throw new Error('FFmpeg and ffprobe were not found at that path. Choose the full path to ffmpeg.exe from an install that also contains ffprobe.exe.');
+  }
+}
+
+async function installFirstRunFfmpeg() {
+  await runSetupInstallFfmpeg();
+  const readiness = buildSetupReadiness(buildCurrentSettingsPreview());
+  if (!readiness.ffmpegReady) {
+    throw new Error('FFmpeg is still unavailable. Enter the full path to ffmpeg.exe instead.');
+  }
+}
+
+async function continueFirstRunFfmpeg() {
+  const readiness = buildSetupReadiness(buildCurrentSettingsPreview());
+  if (!readiness.ffmpegReady) {
+    throw new Error('Install FFmpeg or provide its full path before continuing.');
+  }
+
+  moveFirstRunWizard('worker');
+}
+
+async function createFirstRunWorker() {
+  const readiness = buildSetupReadiness(buildCurrentSettingsPreview());
+  if (readiness.instancesReady) {
+    moveFirstRunWizard('verify');
+    return;
+  }
+
+  await runSetupWizardProvision();
+  const updatedReadiness = buildSetupReadiness(buildCurrentSettingsPreview());
+  if (!updatedReadiness.instancesReady) {
+    throw new Error('The recorder worker was not created. Review the setup message and try again.');
+  }
+
+  moveFirstRunWizard('verify');
+}
+
+async function verifyFirstRunCapture() {
+  await persistSettings();
+  await postJson('/api/capture/preflight');
+  const readiness = buildSetupReadiness(buildCurrentSettingsPreview());
+  if (!readiness.captureReady) {
+    throw new Error(state?.capturePreflight?.detail || 'Capture verification did not pass.');
+  }
+
+  finishFirstRunWizard();
+  showToast('Setup complete. You are ready to record.');
+}
+
+function finishFirstRunWizard() {
+  firstRunWizardFinished = true;
+  setupModeActive = false;
+  activateView('run', false);
+  render();
+}
+
 async function minimizeControlPanelForRecording() {
   try {
     if (window.replayRecorder?.minimizeWindow) {
-      await window.replayRecorder.minimizeWindow();
+      const selectedDisplay = getSelectedDisplay(state?.settings || {});
+      if (!selectedDisplay) return;
+      await window.replayRecorder.minimizeWindow({
+        monitorIndex: Number(selectedDisplay.index),
+        isPrimary: Boolean(selectedDisplay.isPrimary),
+        friendlyName: selectedDisplay.friendlyName || '',
+        label: selectedDisplay.label || '',
+        left: Number(selectedDisplay.left),
+        top: Number(selectedDisplay.top),
+        width: Number(selectedDisplay.width),
+        height: Number(selectedDisplay.height)
+      });
     }
   } catch {
     // Browser mode and older Electron builds can ignore this helper.
@@ -6802,6 +7146,31 @@ document.getElementById('setupWizardAddInstance')?.addEventListener('click', () 
 document.getElementById('setupModeInstallFfmpeg')?.addEventListener('click', () => runAction(runSetupInstallFfmpeg));
 document.getElementById('setupModeVerify')?.addEventListener('click', () => runAction(runSetupWizardVerify));
 document.getElementById('setupModeLaunchOnly')?.addEventListener('click', () => runAction(runSetupWizardLaunchOnly));
+document.getElementById('firstRunSourceContinue')?.addEventListener('click', () => runAction(continueFirstRunSource));
+document.getElementById('firstRunEnableMetaSideloading')?.addEventListener('click', () => runAction(enableFirstRunMetaSideloading));
+document.getElementById('firstRunDisplayContinue')?.addEventListener('click', () => runAction(continueFirstRunDisplay));
+document.getElementById('firstRunInstallFfmpeg')?.addEventListener('click', () => runAction(installFirstRunFfmpeg));
+document.getElementById('firstRunUseFfmpegPath')?.addEventListener('click', () => runAction(useFirstRunFfmpegPath));
+document.getElementById('firstRunFfmpegContinue')?.addEventListener('click', () => runAction(continueFirstRunFfmpeg));
+document.getElementById('firstRunCreateWorker')?.addEventListener('click', () => runAction(createFirstRunWorker));
+document.getElementById('firstRunVerifyCapture')?.addEventListener('click', () => runAction(verifyFirstRunCapture));
+document.getElementById('firstRunFinish')?.addEventListener('click', finishFirstRunWizard);
+document.getElementById('firstRunSourcePath')?.addEventListener('input', event => {
+  const value = event.target.value?.trim() || '';
+  firstRunSourceDraft = value;
+  const status = document.getElementById('firstRunSourceStatus');
+  const continueButton = document.getElementById('firstRunSourceContinue');
+  if (status) {
+    status.className = 'firstRunStatus';
+    status.textContent = value.trim()
+      ? 'Continue to validate this Beat Saber folder.'
+      : 'Choose a detected install or enter a folder to continue.';
+  }
+  if (continueButton) {
+    continueButton.disabled = !value.trim();
+    continueButton.title = value.trim() ? '' : 'Choose a Beat Saber source first.';
+  }
+});
 document.getElementById('setupWizardVerify')?.addEventListener('click', () => runAction(runSetupWizardVerify));
 document.getElementById('setupWizardCheckBaseline')?.addEventListener('click', () => runAction(runSetupWizardBaselineCheck));
 document.getElementById('setupWizardLaunchOnly')?.addEventListener('click', () => runAction(runSetupWizardLaunchOnly));
@@ -6813,15 +7182,33 @@ document.getElementById('setupUseDetectedSource')?.addEventListener('click', () 
     return;
   }
 
-  setValue('setupSourceBeatSaberPath', detectedPath);
+  setupSourcePathDraft = detectedPath;
   markSettingsDirty();
   renderSetupAssistant();
 });
 
 document.addEventListener('click', event => {
+  const firstRunSourceButton = event.target.closest('[data-first-run-source-path]');
+  if (firstRunSourceButton) {
+    runAction(() => selectFirstRunSource(firstRunSourceButton.dataset.firstRunSourcePath));
+    return;
+  }
+
+  const firstRunMonitorButton = event.target.closest('[data-first-run-monitor-index]');
+  if (firstRunMonitorButton) {
+    runAction(() => selectFirstRunMonitor(Number(firstRunMonitorButton.dataset.firstRunMonitorIndex || 0)));
+    return;
+  }
+
+  const firstRunBackButton = event.target.closest('[data-first-run-back]');
+  if (firstRunBackButton) {
+    moveFirstRunWizard(firstRunBackButton.dataset.firstRunBack || 'source');
+    return;
+  }
+
   const sourceButton = event.target.closest('[data-setup-source-path]');
   if (sourceButton) {
-    setValue('setupSourceBeatSaberPath', sourceButton.dataset.setupSourcePath || '');
+    setupSourcePathDraft = sourceButton.dataset.setupSourcePath || '';
     markSettingsDirty();
     renderSetupAssistant();
     return;
