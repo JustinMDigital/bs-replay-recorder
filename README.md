@@ -1,8 +1,12 @@
 # Beat Saber Auto Replay Recorder
 
 <img src="assets/logo.png" alt="Beat Saber Auto Replay Recorder logo" width="150">
+Logo by Stenis
+
 
 Replay Recorder is a local Windows desktop app for turning BeatLeader and ScoreSaber replays into finished Beat Saber videos.
+
+## Tested on verions 1.40.6, 1.44.1
 
 It launches one or more managed Beat Saber worker copies, plays queued replays, records each game window, captures audio from the matching Beat Saber process, sync-corrects the result, and saves the final video to your recorder workspace.
 
