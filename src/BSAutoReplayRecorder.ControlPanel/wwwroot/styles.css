@@ -8221,6 +8221,8 @@ body[data-active-view="collections"] .shell.dashboardShell {
 
 .collectionsList {
   display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: 8px;
   min-height: 0;
   overflow: auto;

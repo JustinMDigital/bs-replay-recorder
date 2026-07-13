@@ -8,10 +8,10 @@ It launches one or more managed Beat Saber worker copies, plays queued replays, 
 
 The normal path is intentionally simple:
 
-1. Extract the release folder.
-2. Open `Replay Recorder.exe`.
-3. Follow the first-run setup to choose Beat Saber and install FFmpeg if needed.
-4. Launch and verify the managed Beat Saber worker.
+1. Download the Windows portable ZIP from [GitHub Releases](https://github.com/JustinMDigital/bs-replay-recorder/releases).
+2. Extract the entire folder somewhere writable, such as `C:\ReplayRecorder`.
+3. Open the top-level `Replay Recorder.exe` from the extracted folder.
+4. Complete the five-step setup inside the app.
 5. Import replay files or replay links, then press `Start run`.
 6. Pick up videos from `ControlPanelWorkspace\Recordings`.
 
@@ -47,9 +47,19 @@ The default plugin manifest targets Beat Saber `1.40.6`, BSIPA `^4.3.6`, and Bea
 
 ## First Setup
 
-For the packaged release, open `Replay Recorder.exe`. The first-run setup creates local settings, detects Beat Saber, creates only missing managed workers, offers an FFmpeg install, and tests the selected monitor, NVENC encoder, and driver before a recording can start. It does not copy your personal workspace settings or recordings into the release defaults.
+The release is portable, so there is no traditional Windows installer. Extract the whole ZIP before opening it, and keep `Replay Recorder.exe` beside the included `dist`, `scripts`, and `Support` folders. The EXE is the launcher, not a standalone file.
 
-Use the support installer only when working from a source checkout or repairing an extracted package:
+On the first launch, the app walks through five steps:
+
+1. **Beat Saber:** choose a detected Steam or Meta PC install, or enter the folder containing `Beat Saber.exe`. The selected game must already have BSIPA and BeatLeader installed. Replay Recorder uses it as a template and does not modify your normal game folder.
+2. **Recording display:** choose the monitor to capture. Setup starts with one 1080p worker; more workers and other quality profiles can be added later.
+3. **FFmpeg:** use the detected install, install `Gyan.FFmpeg` through WinGet, or enter the full path to `ffmpeg.exe`. `ffprobe.exe` must be in the same install.
+4. **Recorder worker:** create a separate managed Beat Saber copy under `ControlPanelWorkspace\Instances`.
+5. **Test capture:** run a short preflight that checks the selected monitor, FFmpeg, NVENC encoder, and NVIDIA driver.
+
+When the test passes, choose `Go to recorder`, import a replay, and start the run. Setup creates local settings and only the missing managed-worker files; it does not copy personal settings, replays, or recordings into the release defaults.
+
+`Support\install.bat` is not part of the normal release install flow. Use it only when working from a source checkout or repairing an extracted package:
 
 From the repo root:
 
