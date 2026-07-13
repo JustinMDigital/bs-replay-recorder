@@ -20,6 +20,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls(settings.BindUrl);
 builder.Services.AddSingleton(settings);
 builder.Services.AddSingleton<IRecordingAudioVerifier, FfprobeRecordingAudioVerifier>();
+builder.Services.AddSingleton<ICapturePreflightRunner, CapturePreflightRunner>();
+builder.Services.AddSingleton<IFfmpegSetupService, FfmpegSetupService>();
 builder.Services.AddSingleton<IBeatSaverMapDownloader>(_ => new BeatSaverMapDownloader(new HttpClient()));
 builder.Services.AddSingleton<IBeatLeaderReplayDownloader>(_ => new BeatLeaderReplayDownloader(new HttpClient()));
 builder.Services.AddSingleton<IScoreSaberReplayDownloader>(_ => new ScoreSaberReplayDownloader(new HttpClient()));
@@ -54,6 +56,11 @@ app.MapGet("/api/state", (ControlPanelStore store) => Results.Ok(store.Snapshot(
 app.MapGet("/api/displays", (IDisplayInfoProvider displays) => Results.Ok(displays.GetDisplays()));
 app.MapGet("/api/game-color-presets", (ControlPanelStore store) => Results.Ok(store.GetGameColorPresets()));
 app.MapGet("/api/setup/source", (ControlPanelStore store) => Results.Ok(store.GetSetupSourcePath()));
+app.MapGet("/api/setup/ffmpeg", (ControlPanelStore store) => Results.Ok(store.CheckFfmpegSetup()));
+app.MapPost("/api/setup/ffmpeg/install", (ControlPanelStore store) =>
+    ExecuteApi(store.InstallFfmpeg));
+app.MapPost("/api/capture/preflight", (ControlPanelStore store) =>
+    ExecuteApi(store.CheckCapturePreflight));
 
 app.MapPost("/api/settings", (SettingsUpdateRequest request, ControlPanelStore store) =>
 {
@@ -105,6 +112,12 @@ app.MapPost("/api/collections/{id}/rename", (string id, RenameMapCollectionReque
     ExecuteApi(() =>
     {
         var collection = store.RenameMapCollection(id, request);
+        return new { collection, state = store.Snapshot() };
+    }));
+app.MapPost("/api/collections/{id}/items/{itemId}/remove", (string id, string itemId, ControlPanelStore store) =>
+    ExecuteApi(() =>
+    {
+        var collection = store.RemoveMapCollectionItem(id, itemId);
         return new { collection, state = store.Snapshot() };
     }));
 app.MapPost("/api/collections/{id}/load", (string id, LoadMapCollectionRequest request, ControlPanelStore store) =>

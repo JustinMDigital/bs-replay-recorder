@@ -1,10 +1,12 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using BeatLeader.Models;
 using BSAutoReplayRecorder.Core;
 using IPA.Logging;
+using Newtonsoft.Json;
 using UnityEngine;
 
 namespace BSAutoReplayRecorder.Plugin;
@@ -27,6 +29,15 @@ internal static class GamePresentationSettingsApplier
         }
 
         settings.Normalize();
+        if (settings.RestorePlayerSettingsOnExit)
+        {
+            PlayerProfileRestore.CaptureIfNeeded(logger);
+        }
+        else
+        {
+            PlayerProfileRestore.ClearIfExists(logger);
+        }
+
         BeatLeaderReplayUiSuppressor.Install(logger);
 
         var changedSections = new List<string>();
@@ -45,6 +56,11 @@ internal static class GamePresentationSettingsApplier
         {
             logger.Info("Applied game settings from the control panel: " + string.Join(", ", changedSections) + ".");
         }
+    }
+
+    public static void RestorePlayerSettingsIfPending(IPA.Logging.Logger logger)
+    {
+        PlayerProfileRestore.RestoreIfPending(logger);
     }
 
     private interface IGamePresentationSettingsSectionApplier
@@ -355,6 +371,11 @@ internal static class GamePresentationSettingsApplier
 
     private static void ApplyRuntimeAudioSettings(GamePresentationSettings settings)
     {
+        ApplyRuntimeAudioSettings(settings.SfxVolume);
+    }
+
+    private static void ApplyRuntimeAudioSettings(float sfxVolume)
+    {
         var audioManagerType = FindType("AudioManagerSO");
         if (audioManagerType == null)
         {
@@ -365,10 +386,436 @@ internal static class GamePresentationSettingsApplier
         {
             audioManagerType
                 .GetProperty("sfxVolume", BindingFlags.Public | BindingFlags.Instance)
-                ?.SetValue(audioManager, settings.SfxVolume, null);
+                ?.SetValue(audioManager, sfxVolume, null);
             audioManagerType
                 .GetProperty("sfxEnabled", BindingFlags.Public | BindingFlags.Instance)
                 ?.SetValue(audioManager, true, null);
+        }
+    }
+
+    private static class PlayerProfileRestore
+    {
+        private const string SnapshotDirectoryName = "BSAutoReplayRecorder";
+        private const string SnapshotFileName = "player-profile-restore.json";
+
+        public static void CaptureIfNeeded(IPA.Logging.Logger logger)
+        {
+            var snapshotPath = GetSnapshotPath();
+            if (File.Exists(snapshotPath))
+            {
+                return;
+            }
+
+            var playerDataModel = ResolvePlayerDataModel()
+                                  ?? throw new GamePresentationSettingsNotReadyException("Beat Saber player data model is not available yet.");
+            var playerData = playerDataModel.playerData
+                             ?? throw new GamePresentationSettingsNotReadyException("Beat Saber player data is not loaded yet.");
+            var current = playerData.playerSpecificSettings
+                          ?? throw new GamePresentationSettingsNotReadyException("Beat Saber player-specific settings are not loaded yet.");
+            var snapshot = PlayerProfileRestoreSnapshot.Create(playerData, current);
+            var json = JsonConvert.SerializeObject(snapshot, Formatting.Indented);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(snapshotPath) ?? GamePaths.GetRecorderUserDataDirectory());
+            try
+            {
+                using (var stream = new FileStream(snapshotPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(json);
+                }
+
+                logger.Info("Captured Beat Saber player profile restore snapshot at " + snapshotPath + ".");
+            }
+            catch (IOException) when (File.Exists(snapshotPath))
+            {
+                // Another managed instance captured the shared profile first.
+            }
+        }
+
+        public static void ClearIfExists(IPA.Logging.Logger logger)
+        {
+            var snapshotPath = GetSnapshotPath();
+            try
+            {
+                if (!File.Exists(snapshotPath))
+                {
+                    return;
+                }
+
+                File.Delete(snapshotPath);
+                logger.Info("Cleared pending Beat Saber player profile restore snapshot.");
+            }
+            catch (Exception ex)
+            {
+                logger.Warn("Could not clear pending Beat Saber player profile restore snapshot: " + ex.Message);
+            }
+        }
+
+        public static void RestoreIfPending(IPA.Logging.Logger logger)
+        {
+            var snapshotPath = GetSnapshotPath();
+            if (!File.Exists(snapshotPath))
+            {
+                return;
+            }
+
+            try
+            {
+                var snapshot = JsonConvert.DeserializeObject<PlayerProfileRestoreSnapshot>(File.ReadAllText(snapshotPath));
+                if (snapshot?.PlayerSpecificSettings == null)
+                {
+                    logger.Warn("Beat Saber player profile restore snapshot was empty; leaving it in place.");
+                    return;
+                }
+
+                var playerDataModel = ResolvePlayerDataModel();
+                var playerData = playerDataModel?.playerData;
+                if (playerData == null || playerData.playerSpecificSettings == null)
+                {
+                    logger.Warn("Beat Saber player data was not available for profile restore; leaving snapshot in place.");
+                    return;
+                }
+
+                var changed = RestorePlayerSpecificSettings(playerData, snapshot.PlayerSpecificSettings);
+                changed |= RestoreColorSchemes(playerData, snapshot.ColorSchemes);
+                if (changed)
+                {
+                    SavePlayerData(playerDataModel!);
+                }
+
+                ApplyRuntimeAudioSettings(snapshot.PlayerSpecificSettings.SfxVolume);
+                File.Delete(snapshotPath);
+                logger.Info("Restored Beat Saber player profile settings from " + snapshotPath + ".");
+            }
+            catch (Exception ex)
+            {
+                logger.Warn("Could not restore Beat Saber player profile settings: " + ex.Message);
+            }
+        }
+
+        private static bool RestorePlayerSpecificSettings(
+            PlayerData playerData,
+            PlayerSpecificSettingsSnapshot snapshot)
+        {
+            var current = playerData.playerSpecificSettings
+                          ?? throw new GamePresentationSettingsNotReadyException("Beat Saber player-specific settings are not loaded yet.");
+            var next = current.CopyWith(
+                snapshot.LeftHanded,
+                snapshot.PlayerHeight,
+                snapshot.AutomaticPlayerHeight,
+                snapshot.SfxVolume,
+                snapshot.ReduceDebris,
+                snapshot.NoTextsAndHuds,
+                snapshot.NoFailEffects,
+                snapshot.AdvancedHud,
+                snapshot.AutoRestart,
+                snapshot.SaberTrailIntensity,
+                ParseEnum(snapshot.NoteJumpDurationType, current.noteJumpDurationTypeSettings),
+                snapshot.NoteJumpFixedDuration,
+                snapshot.NoteJumpStartBeatOffset,
+                snapshot.HideNoteSpawnEffect,
+                snapshot.AdaptiveSfx,
+                snapshot.ArcsHapticFeedback,
+                ParseEnum(snapshot.ArcVisibility, current.arcVisibility),
+                ParseEnum(snapshot.EnvironmentEffectsFilterDefaultPreset, current.environmentEffectsFilterDefaultPreset),
+                ParseEnum(snapshot.EnvironmentEffectsFilterExpertPlusPreset, current.environmentEffectsFilterExpertPlusPreset),
+                snapshot.HeadsetHapticIntensity);
+            if (current.AreValuesEqual(next))
+            {
+                return false;
+            }
+
+            playerData.SetPlayerSpecificSettings(next);
+            return true;
+        }
+
+        private static bool RestoreColorSchemes(
+            PlayerData playerData,
+            ColorSchemesSettingsSnapshot? snapshot)
+        {
+            if (snapshot?.SelectedColorScheme == null)
+            {
+                return false;
+            }
+
+            var colorSchemesSettings = playerData.colorSchemesSettings
+                                       ?? throw new GamePresentationSettingsNotReadyException("Beat Saber color settings are not loaded yet.");
+            var selectedColorSchemeId = string.IsNullOrWhiteSpace(snapshot.SelectedColorSchemeId)
+                ? snapshot.SelectedColorScheme.ColorSchemeId
+                : snapshot.SelectedColorSchemeId;
+            var currentColorScheme =
+                colorSchemesSettings.GetColorSchemeForId(snapshot.SelectedColorScheme.ColorSchemeId) ??
+                colorSchemesSettings.GetColorSchemeForId(selectedColorSchemeId) ??
+                colorSchemesSettings.GetSelectedColorScheme();
+            if (currentColorScheme == null)
+            {
+                return false;
+            }
+
+            var restoredColorScheme = CreateColorScheme(snapshot.SelectedColorScheme, currentColorScheme);
+            var changed =
+                !string.Equals(colorSchemesSettings.selectedColorSchemeId, selectedColorSchemeId, StringComparison.Ordinal) ||
+                colorSchemesSettings.overrideDefaultColors != snapshot.OverrideDefaultColors ||
+                !string.Equals(GetEnumPropertyName(colorSchemesSettings, "colorOverrideType"), snapshot.ColorOverrideType, StringComparison.Ordinal) ||
+                !ColorSchemesEqual(currentColorScheme, restoredColorScheme);
+
+            colorSchemesSettings
+                .GetType()
+                .GetMethod("SetColorSchemeForId", BindingFlags.Public | BindingFlags.Instance)
+                ?.Invoke(colorSchemesSettings, new[] { restoredColorScheme });
+            colorSchemesSettings.selectedColorSchemeId = selectedColorSchemeId;
+            colorSchemesSettings.overrideDefaultColors = snapshot.OverrideDefaultColors;
+            if (!string.IsNullOrWhiteSpace(snapshot.ColorOverrideType))
+            {
+                SetEnumPropertyByName(colorSchemesSettings, "colorOverrideType", snapshot.ColorOverrideType);
+            }
+
+            return changed;
+        }
+
+        private static string GetSnapshotPath()
+        {
+            var persistentDataPath = Application.persistentDataPath;
+            if (string.IsNullOrWhiteSpace(persistentDataPath))
+            {
+                persistentDataPath = GamePaths.GetRecorderUserDataDirectory();
+            }
+
+            return Path.Combine(persistentDataPath, SnapshotDirectoryName, SnapshotFileName);
+        }
+    }
+
+    private sealed class PlayerProfileRestoreSnapshot
+    {
+        public DateTimeOffset CreatedAtUtc { get; set; }
+
+        public PlayerSpecificSettingsSnapshot PlayerSpecificSettings { get; set; } = new PlayerSpecificSettingsSnapshot();
+
+        public ColorSchemesSettingsSnapshot? ColorSchemes { get; set; }
+
+        public static PlayerProfileRestoreSnapshot Create(
+            PlayerData playerData,
+            PlayerSpecificSettings playerSpecificSettings)
+        {
+            return new PlayerProfileRestoreSnapshot
+            {
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                PlayerSpecificSettings = PlayerSpecificSettingsSnapshot.Create(playerSpecificSettings),
+                ColorSchemes = ColorSchemesSettingsSnapshot.Create(playerData.colorSchemesSettings)
+            };
+        }
+    }
+
+    private sealed class PlayerSpecificSettingsSnapshot
+    {
+        public bool LeftHanded { get; set; }
+
+        public float PlayerHeight { get; set; }
+
+        public bool AutomaticPlayerHeight { get; set; }
+
+        public float SfxVolume { get; set; }
+
+        public bool ReduceDebris { get; set; }
+
+        public bool NoTextsAndHuds { get; set; }
+
+        public bool NoFailEffects { get; set; }
+
+        public bool AdvancedHud { get; set; }
+
+        public bool AutoRestart { get; set; }
+
+        public float SaberTrailIntensity { get; set; }
+
+        public string NoteJumpDurationType { get; set; } = "";
+
+        public float NoteJumpFixedDuration { get; set; }
+
+        public float NoteJumpStartBeatOffset { get; set; }
+
+        public bool HideNoteSpawnEffect { get; set; }
+
+        public bool AdaptiveSfx { get; set; }
+
+        public bool ArcsHapticFeedback { get; set; }
+
+        public string ArcVisibility { get; set; } = "";
+
+        public string EnvironmentEffectsFilterDefaultPreset { get; set; } = "";
+
+        public string EnvironmentEffectsFilterExpertPlusPreset { get; set; } = "";
+
+        public float HeadsetHapticIntensity { get; set; }
+
+        public static PlayerSpecificSettingsSnapshot Create(PlayerSpecificSettings settings)
+        {
+            return new PlayerSpecificSettingsSnapshot
+            {
+                LeftHanded = settings.leftHanded,
+                PlayerHeight = settings.playerHeight,
+                AutomaticPlayerHeight = settings.automaticPlayerHeight,
+                SfxVolume = settings.sfxVolume,
+                ReduceDebris = settings.reduceDebris,
+                NoTextsAndHuds = settings.noTextsAndHuds,
+                NoFailEffects = settings.noFailEffects,
+                AdvancedHud = settings.advancedHud,
+                AutoRestart = settings.autoRestart,
+                SaberTrailIntensity = settings.saberTrailIntensity,
+                NoteJumpDurationType = settings.noteJumpDurationTypeSettings.ToString(),
+                NoteJumpFixedDuration = settings.noteJumpFixedDuration,
+                NoteJumpStartBeatOffset = settings.noteJumpStartBeatOffset,
+                HideNoteSpawnEffect = settings.hideNoteSpawnEffect,
+                AdaptiveSfx = settings.adaptiveSfx,
+                ArcsHapticFeedback = settings.arcsHapticFeedback,
+                ArcVisibility = settings.arcVisibility.ToString(),
+                EnvironmentEffectsFilterDefaultPreset = settings.environmentEffectsFilterDefaultPreset.ToString(),
+                EnvironmentEffectsFilterExpertPlusPreset = settings.environmentEffectsFilterExpertPlusPreset.ToString(),
+                HeadsetHapticIntensity = settings.headsetHapticIntensity
+            };
+        }
+    }
+
+    private sealed class ColorSchemesSettingsSnapshot
+    {
+        public string SelectedColorSchemeId { get; set; } = "";
+
+        public bool OverrideDefaultColors { get; set; }
+
+        public string ColorOverrideType { get; set; } = "";
+
+        public ColorSchemeSnapshot? SelectedColorScheme { get; set; }
+
+        public static ColorSchemesSettingsSnapshot? Create(ColorSchemesSettings? settings)
+        {
+            if (settings == null)
+            {
+                return null;
+            }
+
+            var selectedColorSchemeId = settings.selectedColorSchemeId ?? "";
+            var selectedColorScheme = settings.GetSelectedColorScheme();
+            if (selectedColorScheme == null && !string.IsNullOrWhiteSpace(selectedColorSchemeId))
+            {
+                selectedColorScheme = settings.GetColorSchemeForId(selectedColorSchemeId);
+            }
+
+            return new ColorSchemesSettingsSnapshot
+            {
+                SelectedColorSchemeId = selectedColorSchemeId,
+                OverrideDefaultColors = settings.overrideDefaultColors,
+                ColorOverrideType = GetEnumPropertyName(settings, "colorOverrideType"),
+                SelectedColorScheme = selectedColorScheme == null
+                    ? null
+                    : ColorSchemeSnapshot.Create(selectedColorScheme)
+            };
+        }
+    }
+
+    private sealed class ColorSchemeSnapshot
+    {
+        public string ColorSchemeId { get; set; } = "";
+
+        public string ColorSchemeNameLocalizationKey { get; set; } = "";
+
+        public bool UseNonLocalizedName { get; set; }
+
+        public string NonLocalizedName { get; set; } = "";
+
+        public bool IsEditable { get; set; }
+
+        public bool OverrideNotes { get; set; }
+
+        public ColorValueSnapshot SaberAColor { get; set; } = new ColorValueSnapshot();
+
+        public ColorValueSnapshot SaberBColor { get; set; } = new ColorValueSnapshot();
+
+        public bool OverrideLights { get; set; }
+
+        public ColorValueSnapshot EnvironmentColor0 { get; set; } = new ColorValueSnapshot();
+
+        public ColorValueSnapshot EnvironmentColor1 { get; set; } = new ColorValueSnapshot();
+
+        public ColorValueSnapshot EnvironmentColorW { get; set; } = new ColorValueSnapshot();
+
+        public bool SupportsEnvironmentColorBoost { get; set; }
+
+        public ColorValueSnapshot EnvironmentColor0Boost { get; set; } = new ColorValueSnapshot();
+
+        public ColorValueSnapshot EnvironmentColor1Boost { get; set; } = new ColorValueSnapshot();
+
+        public ColorValueSnapshot EnvironmentColorWBoost { get; set; } = new ColorValueSnapshot();
+
+        public ColorValueSnapshot ObstaclesColor { get; set; } = new ColorValueSnapshot();
+
+        public static ColorSchemeSnapshot Create(object colorScheme)
+        {
+            return new ColorSchemeSnapshot
+            {
+                ColorSchemeId = GetStringProperty(colorScheme, "colorSchemeId"),
+                ColorSchemeNameLocalizationKey = GetStringProperty(colorScheme, "colorSchemeNameLocalizationKey"),
+                UseNonLocalizedName = GetBooleanProperty(colorScheme, "useNonLocalizedName", false),
+                NonLocalizedName = GetStringProperty(colorScheme, "nonLocalizedName"),
+                IsEditable = GetBooleanProperty(colorScheme, "isEditable", true),
+                OverrideNotes = GetBooleanProperty(colorScheme, "overrideNotes", true),
+                SaberAColor = ColorValueSnapshot.Create(GetColorPropertyOrDefault(colorScheme, "saberAColor", Color.white)),
+                SaberBColor = ColorValueSnapshot.Create(GetColorPropertyOrDefault(colorScheme, "saberBColor", Color.white)),
+                OverrideLights = GetBooleanProperty(colorScheme, "overrideLights", true),
+                EnvironmentColor0 = ColorValueSnapshot.Create(GetColorPropertyOrDefault(colorScheme, "environmentColor0", Color.white)),
+                EnvironmentColor1 = ColorValueSnapshot.Create(GetColorPropertyOrDefault(colorScheme, "environmentColor1", Color.white)),
+                EnvironmentColorW = ColorValueSnapshot.Create(GetColorPropertyOrDefault(colorScheme, "environmentColorW", Color.white)),
+                SupportsEnvironmentColorBoost = GetBooleanProperty(colorScheme, "supportsEnvironmentColorBoost", true),
+                EnvironmentColor0Boost = ColorValueSnapshot.Create(GetColorPropertyOrDefault(colorScheme, "environmentColor0Boost", Color.white)),
+                EnvironmentColor1Boost = ColorValueSnapshot.Create(GetColorPropertyOrDefault(colorScheme, "environmentColor1Boost", Color.white)),
+                EnvironmentColorWBoost = ColorValueSnapshot.Create(GetColorPropertyOrDefault(colorScheme, "environmentColorWBoost", Color.white)),
+                ObstaclesColor = ColorValueSnapshot.Create(GetColorPropertyOrDefault(colorScheme, "obstaclesColor", Color.white))
+            };
+        }
+    }
+
+    private sealed class ColorValueSnapshot
+    {
+        public float R { get; set; }
+
+        public float G { get; set; }
+
+        public float B { get; set; }
+
+        public float A { get; set; } = 1f;
+
+        public static ColorValueSnapshot Create(Color color)
+        {
+            return new ColorValueSnapshot
+            {
+                R = color.r,
+                G = color.g,
+                B = color.b,
+                A = color.a
+            };
+        }
+
+        public Color ToColor()
+        {
+            return new Color(
+                NormalizeColorComponent(R, 1f),
+                NormalizeColorComponent(G, 1f),
+                NormalizeColorComponent(B, 1f),
+                NormalizeColorComponent(A, 1f));
+        }
+
+        private static float NormalizeColorComponent(float value, float fallback)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value))
+            {
+                return fallback;
+            }
+
+            if (value < 0f)
+            {
+                return 0f;
+            }
+
+            return value > 1f ? 1f : value;
         }
     }
 
@@ -1027,6 +1474,132 @@ internal static class GamePresentationSettingsApplier
                 lightColorB,
                 boostLightColorA,
                 boostLightColorB
+            });
+        }
+
+        throw new InvalidOperationException("Beat Saber color scheme constructor is not available.");
+    }
+
+    private static object CreateColorScheme(ColorSchemeSnapshot snapshot, object currentColorScheme)
+    {
+        var colorSchemeType = currentColorScheme.GetType();
+        var colorSchemeId = string.IsNullOrWhiteSpace(snapshot.ColorSchemeId)
+            ? GetStringProperty(currentColorScheme, "colorSchemeId")
+            : snapshot.ColorSchemeId;
+        var colorSchemeNameLocalizationKey = string.IsNullOrWhiteSpace(snapshot.ColorSchemeNameLocalizationKey)
+            ? GetStringProperty(currentColorScheme, "colorSchemeNameLocalizationKey")
+            : snapshot.ColorSchemeNameLocalizationKey;
+        var nonLocalizedName = string.IsNullOrWhiteSpace(snapshot.NonLocalizedName)
+            ? GetStringProperty(currentColorScheme, "nonLocalizedName")
+            : snapshot.NonLocalizedName;
+
+        var currentConstructor = colorSchemeType.GetConstructor(new[]
+        {
+            typeof(string),
+            typeof(string),
+            typeof(bool),
+            typeof(string),
+            typeof(bool),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color)
+        });
+        if (currentConstructor != null)
+        {
+            return currentConstructor.Invoke(new object[]
+            {
+                colorSchemeId,
+                colorSchemeNameLocalizationKey,
+                snapshot.UseNonLocalizedName,
+                nonLocalizedName,
+                snapshot.IsEditable,
+                snapshot.OverrideNotes,
+                snapshot.SaberAColor.ToColor(),
+                snapshot.SaberBColor.ToColor(),
+                snapshot.OverrideLights,
+                snapshot.EnvironmentColor0.ToColor(),
+                snapshot.EnvironmentColor1.ToColor(),
+                snapshot.EnvironmentColorW.ToColor(),
+                snapshot.SupportsEnvironmentColorBoost,
+                snapshot.EnvironmentColor0Boost.ToColor(),
+                snapshot.EnvironmentColor1Boost.ToColor(),
+                snapshot.EnvironmentColorWBoost.ToColor(),
+                snapshot.ObstaclesColor.ToColor()
+            });
+        }
+
+        var copyConstructor = colorSchemeType.GetConstructor(new[]
+        {
+            colorSchemeType,
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color)
+        });
+        if (copyConstructor != null)
+        {
+            return copyConstructor.Invoke(new object[]
+            {
+                currentColorScheme,
+                snapshot.OverrideNotes,
+                snapshot.SaberAColor.ToColor(),
+                snapshot.SaberBColor.ToColor(),
+                snapshot.OverrideLights,
+                snapshot.EnvironmentColor0.ToColor(),
+                snapshot.EnvironmentColor1.ToColor(),
+                snapshot.EnvironmentColorW.ToColor(),
+                snapshot.SupportsEnvironmentColorBoost,
+                snapshot.EnvironmentColor0Boost.ToColor(),
+                snapshot.EnvironmentColor1Boost.ToColor(),
+                snapshot.EnvironmentColorWBoost.ToColor(),
+                snapshot.ObstaclesColor.ToColor()
+            });
+        }
+
+        var legacyConstructor = colorSchemeType.GetConstructor(new[]
+        {
+            typeof(string),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(bool),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color),
+            typeof(Color)
+        });
+        if (legacyConstructor != null)
+        {
+            return legacyConstructor.Invoke(new object[]
+            {
+                colorSchemeId,
+                snapshot.OverrideNotes,
+                snapshot.SaberAColor.ToColor(),
+                snapshot.SaberBColor.ToColor(),
+                snapshot.ObstaclesColor.ToColor(),
+                snapshot.OverrideLights,
+                snapshot.EnvironmentColor0.ToColor(),
+                snapshot.EnvironmentColor1.ToColor(),
+                snapshot.EnvironmentColor0Boost.ToColor(),
+                snapshot.EnvironmentColor1Boost.ToColor()
             });
         }
 

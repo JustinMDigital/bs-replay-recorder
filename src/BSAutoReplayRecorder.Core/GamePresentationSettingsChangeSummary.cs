@@ -13,6 +13,7 @@ public sealed class GamePresentationSettingsChangeSummary
         new FieldDescriptor("SFX volume", settings => FormatPercent(settings.SfxVolume)),
         new FieldDescriptor("Auto-hide UI", settings => FormatEnabled(settings.NoHud)),
         new FieldDescriptor("Override player settings", settings => FormatEnabled(settings.OverrideReplayPlayerSettings)),
+        new FieldDescriptor("Restore on close", settings => FormatEnabled(settings.RestorePlayerSettingsOnExit)),
         new FieldDescriptor("Player environment", settings => FormatEnabled(settings.LoadPlayerEnvironment)),
         new FieldDescriptor("Replay jump distance", settings => FormatEnabled(settings.LoadPlayerJumpDistance)),
         new FieldDescriptor("Ignore modifiers", settings => FormatEnabled(settings.IgnoreModifiers)),

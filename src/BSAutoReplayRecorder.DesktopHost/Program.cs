@@ -26,11 +26,19 @@ internal sealed class DesktopHost
     private readonly string _pidFile;
     private readonly string _launcherLogPath;
     private readonly AppLayout _layout;
+    private readonly bool _createdLocalSettingsFile;
 
     public DesktopHost(string baseDirectory, string currentDirectory, string[] args)
     {
         _args = args;
         _repoRoot = ResolveRepoRoot(baseDirectory, currentDirectory, args);
+        var command = ReadCommand(args);
+        if (string.Equals(command, "start", StringComparison.OrdinalIgnoreCase) &&
+            !args.Any(arg => string.Equals(arg, "--require-installed", StringComparison.OrdinalIgnoreCase)))
+        {
+            _createdLocalSettingsFile = EnsureLocalSettingsFile(_repoRoot);
+        }
+
         _settings = LocalSettings.Load(Path.Combine(_repoRoot, "settings.json"));
         _workspace = ResolveWorkspace(_repoRoot, _settings);
         _controlPanelUrl = ResolveControlPanelUrl(_settings);
@@ -88,7 +96,10 @@ internal sealed class DesktopHost
         else
         {
             Log("Checking local settings...");
-            EnsureLocalSettingsFile();
+            if (_createdLocalSettingsFile)
+            {
+                Log("Created local settings from settings.example.json.");
+            }
         }
 
         Log("Preparing recorder workspace: " + _workspace);
@@ -274,7 +285,7 @@ internal sealed class DesktopHost
                 state.Run.GetInt("displayScaleMonitorIndex") ??
                 state.Settings.GetInt("monitorIndex") ??
                 _settings.GetInt("monitorIndex") ??
-                1,
+                0,
                 0,
                 16);
 
@@ -360,20 +371,22 @@ internal sealed class DesktopHost
             ".");
     }
 
-    private void EnsureLocalSettingsFile()
+    private static bool EnsureLocalSettingsFile(string repoRoot)
     {
-        var settingsPath = Path.Combine(_repoRoot, "settings.json");
+        var settingsPath = Path.Combine(repoRoot, "settings.json");
         if (File.Exists(settingsPath))
         {
-            return;
+            return false;
         }
 
-        var examplePath = Path.Combine(_repoRoot, "settings.example.json");
+        var examplePath = Path.Combine(repoRoot, "settings.example.json");
         if (File.Exists(examplePath))
         {
             File.Copy(examplePath, settingsPath);
-            Log("Created local settings from settings.example.json.");
+            return true;
         }
+
+        return false;
     }
 
     private void AssertInstalledStateReady()
@@ -572,8 +585,8 @@ internal sealed class DesktopHost
         var configPath = Path.Combine(_workspace, "recorder-host-" + port + ".settings.json");
         var offsetColumn = instance.Index % 2;
         var offsetRow = instance.Index / 2;
-        var offsetX = offsetColumn * 1920;
-        var offsetY = offsetRow * 1080;
+        var offsetX = offsetColumn * Math.Max(1, defaults.CaptureWidth);
+        var offsetY = offsetRow * Math.Max(1, defaults.CaptureHeight);
         var outputFormat = NormalizeOutputFormat(defaults.OutputFormat);
         var argumentTemplate =
             "-hide_banner -y -f lavfi -i \"ddagrab=output_idx={monitorIndex}:draw_mouse=0:framerate={fps}:offset_x=" +
@@ -618,7 +631,7 @@ internal sealed class DesktopHost
     {
         var instanceCount = state.Settings.GetInt("instanceCount")
                             ?? _settings.GetInt("instanceCount")
-                            ?? 3;
+                            ?? 1;
         instanceCount = Math.Clamp(instanceCount, 1, 4);
         var plans = state.Instances.Take(instanceCount).ToList();
         if (plans.Count > 0)
@@ -1599,11 +1612,11 @@ internal sealed class DesktopHost
 
         public string Encoder { get; private init; } = "h264_nvenc";
 
-        public int VideoBitrateKbps { get; private init; } = 16000;
+        public int VideoBitrateKbps { get; private init; } = 12000;
 
         public string OutputFormat { get; private init; } = "mkv";
 
-        public int MonitorIndex { get; private init; } = 1;
+        public int MonitorIndex { get; private init; }
 
         public string QualityMode { get; private init; } = "Balanced";
 
@@ -1634,9 +1647,9 @@ internal sealed class DesktopHost
                 CaptureWidth = Math.Max(320, ReadInt("captureWidth", 1920)),
                 CaptureHeight = Math.Max(180, ReadInt("captureHeight", 1080)),
                 Encoder = ReadString("encoder", "h264_nvenc"),
-                VideoBitrateKbps = Math.Clamp(ReadInt("videoBitrateKbps", 16000), 500, 200000),
+                VideoBitrateKbps = Math.Clamp(ReadInt("videoBitrateKbps", 12000), 500, 200000),
                 OutputFormat = NormalizeOutputFormat(ReadString("outputFormat", "mkv")),
-                MonitorIndex = Math.Clamp(ReadInt("monitorIndex", 1), 0, 16),
+                MonitorIndex = Math.Clamp(ReadInt("monitorIndex", 0), 0, 16),
                 QualityMode = ReadString("qualityMode", "Balanced"),
                 CaptureEngine = NormalizeCaptureEngine(ReadString("captureEngine", "FFmpegDdagrab")),
                 AudioMode = string.Equals(ReadString("audioMode", "ProcessLoopback"), "ProcessLoopback", StringComparison.OrdinalIgnoreCase)

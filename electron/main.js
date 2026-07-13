@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron');
 const childProcess = require('child_process');
 const fs = require('fs');
 const http = require('http');
@@ -18,6 +18,7 @@ let isCloseRequested = false;
 let isQuitConfirmationOpen = false;
 let startupStatusHistory = [];
 let lastStatusPageKey = '';
+let startupSetupMode = '';
 
 function readRepoRoot() {
   const explicitRoot = readOption('--repo-root');
@@ -189,11 +190,50 @@ async function waitForControlPanel(timeoutMs) {
 function createDashboardUrl() {
   const url = new URL(controlPanelUrl);
   url.searchParams.set('v', String(Date.now()));
+  if (startupSetupMode) {
+    url.searchParams.set('setup', startupSetupMode);
+  }
   return url.toString();
+}
+
+function readStartupWorkspacePath() {
+  const settingsPath = path.join(repoRoot, 'settings.json');
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, ''));
+      const configuredWorkspace = settings.workspaceDirectory || settings.workspace || settings.workspaceDir;
+      if (typeof configuredWorkspace === 'string' && configuredWorkspace.trim()) {
+        const workspace = configuredWorkspace.trim();
+        return path.isAbsolute(workspace) ? workspace : path.join(repoRoot, workspace);
+      }
+    } catch (error) {
+      appendLauncherLog(`Could not read settings workspace for setup detection: ${error.message}`);
+    }
+  }
+
+  return path.join(repoRoot, 'ControlPanelWorkspace');
+}
+
+function detectStartupSetupMode() {
+  const settingsPath = path.join(repoRoot, 'settings.json');
+  if (!fs.existsSync(settingsPath)) {
+    return 'first-run';
+  }
+
+  const statePath = path.join(readStartupWorkspacePath(), 'control-panel-state.json');
+  if (!fs.existsSync(statePath)) {
+    return 'repair';
+  }
+
+  return '';
 }
 
 async function startRecorderStack() {
   resetStartupStatus();
+  startupSetupMode = detectStartupSetupMode();
+  if (startupSetupMode) {
+    appendLauncherLog(`Setup mode requested: ${startupSetupMode}`);
+  }
   setStartupStatus('Checking whether the recorder stack is already running...');
 
   const startupProgress = createStartupOutputHandler();
@@ -207,7 +247,9 @@ async function startRecorderStack() {
 
   if (status.ready) {
     appendLauncherLog(`Control panel already running at ${controlPanelUrl}`);
-    setStartupStatus('Control panel is already running. Opening dashboard...');
+    setStartupStatus(startupSetupMode
+      ? 'Control panel is already running. Opening setup...'
+      : 'Control panel is already running. Opening dashboard...');
     return;
   }
 
@@ -225,7 +267,7 @@ async function startRecorderStack() {
     throw new Error(`Control panel did not become ready at ${controlPanelUrl}. Check ${launcherLogPath}.`);
   }
 
-  setStartupStatus('Opening dashboard...');
+  setStartupStatus(startupSetupMode ? 'Opening setup...' : 'Opening dashboard...');
 }
 
 function resetStartupStatus() {
@@ -601,7 +643,8 @@ async function createWindow() {
     backgroundColor: '#05090d',
     webPreferences: {
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
     }
   });
 
@@ -643,6 +686,14 @@ async function createWindow() {
 }
 
 Menu.setApplicationMenu(null);
+
+ipcMain.handle('replay-recorder:minimize-window', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.minimize();
+  }
+
+  return true;
+});
 
 app.whenReady().then(createWindow);
 

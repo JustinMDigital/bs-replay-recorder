@@ -115,6 +115,7 @@ internal static class LocalSettingsFile
     private static void ResolveSettingsRelativePaths(ControlPanelSettings settings, string settingsDirectory)
     {
         settings.WorkspaceDirectory = ResolveSettingsRelativePath(settings.WorkspaceDirectory, settingsDirectory);
+        settings.FfmpegPath = ResolveSettingsRelativeExecutablePath(settings.FfmpegPath, settingsDirectory);
         settings.BeatSaberInstancesRoot = ResolveSettingsRelativePath(settings.BeatSaberInstancesRoot, settingsDirectory);
         settings.SourceBeatSaberPath = ResolveSettingsRelativePath(settings.SourceBeatSaberPath, settingsDirectory);
         settings.SharedCustomLevelsDirectory = ResolveSettingsRelativePath(settings.SharedCustomLevelsDirectory, settingsDirectory);
@@ -136,5 +137,19 @@ internal static class LocalSettingsFile
         }
 
         return Path.GetFullPath(Path.Combine(settingsDirectory, trimmed));
+    }
+
+    private static string ResolveSettingsRelativeExecutablePath(string value, string settingsDirectory)
+    {
+        var trimmed = value?.Trim().Trim('"') ?? "";
+        if (string.IsNullOrWhiteSpace(trimmed) ||
+            Path.IsPathRooted(trimmed) ||
+            trimmed.Contains(Path.DirectorySeparatorChar) ||
+            trimmed.Contains(Path.AltDirectorySeparatorChar))
+        {
+            return ResolveSettingsRelativePath(trimmed, settingsDirectory);
+        }
+
+        return trimmed;
     }
 }

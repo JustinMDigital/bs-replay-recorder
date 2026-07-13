@@ -22,6 +22,8 @@ public sealed class GamePresentationSettings
 
     public bool OverrideReplayPlayerSettings { get; set; }
 
+    public bool RestorePlayerSettingsOnExit { get; set; }
+
     public bool IgnoreModifiers { get; set; }
 
     public bool ShowHead { get; set; }
@@ -100,6 +102,7 @@ public sealed class GamePresentationSettings
             LoadPlayerEnvironment = LoadPlayerEnvironment,
             LoadPlayerJumpDistance = LoadPlayerJumpDistance,
             OverrideReplayPlayerSettings = OverrideReplayPlayerSettings,
+            RestorePlayerSettingsOnExit = RestorePlayerSettingsOnExit,
             IgnoreModifiers = IgnoreModifiers,
             ShowHead = ShowHead,
             ShowLeftSaber = ShowLeftSaber,

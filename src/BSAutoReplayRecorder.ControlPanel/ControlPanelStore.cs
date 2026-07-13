@@ -85,6 +85,9 @@ public sealed class ControlPanelStore
     private readonly IRecordingAudioVerifier _recordingAudioVerifier;
     private readonly IRecordingChapterEmbedder _recordingChapterEmbedder;
     private readonly IRecorderHostHealthChecker _recorderHostHealthChecker;
+    private readonly IDisplayInfoProvider _displayInfoProvider;
+    private readonly ICapturePreflightRunner _capturePreflightRunner;
+    private readonly IFfmpegSetupService _ffmpegSetupService;
     private readonly IBeatSaverMapDownloader _mapDownloader;
     private readonly IWorkerPluginInstaller _workerPluginInstaller;
     private readonly IBeatLeaderReplayDownloader _beatLeaderReplayDownloader;
@@ -100,7 +103,10 @@ public sealed class ControlPanelStore
         IWorkerPluginInstaller? workerPluginInstaller = null,
         IBeatLeaderReplayDownloader? beatLeaderReplayDownloader = null,
         IScoreSaberReplayDownloader? scoreSaberReplayDownloader = null,
-        IRecordingChapterEmbedder? recordingChapterEmbedder = null)
+        IRecordingChapterEmbedder? recordingChapterEmbedder = null,
+        IDisplayInfoProvider? displayInfoProvider = null,
+        ICapturePreflightRunner? capturePreflightRunner = null,
+        IFfmpegSetupService? ffmpegSetupService = null)
     {
         settings.Normalize();
         var workspaceDirectory = Path.GetFullPath(settings.WorkspaceDirectory);
@@ -112,6 +118,9 @@ public sealed class ControlPanelStore
         _recordingAudioVerifier = recordingAudioVerifier ?? new FfprobeRecordingAudioVerifier();
         _recordingChapterEmbedder = recordingChapterEmbedder ?? new FfmpegRecordingChapterEmbedder();
         _recorderHostHealthChecker = recorderHostHealthChecker ?? new HttpRecorderHostHealthChecker();
+        _displayInfoProvider = displayInfoProvider ?? new UnavailableDisplayInfoProvider();
+        _capturePreflightRunner = capturePreflightRunner ?? new NullCapturePreflightRunner();
+        _ffmpegSetupService = ffmpegSetupService ?? new FfmpegSetupService();
         _mapDownloader = mapDownloader ?? new BeatSaverMapDownloader(new HttpClient());
         _workerPluginInstaller = workerPluginInstaller ?? new DotNetWorkerPluginInstaller();
         _beatLeaderReplayDownloader = beatLeaderReplayDownloader ?? new BeatLeaderReplayDownloader(new HttpClient());
@@ -170,7 +179,9 @@ public sealed class ControlPanelStore
         lock (_sync)
         {
             _state.Settings.Normalize();
-            return SetupSourcePathDetector.Detect(_state.Settings.SourceBeatSaberPath);
+            return SetupSourcePathDetector.Detect(
+                _state.Settings.SourceBeatSaberPath,
+                _state.Settings.SourceBeatSaberStore);
         }
     }
 
@@ -234,6 +245,7 @@ public sealed class ControlPanelStore
             var previousGamePresentationVersion = Math.Max(1, _state.Settings.GamePresentationSettingsVersion);
 
             _state.Settings.RecordingOutputDirectory = request.RecordingOutputDirectory;
+            _state.Settings.FfmpegPath = request.FfmpegPath;
             _state.Settings.InstanceCount = request.InstanceCount;
             _state.Settings.MaxConcurrentRecordings = request.MaxConcurrentRecordings;
             _state.Settings.RequireAllWorkersReady = request.RequireAllWorkersReady;
@@ -275,6 +287,7 @@ public sealed class ControlPanelStore
             _state.Settings.SharedCustomBombsDirectory = request.SharedCustomBombsDirectory;
             _state.Settings.BeatSaberInstancesRoot = request.BeatSaberInstancesRoot;
             _state.Settings.SourceBeatSaberPath = request.SourceBeatSaberPath;
+            _state.Settings.SourceBeatSaberStore = request.SourceBeatSaberStore;
             _state.Settings.BeatSaberInstanceNamePrefix = request.BeatSaberInstanceNamePrefix;
             _state.Settings.BeatSaberLaunchPreset = request.BeatSaberLaunchPreset;
             _state.Settings.BeatSaberLaunchArguments = request.BeatSaberLaunchArguments;
@@ -313,6 +326,37 @@ public sealed class ControlPanelStore
             RefreshInstanceProvisionCountsNoLock();
             RefreshDiskSpaceNoLock();
             AddEventNoLock("Info", "Settings", "Settings saved.");
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
+    public FfmpegSetupReport CheckFfmpegSetup()
+    {
+        lock (_sync)
+        {
+            _state.FfmpegSetup = _ffmpegSetupService.Check(_state.Settings.FfmpegPath);
+            return CloneFfmpegSetup(_state.FfmpegSetup);
+        }
+    }
+
+    public ControlPanelState InstallFfmpeg()
+    {
+        lock (_sync)
+        {
+            var report = _ffmpegSetupService.Install(_state.Settings.FfmpegPath);
+            _state.FfmpegSetup = report;
+            if (string.Equals(report.Status, "Ready", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(report.FfmpegPath))
+            {
+                _state.Settings.FfmpegPath = report.FfmpegPath;
+                _state.Settings.Normalize();
+            }
+
+            AddEventNoLock(
+                string.Equals(report.Status, "Ready", StringComparison.OrdinalIgnoreCase) ? "Good" : "Bad",
+                "FFmpeg",
+                report.Detail);
             SaveNoLock();
             return Clone(_state);
         }
@@ -603,6 +647,27 @@ public sealed class ControlPanelStore
             collection.Name = name;
             collection.UpdatedAtUtc = DateTimeOffset.UtcNow;
             AddEventNoLock("Info", "Collections", "Renamed collection: " + previousName + " to " + name + ".");
+            SaveNoLock();
+            return CloneMapCollection(collection);
+        }
+    }
+
+    public MapCollectionRecord RemoveMapCollectionItem(string id, string itemId)
+    {
+        lock (_sync)
+        {
+            var collection = FindMapCollectionNoLock(id);
+            var item = FindMapCollectionItemNoLock(collection, itemId);
+            collection.Items.Remove(item);
+            ResequenceMapCollectionItemsNoLock(collection);
+            collection.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            TryDeleteCollectionItemFilesNoLock(item);
+            AddEventNoLock(
+                "Warn",
+                "Collections",
+                "Removed replay from collection: " +
+                Prefer(item.SongName, item.FileName) +
+                " from " + collection.Name + ".");
             SaveNoLock();
             return CloneMapCollection(collection);
         }
@@ -1301,6 +1366,17 @@ public sealed class ControlPanelStore
         }
     }
 
+    public ControlPanelState CheckCapturePreflight()
+    {
+        lock (_sync)
+        {
+            _state.Settings.Normalize();
+            RunCapturePreflightNoLock();
+            SaveNoLock();
+            return Clone(_state);
+        }
+    }
+
     public ControlPanelState StartRun(StartRunRequest? request = null)
     {
         lock (_sync)
@@ -1332,6 +1408,7 @@ public sealed class ControlPanelStore
             ValidateReplayProviderReadinessForRunNoLock(now);
             ValidateAudioSettingsForRunNoLock();
             ValidateRecorderHostsForRunNoLock();
+            ValidateCapturePreflightForRunNoLock();
             ApplyRecordingDisplayScaleNoLock();
             ApplyTaskbarVisibilityForRunNoLock();
 
@@ -1428,6 +1505,7 @@ public sealed class ControlPanelStore
             ValidateReplayProviderReadinessForBenchmarkNoLock(sourceReplays, readyInstances, now);
             ValidateAudioSettingsForBenchmarkNoLock(readyInstances);
             ValidateRecorderHostsForBenchmarkNoLock(readyInstances);
+            ValidateCapturePreflightForRunNoLock();
 
             var runId = "benchmark-" + now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
             var outputDirectory = Path.Combine(Path.GetDirectoryName(_statePath)!, "Benchmarks", runId);
@@ -1612,7 +1690,11 @@ public sealed class ControlPanelStore
             else
             {
                 sourceDirectory = ResolveProvisionSourceDirectory(request.SourceBeatSaberPath);
+                var sourceStore = SetupSourcePathDetector.InferStoreFromDirectory(
+                    sourceDirectory,
+                    request.SourceBeatSaberStore);
                 _state.Settings.SourceBeatSaberPath = sourceDirectory;
+                _state.Settings.SourceBeatSaberStore = sourceStore;
                 ValidateProvisionSourceAndTargets(sourceDirectory, targetRootDirectory, targets, request.OverwriteExisting);
 
                 CopyManagedInstanceDirectory(
@@ -1620,6 +1702,10 @@ public sealed class ControlPanelStore
                     baseline.Directory,
                     request.OverwriteExisting,
                     copyExistingSongs);
+                foreach (var instance in _state.Instances)
+                {
+                    instance.SourceBeatSaberStore = sourceStore;
+                }
                 records.Add(CreateProvisionRecord(
                     baseline,
                     "Copied",
@@ -1641,6 +1727,18 @@ public sealed class ControlPanelStore
                         copyExistingSongs
                             ? "Copied game files from " + baseline.Name + "; existing songs stay on the baseline for shared-folder import."
                             : "Copied from " + baseline.Name + ", excluding existing songs."));
+                }
+            }
+
+            var baselineStore = SetupSourcePathDetector.InferStoreFromDirectory(
+                baseline.Directory,
+                _state.Instances.FirstOrDefault(instance => instance.Index == baseline.Index)?.SourceBeatSaberStore);
+            foreach (var instance in _state.Instances.Where(instance =>
+                         File.Exists(Path.Combine(instance.LaunchDirectory, BeatSaberExecutableName))))
+            {
+                if (BeatSaberStore.Normalize(instance.SourceBeatSaberStore) == BeatSaberStore.Unknown)
+                {
+                    instance.SourceBeatSaberStore = baselineStore;
                 }
             }
 
@@ -2687,6 +2785,12 @@ public sealed class ControlPanelStore
         state.Queue ??= new List<ReplayQueueRecord>();
         state.Collections ??= new List<MapCollectionRecord>();
         state.Instances ??= new List<WorkerInstanceRecord>();
+        foreach (var instance in state.Instances)
+        {
+            instance.SourceBeatSaberStore = SetupSourcePathDetector.InferStoreFromDirectory(
+                instance.LaunchDirectory,
+                instance.SourceBeatSaberStore);
+        }
         state.InstanceProvision ??= new InstanceProvisionReport();
         state.InstanceBaseline ??= new InstanceBaselineReport();
         state.SongFolders ??= new SongFolderLinkReport();
@@ -4189,6 +4293,17 @@ public sealed class ControlPanelStore
             return;
         }
 
+        var store = SetupSourcePathDetector.InferStoreFromDirectory(
+            launchDirectory,
+            instance.SourceBeatSaberStore);
+        if (store == BeatSaberStore.MetaPc && !IsMetaRuntimeAvailable())
+        {
+            SetLaunchFailureNoLock(
+                instance,
+                "Meta/Oculus PC Beat Saber needs Meta Quest Link running. Open the Meta Quest Link desktop app, sign in, then launch this worker again.");
+            return;
+        }
+
         object? restorePlaybackDevice = null;
         try
         {
@@ -4201,9 +4316,7 @@ public sealed class ControlPanelStore
             };
 
             ApplyBeatSaberWindowedRegistryState(_state.Settings.BeatSaberLaunchArguments);
-            startInfo.Environment["SteamAppId"] = BeatSaberSteamAppId;
-            startInfo.Environment["SteamOverlayGameId"] = BeatSaberSteamAppId;
-            startInfo.Environment["SteamGameId"] = BeatSaberSteamAppId;
+            ApplyStoreLaunchEnvironment(startInfo, store);
 
             foreach (var argument in SplitCommandLine(_state.Settings.BeatSaberLaunchArguments))
             {
@@ -4231,6 +4344,31 @@ public sealed class ControlPanelStore
         {
             RestoreAudioRoutingAfterLaunchNoLock(instance, restorePlaybackDevice);
         }
+    }
+
+    private static bool IsMetaRuntimeAvailable()
+    {
+        try
+        {
+            return Process.GetProcessesByName("OVRServer_x64").Length > 0 ||
+                   Process.GetProcessesByName("OVRServiceLauncher").Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal static void ApplyStoreLaunchEnvironment(ProcessStartInfo startInfo, string? store)
+    {
+        if (BeatSaberStore.Normalize(store) != BeatSaberStore.Steam)
+        {
+            return;
+        }
+
+        startInfo.Environment["SteamAppId"] = BeatSaberSteamAppId;
+        startInfo.Environment["SteamOverlayGameId"] = BeatSaberSteamAppId;
+        startInfo.Environment["SteamGameId"] = BeatSaberSteamAppId;
     }
 
     private void SetLaunchFailureNoLock(WorkerInstanceRecord instance, string message, string? eventText = null)
@@ -4262,10 +4400,13 @@ public sealed class ControlPanelStore
         {
             if (!process.HasExited)
             {
-                process.Kill(entireProcessTree: true);
-                if (!process.WaitForExit(5000))
+                if (!TryRequestGracefulProcessExit(process))
                 {
-                    throw new InvalidOperationException("Beat Saber did not exit within 5 seconds.");
+                    process.Kill(entireProcessTree: true);
+                    if (!process.WaitForExit(5000))
+                    {
+                        throw new InvalidOperationException("Beat Saber did not exit within 5 seconds.");
+                    }
                 }
             }
         }
@@ -4276,6 +4417,28 @@ public sealed class ControlPanelStore
 
         MarkInstanceGameExitedNoLock(instance);
         return true;
+    }
+
+    private static bool TryRequestGracefulProcessExit(Process process)
+    {
+        try
+        {
+            if (process.HasExited)
+            {
+                return true;
+            }
+
+            if (!process.CloseMainWindow())
+            {
+                return false;
+            }
+
+            return process.WaitForExit(8000);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private (int ClosedCount, int ClearedCount, int FailedCount) CloseAllGamesNoLock()
@@ -5179,6 +5342,14 @@ public sealed class ControlPanelStore
         }
     }
 
+    private static void ResequenceMapCollectionItemsNoLock(MapCollectionRecord collection)
+    {
+        for (var index = 0; index < collection.Items.Count; index++)
+        {
+            collection.Items[index].SequenceNumber = index + 1;
+        }
+    }
+
     private bool RedistributeQueuedReplayPlansNoLock()
     {
         var laneIndexes = GetRunInstancesNoLock()
@@ -5478,6 +5649,63 @@ public sealed class ControlPanelStore
             "Recorder host capabilities do not match the selected recording settings. " +
             string.Join("; ", unsupported.Take(5)) +
             (unsupported.Count > 5 ? "; and " + (unsupported.Count - 5) + " more" : "") + ".");
+    }
+
+    private void ValidateCapturePreflightForRunNoLock()
+    {
+        var report = RunCapturePreflightNoLock();
+        if (!string.Equals(report.Status, "Failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var detail = NormalizeNullable(report.Detail) ??
+                     NormalizeNullable(report.Summary) ??
+                     "Capture preflight failed.";
+        throw new InvalidOperationException("Capture preflight failed. " + detail);
+    }
+
+    private CapturePreflightReport RunCapturePreflightNoLock()
+    {
+        var displayInfo = _displayInfoProvider.GetDisplays();
+        var report = _capturePreflightRunner.Check(
+            _state.Settings,
+            displayInfo,
+            GetCapturePreflightInstanceIndexesNoLock());
+        _state.CapturePreflight = report;
+
+        var kind = string.Equals(report.Status, "Failed", StringComparison.OrdinalIgnoreCase)
+            ? "Bad"
+            : string.Equals(report.Status, "Ready", StringComparison.OrdinalIgnoreCase)
+                ? "Good"
+                : "Info";
+        AddEventNoLock(
+            kind,
+            "Capture",
+            NormalizeNullable(report.Detail) ??
+            NormalizeNullable(report.Summary) ??
+            "Capture preflight checked.");
+        return report;
+    }
+
+    private IReadOnlyList<int> GetCapturePreflightInstanceIndexesNoLock()
+    {
+        var configuredCount = Math.Clamp(
+            _state.Settings.InstanceCount,
+            ControlPanelSettings.MinimumManagedInstanceCount,
+            ControlPanelSettings.MaximumManagedInstanceCount);
+        var indexes = _state.Instances
+            .Where(instance => instance.Enabled && instance.Index < configuredCount)
+            .Select(instance => instance.Index)
+            .Distinct()
+            .OrderBy(index => index)
+            .ToList();
+        if (indexes.Count > 0)
+        {
+            return indexes;
+        }
+
+        return Enumerable.Range(0, configuredCount).ToArray();
     }
 
     private void ValidateReplayProviderReadinessForRunNoLock(DateTimeOffset now)
@@ -6995,6 +7223,33 @@ public sealed class ControlPanelStore
         }
     }
 
+    private void TryDeleteCollectionItemFilesNoLock(MapCollectionItemRecord item)
+    {
+        var path = NormalizeNullable(item.Path);
+        if (path == null)
+        {
+            return;
+        }
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (!IsPathInsideDirectory(fullPath, _collectionsDirectory))
+        {
+            return;
+        }
+
+        TryDeleteFile(fullPath);
+        TryDeleteFile(GetReplaySidecarPath(fullPath));
+    }
+
     private static bool IsSupportedReplayFileName(string fileName)
     {
         var extension = Path.GetExtension(fileName);
@@ -8380,6 +8635,13 @@ public sealed class ControlPanelStore
                ?? new ControlPanelSettings();
     }
 
+    private static FfmpegSetupReport CloneFfmpegSetup(FfmpegSetupReport report)
+    {
+        var json = JsonSerializer.Serialize(report, JsonOptions.Default);
+        return JsonSerializer.Deserialize<FfmpegSetupReport>(json, JsonOptions.Default)
+               ?? new FfmpegSetupReport();
+    }
+
     private static GamePresentationSettings CloneGamePresentationSettings(GamePresentationSettings? settings)
     {
         var clone = new GamePresentationSettings
@@ -8388,6 +8650,7 @@ public sealed class ControlPanelStore
             LoadPlayerEnvironment = settings?.LoadPlayerEnvironment ?? false,
             LoadPlayerJumpDistance = settings?.LoadPlayerJumpDistance ?? false,
             OverrideReplayPlayerSettings = settings?.OverrideReplayPlayerSettings ?? false,
+            RestorePlayerSettingsOnExit = settings?.RestorePlayerSettingsOnExit ?? false,
             IgnoreModifiers = settings?.IgnoreModifiers ?? false,
             ShowHead = settings?.ShowHead ?? false,
             ShowLeftSaber = settings?.ShowLeftSaber ?? true,
@@ -8440,6 +8703,7 @@ public sealed class ControlPanelStore
                normalizedLeft.LoadPlayerEnvironment == normalizedRight.LoadPlayerEnvironment &&
                normalizedLeft.LoadPlayerJumpDistance == normalizedRight.LoadPlayerJumpDistance &&
                normalizedLeft.OverrideReplayPlayerSettings == normalizedRight.OverrideReplayPlayerSettings &&
+               normalizedLeft.RestorePlayerSettingsOnExit == normalizedRight.RestorePlayerSettingsOnExit &&
                normalizedLeft.IgnoreModifiers == normalizedRight.IgnoreModifiers &&
                normalizedLeft.ShowHead == normalizedRight.ShowHead &&
                normalizedLeft.ShowLeftSaber == normalizedRight.ShowLeftSaber &&

@@ -8,6 +8,10 @@ let queueSearchText = '';
 let isRendering = false;
 let settingsDirty = false;
 let activeView = 'run';
+const initialUrlParams = new URLSearchParams(window.location.search);
+const requestedStartupSetupMode = initialUrlParams.get('setup') || '';
+let setupRouteHandled = false;
+let setupModeActive = requestedStartupSetupMode === 'first-run' || requestedStartupSetupMode === 'repair';
 let setupAssistantHidden = readSetupAssistantHidden();
 let displayInfo = { displays: [] };
 let draggedQueueId = null;
@@ -18,6 +22,7 @@ let runPlanPlayheadInstantTimeout = null;
 let shutdownModalVisible = false;
 let colorPresetCatalog = { builtIn: [], beatSaber: [], saved: [] };
 let setupSourcePathInfo = null;
+let setupFfmpegInfo = null;
 let queueExportLastFocus = null;
 let queueExportContext = null;
 let recordingRenameLastFocus = null;
@@ -70,6 +75,7 @@ const gamePresentationDefaults = Object.freeze({
   loadPlayerEnvironment: false,
   loadPlayerJumpDistance: false,
   overrideReplayPlayerSettings: false,
+  restorePlayerSettingsOnExit: false,
   ignoreModifiers: false,
   applyJdFixerSettings: false,
   jdFixerMode: 'ReactionTime',
@@ -111,6 +117,7 @@ const liveGamePresentationFields = new Set([
   'loadPlayerEnvironment',
   'loadPlayerJumpDistance',
   'overrideReplayPlayerSettings',
+  'restorePlayerSettingsOnExit',
   'ignoreModifiers',
   'applyJdFixerSettings',
   'jdFixerMode',
@@ -280,6 +287,22 @@ const launchPresets = {
     qualityMode: 'Performance',
     beatSaberLaunchArguments: windowed5kLaunchArguments,
     manageDisplayScale: true,
+    recordingDisplayScalePercent: 100,
+    restoreDisplayScalePercent: 150,
+    hideTaskbarDuringRun: true
+  },
+  'ultrawide-1440p-2up': {
+    instanceCount: 2,
+    maxConcurrentRecordings: 2,
+    targetFps: 60,
+    captureWidth: 2560,
+    captureHeight: 1440,
+    videoBitrateKbps: 18000,
+    outputFormat: 'mkv',
+    encoder: 'h264_nvenc',
+    qualityMode: 'Performance',
+    beatSaberLaunchArguments: windowed1440pLaunchArguments,
+    manageDisplayScale: false,
     recordingDisplayScalePercent: 100,
     restoreDisplayScalePercent: 150,
     hideTaskbarDuringRun: true
@@ -510,6 +533,17 @@ const setupProfiles = {
       audioTargetLevelDb: -12
     }
   },
+  'dual-1440p-ultrawide': {
+    launchPreset: 'ultrawide-1440p-2up',
+    settings: {
+      audioMode: 'ProcessLoopback',
+      requireAudioForRun: true,
+      requireAllWorkersReady: true,
+      requireMatchingInstanceBaseline: true,
+      audioLevelMode: 'Loudness',
+      audioTargetLevelDb: -12
+    }
+  },
   'grid-5k': {
     launchPreset: '5k-monitor-2x2',
     settings: {
@@ -549,7 +583,7 @@ const feedPresetDefinitions = [
   {
     profileId: 'single-1080p',
     launchPreset: 'single-1080p',
-    title: '1x 1080p stream (4k monitor)',
+    title: '1x 1080p stream (1080p monitor)',
     detail: 'One full-resolution feed for a 1920 x 1080 monitor.',
     minWidth: 1920,
     minHeight: 1080,
@@ -572,6 +606,15 @@ const feedPresetDefinitions = [
     minWidth: 2560,
     minHeight: 1440,
     tier: '1440p'
+  },
+  {
+    profileId: 'dual-1440p-ultrawide',
+    launchPreset: 'ultrawide-1440p-2up',
+    title: '2x 1440p streams (ultrawide)',
+    detail: 'Two side-by-side 2560 x 1440 feeds on a 5120 x 1440 monitor.',
+    minWidth: 5120,
+    minHeight: 1440,
+    tier: 'ultrawide-1440p'
   },
   {
     profileId: 'single-4k',
@@ -671,6 +714,7 @@ async function loadState() {
   const response = await fetch('/api/state');
   if (!response.ok) throw new Error(await response.text());
   state = await response.json();
+  applyStartupSetupRoute();
   render();
 }
 
@@ -699,7 +743,18 @@ async function loadSetupSourcePath() {
     input.value = detectedPath;
   }
 
-  renderSetupSourcePath(buildCurrentSettingsPreview());
+  if (state) {
+    renderSetupAssistant();
+  } else {
+    renderSetupSourcePath(buildCurrentSettingsPreview());
+  }
+}
+
+async function loadSetupFfmpeg() {
+  const response = await fetch('/api/setup/ffmpeg');
+  if (!response.ok) throw new Error(await response.text());
+  setupFfmpegInfo = await response.json();
+  if (state) renderSetupAssistant();
 }
 
 function render() {
@@ -925,6 +980,8 @@ function formatLaunchPresetLabel(id) {
   switch (id) {
     case '5k-monitor-2x2':
       return '4x 1440p streams (5k monitor)';
+    case 'ultrawide-1440p-2up':
+      return '2x 1440p streams (ultrawide)';
     case 'single-5k':
       return '1x 5K stream (5k monitor)';
     case '4k-monitor-2x2':
@@ -938,7 +995,7 @@ function formatLaunchPresetLabel(id) {
     case 'single-1440p':
       return '1x 1440p stream (1440p monitor)';
     case 'single-1080p':
-      return '1x 1080p stream (4k monitor)';
+      return '1x 1080p stream (1080p monitor)';
     case 'single-720p':
       return '1x 720p stream (720p monitor)';
     case 'windowed-1080p':
@@ -1057,6 +1114,7 @@ function renderGamePresentationSettings(settings) {
     'loadPlayerEnvironment',
     'loadPlayerJumpDistance',
     'overrideReplayPlayerSettings',
+    'restorePlayerSettingsOnExit',
     'ignoreModifiers',
     'applyJdFixerSettings',
     'showHead',
@@ -2697,6 +2755,33 @@ async function deleteSelectedCollection() {
   showToast(`Deleted ${name}`);
 }
 
+async function removeCollectionReplay(collectionId, itemId) {
+  if (!collectionId || !itemId) {
+    showToast('Choose a replay');
+    return;
+  }
+
+  const collection = (state.collections || []).find(item => item.id === collectionId);
+  const replay = (collection?.items || []).find(item => item.id === itemId);
+  const replayName = replay?.songName || replay?.fileName || 'this replay';
+  const collectionName = collection?.name || 'this collection';
+  if (!window.confirm(`Remove ${replayName} from ${collectionName}?`)) {
+    return;
+  }
+
+  const response = await fetch(`/api/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}/remove`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  if (!response.ok) throw new Error(await response.text());
+  const result = await response.json();
+  state = result.state;
+  selectedCollectionId = result.collection?.id || collectionId;
+  render();
+  showToast(`Removed ${replayName}`);
+}
+
 function renderCollectionsPage() {
   const list = document.getElementById('collectionsList');
   if (!list) return;
@@ -2794,6 +2879,14 @@ function renderCollectionPreview(collection) {
     items.innerHTML = rows.length
       ? rows.map(renderCollectionPreviewItem).join('')
       : '<div class="collectionPreviewEmpty">This collection has no saved replays.</div>';
+    items.querySelectorAll('[data-collection-remove-item]').forEach(button => {
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const itemId = button.dataset.collectionRemoveItem || '';
+        runAction(() => removeCollectionReplay(collection.id, itemId));
+      });
+    });
   }
 }
 
@@ -2808,6 +2901,7 @@ function renderCollectionPreviewItem(item) {
       </div>
       <time>${formatSeconds(item.estimatedSeconds)}</time>
       <span class="collectionItemState">${recorded ? 'Recorded' : 'Ready'}</span>
+      <button class="collectionItemRemove" type="button" data-collection-remove-item="${escapeHtml(item.id)}" aria-label="Remove ${escapeHtml(item.songName || item.fileName || 'replay')} from collection">${icon('trash')}</button>
     </article>
   `;
 }
@@ -5206,7 +5300,7 @@ function renderMonitorOptions() {
   const select = document.getElementById('monitorIndex');
   if (!select) return;
 
-  const savedValue = String(state?.settings?.monitorIndex ?? 1);
+  const savedValue = String(state?.settings?.monitorIndex ?? 0);
   const selectedValue = select.value || savedValue;
   const displays = Array.isArray(displayInfo?.displays)
     ? displayInfo.displays.filter(display => Number.isFinite(Number(display.index)))
@@ -5221,7 +5315,7 @@ function renderMonitorOptions() {
       }))
     : [{
       value: selectedValue,
-      label: `Saved monitor ${selectedValue} (display detection unavailable)`
+      label: `Saved Monitor ${formatSavedMonitorNumber(selectedValue)} (display detection unavailable)`
     }];
 
   select.innerHTML = '';
@@ -5236,6 +5330,11 @@ function renderMonitorOptions() {
     ? selectedValue
     : options[0]?.value ?? '';
   renderSetupMonitorGraphic(state ? buildCurrentSettingsPreview() : { monitorIndex: Number(select.value || selectedValue) });
+}
+
+function formatSavedMonitorNumber(value) {
+  const index = Number(value);
+  return Number.isFinite(index) ? String(index + 1) : String(value || 1);
 }
 
 function updateCaptureEngineWarning() {
@@ -5341,6 +5440,15 @@ function getSetupSourcePathValue(settings = {}) {
     '';
 }
 
+function getDetectedSourceForPath(path) {
+  return (setupSourcePathInfo?.detectedSources || []).find(candidate => sameClientPath(candidate.path, path)) || null;
+}
+
+function getSetupSourceStore(settings = {}) {
+  const selected = getDetectedSourceForPath(getSetupSourcePathValue(settings));
+  return selected?.store || settings.sourceBeatSaberStore || 'Unknown';
+}
+
 function sameClientPath(left, right) {
   const normalize = value => String(value || '')
     .trim()
@@ -5393,6 +5501,7 @@ function resolveLaunchPreset(settings) {
 
   const presetOrder = [
     '5k-monitor-2x2',
+    'ultrawide-1440p-2up',
     '4k-monitor-2x2',
     '720p-monitor-2x2',
     '1440p-monitor-2x2',
@@ -5484,6 +5593,189 @@ function setFieldValue(fieldId, value) {
   setValue(fieldId, value);
 }
 
+function normalizeRequestedSetupMode() {
+  const mode = String(requestedStartupSetupMode || '').trim().toLowerCase();
+  return mode === 'first-run' || mode === 'repair' ? mode : '';
+}
+
+function isSetupReadyStatus(status) {
+  const text = String(status ?? '').toLowerCase();
+  return /ready|matched|clean|ok|completed|skipped/.test(text);
+}
+
+function buildSetupReadiness(settings = {}) {
+  const configuredCount = getManagedInstanceInventoryCount(settings);
+  const createdCount = getCreatedInstanceCount(settings);
+  const missingCount = Math.max(0, configuredCount - createdCount);
+  const needsSource = createdCount === 0 && missingCount > 0;
+  const sourcePath = getSetupSourcePathValue(settings);
+  const sourceReady = !needsSource || Boolean(sourcePath);
+  const instancesReady = missingCount === 0 && createdCount >= configuredCount;
+  const ffmpeg = setupFfmpegInfo || state?.ffmpegSetup || {};
+  const ffmpegStatus = ffmpeg.status || 'Unchecked';
+  const ffmpegReady = isSetupReadyStatus(ffmpegStatus) && diagnosticSeverity({ status: ffmpegStatus }) !== 'bad';
+  const capturePreflight = state?.capturePreflight || {};
+  const baseline = state?.instanceBaseline || {};
+  const captureStatus = capturePreflight.status || 'Unchecked';
+  const captureTone = diagnosticSeverity({ status: captureStatus });
+  const captureReady = isSetupReadyStatus(captureStatus) && captureTone !== 'bad';
+  const baselineRequired = Boolean(settings.requireMatchingInstanceBaseline);
+  const baselineStatus = baseline.status || 'Unchecked';
+  const baselineTone = baselineRequired ? diagnosticSeverity({ status: baselineStatus }) : 'good';
+  const baselineReady = !baselineRequired || (isSetupReadyStatus(baselineStatus) && baselineTone !== 'bad');
+  const verificationReady = captureReady && baselineReady;
+  const needsSetup = !sourceReady || !ffmpegReady || !instancesReady || !verificationReady;
+  const requestedMode = normalizeRequestedSetupMode();
+  const mode = requestedMode || (needsSetup ? 'repair' : '');
+  const nextAction = !sourceReady
+    ? 'Choose the Beat Saber source folder.'
+    : (!ffmpegReady
+      ? 'Install FFmpeg before creating workers.'
+      : (!instancesReady
+      ? 'Create managed instances.'
+      : (!verificationReady ? 'Launch and verify capture.' : 'Ready for runs.')));
+
+  return {
+    mode,
+    requestedMode,
+    sourceReady,
+    sourcePath,
+    needsSource,
+    ffmpegReady,
+    ffmpegCanInstall: Boolean(ffmpeg.canInstall),
+    configuredCount,
+    createdCount,
+    missingCount,
+    instancesReady,
+    captureReady,
+    baselineReady,
+    verificationReady,
+    needsSetup,
+    nextAction,
+    summary: `${createdCount}/${configuredCount} instances | ${nextAction}`,
+    steps: [
+      {
+        label: 'Source',
+        status: sourceReady ? 'Ready' : 'Missing',
+        tone: sourceReady ? 'good' : 'bad',
+        detail: needsSource
+          ? (sourcePath ? shortPath(sourcePath) : 'Choose the Beat Saber folder.')
+          : 'Managed source is already available.'
+      },
+      {
+        label: 'FFmpeg',
+        status: ffmpegStatus,
+        tone: ffmpegReady ? 'good' : diagnosticSeverity({ status: ffmpegStatus }),
+        detail: ffmpeg.detail || ffmpeg.summary || 'Checking FFmpeg and ffprobe.'
+      },
+      {
+        label: 'Instances',
+        status: instancesReady ? 'Ready' : (createdCount > 0 ? 'Missing' : 'Check'),
+        tone: instancesReady ? 'good' : (createdCount > 0 ? 'bad' : 'warn'),
+        detail: `${createdCount}/${configuredCount} created`
+      },
+      {
+        label: 'Capture',
+        status: captureStatus,
+        tone: captureReady ? 'good' : captureTone,
+        detail: capturePreflight.detail || capturePreflight.summary || 'Launch + Verify checks FFmpeg, monitor, and encoder.'
+      },
+      {
+        label: 'Baseline',
+        status: baselineRequired ? baselineStatus : (baselineStatus === 'Unchecked' ? 'Optional' : baselineStatus),
+        tone: baselineRequired ? (baselineReady ? 'good' : baselineTone) : 'good',
+        detail: baselineRequired
+          ? (baseline.summary || 'Baseline has not been checked.')
+          : 'Optional consistency check.'
+      }
+    ]
+  };
+}
+
+function applyStartupSetupRoute() {
+  if (setupRouteHandled || !state) return;
+
+  const readiness = buildSetupReadiness(state.settings || {});
+  const requestedMode = normalizeRequestedSetupMode();
+  setupRouteHandled = true;
+
+  if (!requestedMode && !readiness.needsSetup) {
+    return;
+  }
+
+  setupModeActive = true;
+  setupAssistantHidden = false;
+  activateView('settings', false);
+}
+
+function renderSetupMode(readiness) {
+  const banner = document.getElementById('firstRunSetupBanner');
+  const kicker = document.getElementById('setupModeKicker');
+  const title = document.getElementById('setupModeTitle');
+  const text = document.getElementById('setupModeText');
+  const progress = document.getElementById('setupWizardProgress');
+  const verifyButton = document.getElementById('setupModeVerify');
+  const launchButton = document.getElementById('setupModeLaunchOnly');
+  const installFfmpegButton = document.getElementById('setupModeInstallFfmpeg');
+  const showBanner = setupModeActive || readiness.needsSetup;
+
+  document.body.classList.toggle('setupModeActive', showBanner);
+
+  if (banner) {
+    banner.hidden = !showBanner;
+  }
+
+  if (kicker) {
+    kicker.textContent = readiness.mode === 'first-run' ? 'First setup' : (readiness.needsSetup ? 'Setup check' : 'Setup ready');
+  }
+
+  if (title) {
+    title.textContent = readiness.needsSetup ? 'Finish local recorder setup' : 'Recorder setup is ready';
+  }
+
+  if (text) {
+    text.textContent = readiness.needsSetup
+      ? readiness.nextAction
+      : 'Managed instances and capture verification are ready.';
+  }
+
+  if (progress) {
+    progress.innerHTML = readiness.steps.map(step => `
+      <div class="setupProgressItem ${escapeHtml(step.tone)}">
+        <span class="diagnosticStateDot" aria-hidden="true"></span>
+        <div class="setupProgressText">
+          <strong>${escapeHtml(step.label)}</strong>
+          <span>${escapeHtml(step.detail)}</span>
+        </div>
+        <span class="badge ${statusClass(step.status)}">${escapeHtml(step.status)}</span>
+      </div>
+    `).join('');
+  }
+
+  if (verifyButton) {
+    const disabled = Boolean(pendingSetupInstanceCreation || !readiness.ffmpegReady || !readiness.instancesReady);
+    verifyButton.hidden = false;
+    verifyButton.disabled = disabled;
+    verifyButton.textContent = readiness.captureReady ? 'Recheck Launch' : 'Launch + Verify';
+    verifyButton.title = !readiness.ffmpegReady
+      ? 'Install or configure FFmpeg first.'
+      : (!readiness.instancesReady ? 'Create the managed instance first.' : '');
+  }
+
+  if (installFfmpegButton) {
+    installFfmpegButton.hidden = readiness.ffmpegReady;
+    installFfmpegButton.disabled = !readiness.ffmpegCanInstall;
+    installFfmpegButton.title = readiness.ffmpegCanInstall
+      ? 'Install Gyan.FFmpeg with WinGet.'
+      : 'WinGet is unavailable. Set ffmpeg.exe in Advanced Settings.';
+  }
+
+  if (launchButton) {
+    launchButton.hidden = !readiness.instancesReady;
+    launchButton.disabled = Boolean(pendingSetupInstanceCreation);
+  }
+}
+
 function renderSetupAssistant() {
   ensureGameSettingsPlacement();
 
@@ -5500,17 +5792,21 @@ function renderSetupAssistant() {
   const configuredCount = getManagedInstanceInventoryCount(settings);
   const createdCount = getCreatedInstanceCount(settings);
   const missingCount = Math.max(0, configuredCount - createdCount);
+  const readiness = buildSetupReadiness(settings);
   renderFeedPresetList(settings, profileId);
   renderSelectedMonitorSummary(settings);
   renderSetupMonitorGraphic(settings);
   renderSetupInstanceList(settings, configuredCount, createdCount, missingCount);
   renderSetupSourcePath(settings, configuredCount, createdCount, missingCount);
+  renderSetupMode(readiness);
 
   const summary = document.getElementById('setupAssistantSummary');
   if (summary) {
-    summary.textContent = createdCount === 0
+    summary.textContent = readiness.needsSetup
+      ? readiness.summary
+      : (createdCount === 0
       ? `Setup needed | ${formatSetupProfile(profileId)} | ${formatMonitorSummary(settings.monitorIndex)} | ${formatAudioMode(settings)}`
-      : `${createdCount}/${configuredCount} created | ${formatSetupProfile(profileId)} | ${formatMonitorSummary(settings.monitorIndex)} | ${formatAudioMode(settings)}`;
+      : `${createdCount}/${configuredCount} created | ${formatSetupProfile(profileId)} | ${formatMonitorSummary(settings.monitorIndex)} | ${formatAudioMode(settings)}`);
   }
 }
 
@@ -5519,12 +5815,31 @@ function renderSetupSourcePath(settings = {}, configuredCount = null, createdCou
   const useDetectedButton = document.getElementById('setupUseDetectedSource');
   const setupButton = document.getElementById('setupWizardRunSetup');
   const sourcePath = getSetupSourcePathValue(settings);
+  const candidates = setupSourcePathInfo?.detectedSources || [];
   const detectedPath = setupSourcePathInfo?.detectedSourceBeatSaberPath || '';
   const effectivePath = setupSourcePathInfo?.effectiveSourceBeatSaberPath || '';
+  const selectedCandidate = getDetectedSourceForPath(sourcePath);
+  const sourceList = document.getElementById('setupDetectedSources');
 
   if (useDetectedButton) {
-    useDetectedButton.disabled = !detectedPath;
-    useDetectedButton.title = detectedPath || 'No Steam Beat Saber install detected yet.';
+    useDetectedButton.disabled = !detectedPath || candidates.length > 1;
+    useDetectedButton.title = candidates.length > 1
+      ? 'Choose one of the detected installs below.'
+      : (detectedPath || 'No Beat Saber install detected yet.');
+  }
+
+  if (sourceList) {
+    sourceList.innerHTML = candidates.map(candidate => {
+      const selected = sameClientPath(sourcePath, candidate.path);
+      const readiness = candidate.recorderReady
+        ? 'Recorder ready'
+        : `Needs ${(candidate.missingPrerequisites || []).join(' + ') || 'setup'}`;
+      return `<button type="button" class="setupProfileOption ${selected ? 'selected' : ''}" data-setup-source-path="${escapeHtml(candidate.path)}">
+        <strong>${escapeHtml(candidate.displayName || candidate.store || 'Beat Saber')}</strong>
+        <span>${escapeHtml(candidate.version || candidate.path)}</span>
+        <small>${escapeHtml(readiness)}</small>
+      </button>`;
+    }).join('');
   }
 
   if (hint) {
@@ -5532,10 +5847,10 @@ function renderSetupSourcePath(settings = {}, configuredCount = null, createdCou
     let text = 'Choose the folder containing Beat Saber.exe.';
     if (sourcePath && sameClientPath(sourcePath, setupSourcePathInfo?.configuredSourceBeatSaberPath) && setupSourcePathInfo?.configuredSourceReady) {
       statusClass = 'ready';
-      text = 'Configured source is ready.';
+      text = `Configured ${selectedCandidate?.displayName || setupSourcePathInfo?.configuredSourceStore || 'Beat Saber'} source is ready.`;
     } else if (sourcePath && sameClientPath(sourcePath, detectedPath) && setupSourcePathInfo?.detectedSourceReady) {
       statusClass = 'detected';
-      text = 'Detected Steam source is ready.';
+      text = `Detected ${selectedCandidate?.displayName || 'Beat Saber'} source is ready.`;
     } else if (sourcePath) {
       statusClass = 'detected';
       text = 'This source path will be validated when setup runs.';
@@ -5694,7 +6009,7 @@ function renderSetupMonitorGraphic(settings = {}) {
   if (!graphic) return;
 
   const displays = getDetectedDisplays();
-  const selectedIndex = Number(settings.monitorIndex ?? document.getElementById('monitorIndex')?.value ?? 1);
+  const selectedIndex = Number(settings.monitorIndex ?? document.getElementById('monitorIndex')?.value ?? 0);
   if (!displays.length) {
     graphic.innerHTML = `
       <div class="setupMonitorGraphicEmpty">
@@ -5793,7 +6108,9 @@ function getRecommendedFeedPresetForDisplay(display) {
 
   const highestTier = supported[supported.length - 1].tier;
   const highestTierDefinitions = supported.filter(definition => definition.tier === highestTier);
-  return highestTierDefinitions.find(definition => definition.profileId.startsWith('grid-'))
+  return highestTierDefinitions.find(definition =>
+    definition.profileId.startsWith('grid-') ||
+    definition.profileId.startsWith('dual-'))
     || highestTierDefinitions[highestTierDefinitions.length - 1]
     || supported[supported.length - 1];
 }
@@ -5870,6 +6187,7 @@ function setHidden(id, hidden) {
 function resolveSetupProfile(settings) {
   const launchPreset = resolveLaunchPreset(settings);
   if (launchPreset === '5k-monitor-2x2') return 'grid-5k';
+  if (launchPreset === 'ultrawide-1440p-2up') return 'dual-1440p-ultrawide';
   if (launchPreset === '4k-monitor-2x2') return 'grid-1080p';
   if (launchPreset === '720p-monitor-2x2') return 'grid-720p';
   if (launchPreset === '1440p-monitor-2x2') return 'grid-720p';
@@ -5886,6 +6204,10 @@ function getSetupProfileEnabledInstanceCount(id) {
     return maxManagedInstanceCount;
   }
 
+  if (id === 'dual-1440p-ultrawide') {
+    return 2;
+  }
+
   if (id === 'single-720p' || id === 'single-1080p' || id === 'single-1440p' || id === 'single-4k' || id === 'single-5k') {
     return minManagedInstanceCount;
   }
@@ -5900,13 +6222,14 @@ function getEffectiveSetupInstanceEnabled(instance) {
 
 function formatSetupProfile(id) {
   if (id === 'grid-5k' || id === 'quad-5k') return '4x 1440p streams (5k monitor)';
+  if (id === 'dual-1440p-ultrawide') return '2x 1440p streams (ultrawide)';
   if (id === 'grid-1080p' || id === 'quad-4k') return '4x 1080p streams (4k monitor)';
   if (id === 'grid-720p' || id === 'quad-1440p') return '4x 720p streams (1440p monitor)';
   if (id === 'single-720p') return '1x 720p stream (720p monitor)';
   if (id === 'single-4k') return '1x 4K stream (4k monitor)';
   if (id === 'single-1440p') return '1x 1440p stream (1440p monitor)';
   if (id === 'single-5k') return '1x 5K stream (5k monitor)';
-  if (id === 'single-1080p') return '1x 1080p stream (4k monitor)';
+  if (id === 'single-1080p') return '1x 1080p stream (1080p monitor)';
   return 'Custom';
 }
 
@@ -5920,6 +6243,7 @@ function buildSetupWizardChecklist(settings) {
   const failedInstance = instances.find(instance => instance.gameLaunchError || instance.audioRoutingError);
   const provision = state.instanceProvision || {};
   const baseline = state.instanceBaseline || {};
+  const capturePreflight = state.capturePreflight || {};
   const audioMode = settings.audioMode || 'ProcessLoopback';
   const root = settings.beatSaberInstancesRoot || 'No instance root';
   const instancePlanStatus = createdCount >= configuredCount ? 'Ready' : (createdCount > 0 ? 'Missing' : 'Check');
@@ -5962,6 +6286,11 @@ function buildSetupWizardChecklist(settings) {
       detail: sameStatus(audioMode, 'ProcessLoopback')
         ? 'ProcessLoopback per game process'
         : 'Audio disabled'
+    },
+    {
+      label: 'Capture',
+      status: capturePreflight.status || 'Unchecked',
+      detail: capturePreflight.detail || capturePreflight.summary || 'Launch + Verify checks FFmpeg, monitor, and layout.'
     },
     {
       label: 'Baseline',
@@ -6249,6 +6578,7 @@ async function runSetupWizardProvision() {
     await persistSettings();
     await postJson('/api/instances/provision', {
       sourceBeatSaberPath: sourcePath,
+      sourceBeatSaberStore: getSetupSourceStore(settings),
       instanceCount: configuredCount,
       createMissingOnly,
       overwriteExisting: false,
@@ -6318,11 +6648,28 @@ async function runSetupWizardLaunchOnly() {
   showToast('Game launch requested');
 }
 
+async function runSetupInstallFfmpeg() {
+  await postJson('/api/setup/ffmpeg/install');
+  await loadSetupFfmpeg();
+  showToast(state.ffmpegSetup?.summary || 'FFmpeg setup checked');
+}
+
 async function runSetupWizardVerify() {
   await persistSettings();
+  await postJson('/api/capture/preflight');
   await postJson('/api/instances/baseline/check');
   await postJson('/api/instances/launch');
   showToast('Launch requested; verification is updating');
+}
+
+async function minimizeControlPanelForRecording() {
+  try {
+    if (window.replayRecorder?.minimizeWindow) {
+      await window.replayRecorder.minimizeWindow();
+    }
+  } catch {
+    // Browser mode and older Electron builds can ignore this helper.
+  }
 }
 
 async function postJson(url, body = {}) {
@@ -6342,6 +6689,7 @@ function buildSettingsRequest() {
 
   return {
     recordingOutputDirectory: getTextOrSetting('recordingOutputDirectory', 'recordingOutputDirectory'),
+    ffmpegPath: state?.settings?.ffmpegPath || '',
     instanceCount,
     maxConcurrentRecordings: instanceCount,
     requireAllWorkersReady: document.getElementById('requireAllWorkersReady').checked,
@@ -6378,6 +6726,7 @@ function buildSettingsRequest() {
     audioTargetLevelDb: getNumber('audioTargetLevelDb'),
     beatSaberInstancesRoot: getTextOrSetting('beatSaberInstancesRoot', 'beatSaberInstancesRoot'),
     sourceBeatSaberPath: getSetupSourcePathValue(state.settings),
+    sourceBeatSaberStore: getSetupSourceStore(state.settings),
     beatSaberInstanceNamePrefix: managedInstanceNamePrefix,
     beatSaberLaunchPreset: getText('beatSaberLaunchPreset'),
     beatSaberLaunchArguments: getText('beatSaberLaunchArguments'),
@@ -6396,6 +6745,7 @@ function buildSettingsRequest() {
       loadPlayerEnvironment: document.getElementById('loadPlayerEnvironment').checked,
       loadPlayerJumpDistance: document.getElementById('loadPlayerJumpDistance').checked,
       overrideReplayPlayerSettings: document.getElementById('overrideReplayPlayerSettings').checked,
+      restorePlayerSettingsOnExit: document.getElementById('restorePlayerSettingsOnExit').checked,
       ignoreModifiers: document.getElementById('ignoreModifiers').checked,
       showHead: document.getElementById('showHead').checked,
       showLeftSaber: document.getElementById('showLeftSaber').checked,
@@ -6449,6 +6799,9 @@ document.getElementById('setupWizardAdvanced')?.addEventListener('click', toggle
 document.getElementById('unsavedSettingsPrompt')?.addEventListener('click', () => runAction(saveSettings));
 document.getElementById('setupWizardRunSetup')?.addEventListener('click', () => runAction(runSetupWizardProvision));
 document.getElementById('setupWizardAddInstance')?.addEventListener('click', () => runAction(runSetupWizardAddInstance));
+document.getElementById('setupModeInstallFfmpeg')?.addEventListener('click', () => runAction(runSetupInstallFfmpeg));
+document.getElementById('setupModeVerify')?.addEventListener('click', () => runAction(runSetupWizardVerify));
+document.getElementById('setupModeLaunchOnly')?.addEventListener('click', () => runAction(runSetupWizardLaunchOnly));
 document.getElementById('setupWizardVerify')?.addEventListener('click', () => runAction(runSetupWizardVerify));
 document.getElementById('setupWizardCheckBaseline')?.addEventListener('click', () => runAction(runSetupWizardBaselineCheck));
 document.getElementById('setupWizardLaunchOnly')?.addEventListener('click', () => runAction(runSetupWizardLaunchOnly));
@@ -6456,7 +6809,7 @@ document.getElementById('showSetupAssistant')?.addEventListener('click', showSet
 document.getElementById('setupUseDetectedSource')?.addEventListener('click', () => {
   const detectedPath = setupSourcePathInfo?.detectedSourceBeatSaberPath || setupSourcePathInfo?.effectiveSourceBeatSaberPath || '';
   if (!detectedPath) {
-    showToast('No Steam Beat Saber source detected');
+    showToast('No Beat Saber source detected');
     return;
   }
 
@@ -6466,6 +6819,14 @@ document.getElementById('setupUseDetectedSource')?.addEventListener('click', () 
 });
 
 document.addEventListener('click', event => {
+  const sourceButton = event.target.closest('[data-setup-source-path]');
+  if (sourceButton) {
+    setValue('setupSourceBeatSaberPath', sourceButton.dataset.setupSourcePath || '');
+    markSettingsDirty();
+    renderSetupAssistant();
+    return;
+  }
+
   const profileButton = event.target.closest('[data-setup-profile]');
   if (profileButton && !profileButton.disabled) {
     applySetupProfile(profileButton.dataset.setupProfile || '');
@@ -7144,6 +7505,7 @@ document.getElementById('checkBaseline').addEventListener('click', () => runActi
 
 document.getElementById('startRun').addEventListener('click', () => runAction(async () => {
   await postJson('/api/run/start', { collectionName: getCollectionNameInputValue() });
+  await minimizeControlPanelForRecording();
   showToast('Queue started');
 }));
 
@@ -7159,6 +7521,7 @@ document.getElementById('startBenchmark')?.addEventListener('click', () => runAc
   }
 
   await postJson('/api/benchmark/start', { concurrencyLevels });
+  await minimizeControlPanelForRecording();
   showToast('Benchmark started');
 }));
 
@@ -7505,6 +7868,10 @@ loadColorPresets().catch(() => {
 loadSetupSourcePath().catch(() => {
   setupSourcePathInfo = null;
   renderSetupSourcePath(buildCurrentSettingsPreview());
+});
+loadSetupFfmpeg().catch(() => {
+  setupFfmpegInfo = null;
+  if (state) renderSetupAssistant();
 });
 
 setInterval(() => {

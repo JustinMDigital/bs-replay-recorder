@@ -75,6 +75,18 @@ public sealed class ControlPanelWorkerRunner : IDisposable
         _idleShutdownTask = null;
     }
 
+    public void RestorePlayerSettingsIfPending()
+    {
+        try
+        {
+            GamePresentationSettingsApplier.RestorePlayerSettingsIfPending(_logger);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("Failed to restore Beat Saber player settings before shutdown: " + ex.Message);
+        }
+    }
+
     private async Task RunUntilCanceledAsync(CancellationToken cancellationToken)
     {
         var idleShutdownTask = _idleShutdownTask;
@@ -681,6 +693,7 @@ public sealed class ControlPanelWorkerRunner : IDisposable
                 }
 
                 RequestLeaveActiveReplay();
+                RestorePlayerSettingsIfPending();
                 Application.Quit();
             },
             cancellationToken).ConfigureAwait(false);

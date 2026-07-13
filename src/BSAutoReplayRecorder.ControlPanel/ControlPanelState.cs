@@ -22,6 +22,10 @@ public sealed class ControlPanelState
 
     public DiskSpaceReport DiskSpace { get; set; } = new DiskSpaceReport();
 
+    public CapturePreflightReport CapturePreflight { get; set; } = new CapturePreflightReport();
+
+    public FfmpegSetupReport FfmpegSetup { get; set; } = new FfmpegSetupReport();
+
     public List<ControlPanelEventRecord> Events { get; set; } = new List<ControlPanelEventRecord>();
 
     public RunState Run { get; set; } = new RunState();
@@ -191,6 +195,8 @@ public sealed class WorkerInstanceRecord
 
     public string? GameDirectory { get; set; }
 
+    public string SourceBeatSaberStore { get; set; } = "";
+
     public string LaunchDirectory { get; set; } = "";
 
     public bool LaunchDirectoryReady { get; set; }
@@ -298,6 +304,48 @@ public sealed class DiskSpaceReport
     public double PercentFree { get; set; }
 }
 
+public sealed class CapturePreflightReport
+{
+    public string Status { get; set; } = "Unchecked";
+
+    public string Summary { get; set; } = "Capture preflight has not been checked.";
+
+    public string Detail { get; set; } = "";
+
+    public DateTimeOffset? CheckedAtUtc { get; set; }
+
+    public string FfmpegPath { get; set; } = "";
+
+    public string Encoder { get; set; } = "";
+
+    public string CaptureEngine { get; set; } = "";
+
+    public int MonitorIndex { get; set; }
+
+    public int CaptureWidth { get; set; }
+
+    public int CaptureHeight { get; set; }
+
+    public List<string> Issues { get; set; } = new List<string>();
+}
+
+public sealed class FfmpegSetupReport
+{
+    public string Status { get; set; } = "Unchecked";
+
+    public string Summary { get; set; } = "FFmpeg has not been checked.";
+
+    public string Detail { get; set; } = "";
+
+    public DateTimeOffset? CheckedAtUtc { get; set; }
+
+    public string FfmpegPath { get; set; } = "";
+
+    public string FfprobePath { get; set; } = "";
+
+    public bool CanInstall { get; set; }
+}
+
 public sealed class ControlPanelEventRecord
 {
     public string Id { get; set; } = "";
@@ -385,6 +433,8 @@ public sealed class SettingsUpdateRequest
 {
     public string RecordingOutputDirectory { get; set; } = "";
 
+    public string FfmpegPath { get; set; } = "";
+
     public int InstanceCount { get; set; }
 
     public int MaxConcurrentRecordings { get; set; }
@@ -432,6 +482,8 @@ public sealed class SettingsUpdateRequest
     public string BeatSaberInstancesRoot { get; set; } = "";
 
     public string SourceBeatSaberPath { get; set; } = "";
+
+    public string SourceBeatSaberStore { get; set; } = "";
 
     public string BeatSaberInstanceNamePrefix { get; set; } = "";
 
@@ -484,6 +536,8 @@ public sealed class InstanceProvisionRequest
 {
     public string SourceBeatSaberPath { get; set; } = "";
 
+    public string SourceBeatSaberStore { get; set; } = "";
+
     public int InstanceCount { get; set; }
 
     public bool OverwriteExisting { get; set; }
@@ -508,6 +562,29 @@ public sealed class SetupSourcePathReport
     public bool ConfiguredSourceReady { get; set; }
 
     public bool DetectedSourceReady { get; set; }
+
+    public string ConfiguredSourceStore { get; set; } = "";
+
+    public string EffectiveSourceStore { get; set; } = "";
+
+    public List<SetupSourceCandidate> DetectedSources { get; set; } = new List<SetupSourceCandidate>();
+}
+
+public sealed class SetupSourceCandidate
+{
+    public string Store { get; set; } = "";
+
+    public string DisplayName { get; set; } = "";
+
+    public string Path { get; set; } = "";
+
+    public string Version { get; set; } = "";
+
+    public bool Ready { get; set; }
+
+    public bool RecorderReady { get; set; }
+
+    public List<string> MissingPrerequisites { get; set; } = new List<string>();
 }
 
 public sealed class InstanceEnabledRequest

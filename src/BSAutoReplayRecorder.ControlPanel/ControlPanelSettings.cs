@@ -4,7 +4,7 @@ namespace BSAutoReplayRecorder.ControlPanel;
 
 public sealed class ControlPanelSettings
 {
-    public const string DefaultBeatSaberLaunchPreset = "windowed-1080p";
+    public const string DefaultBeatSaberLaunchPreset = "single-1080p";
     public const int MinimumManagedInstanceCount = 1;
     public const int MaximumManagedInstanceCount = 4;
     public const string DefaultBeatSaberLaunchArguments =
@@ -21,6 +21,8 @@ public sealed class ControlPanelSettings
     public string BindUrl { get; set; } = "http://127.0.0.1:5770";
 
     public string WorkspaceDirectory { get; set; } = "ControlPanelWorkspace";
+
+    public string FfmpegPath { get; set; } = "";
 
     public string RecordingOutputDirectory { get; set; } = "";
 
@@ -52,13 +54,13 @@ public sealed class ControlPanelSettings
 
     public string SharedCustomBombsDirectory { get; set; } = "";
 
-    public int InstanceCount { get; set; } = 4;
+    public int InstanceCount { get; set; } = 1;
 
-    public int MaxConcurrentRecordings { get; set; } = 4;
+    public int MaxConcurrentRecordings { get; set; } = 1;
 
     public bool RequireAllWorkersReady { get; set; } = true;
 
-    public bool RequireMatchingInstanceBaseline { get; set; } = true;
+    public bool RequireMatchingInstanceBaseline { get; set; }
 
     public int TargetFps { get; set; } = 60;
 
@@ -68,11 +70,11 @@ public sealed class ControlPanelSettings
 
     public string Encoder { get; set; } = "h264_nvenc";
 
-    public int VideoBitrateKbps { get; set; } = 16000;
+    public int VideoBitrateKbps { get; set; } = 12000;
 
     public string OutputFormat { get; set; } = "mkv";
 
-    public int MonitorIndex { get; set; } = 1;
+    public int MonitorIndex { get; set; }
 
     public string QualityMode { get; set; } = "Balanced";
 
@@ -100,19 +102,23 @@ public sealed class ControlPanelSettings
 
     public string SourceBeatSaberPath { get; set; } = "";
 
+    // The store that owns the source install. Kept separately because managed
+    // worker folders no longer retain the original store path.
+    public string SourceBeatSaberStore { get; set; } = "";
+
     public string BeatSaberInstanceNamePrefix { get; set; } = "I-";
 
     public string BeatSaberLaunchPreset { get; set; } = DefaultBeatSaberLaunchPreset;
 
     public string BeatSaberLaunchArguments { get; set; } = DefaultBeatSaberLaunchArguments;
 
-    public bool ManageDisplayScale { get; set; } = true;
+    public bool ManageDisplayScale { get; set; }
 
     public int RecordingDisplayScalePercent { get; set; } = 100;
 
     public int RestoreDisplayScalePercent { get; set; } = 150;
 
-    public bool HideTaskbarDuringRun { get; set; } = true;
+    public bool HideTaskbarDuringRun { get; set; }
 
     public double DelayBetweenRecordingsSeconds { get; set; } = 5;
 
@@ -141,6 +147,7 @@ public sealed class ControlPanelSettings
         }
 
         WorkspaceDirectory = NormalizePathOrDefault(WorkspaceDirectory, "ControlPanelWorkspace");
+        FfmpegPath = NormalizeExecutablePathOrDefault(FfmpegPath);
         RecordingOutputDirectory = NormalizeRecordingOutputDirectory(RecordingOutputDirectory, WorkspaceDirectory);
         SharedCustomLevelsDirectory = NormalizePathOrDefault(
             SharedCustomLevelsDirectory,
@@ -162,7 +169,7 @@ public sealed class ControlPanelSettings
         CaptureHeight = Math.Max(180, CaptureHeight);
         if (VideoBitrateKbps <= 0)
         {
-            VideoBitrateKbps = 16000;
+            VideoBitrateKbps = 12000;
         }
 
         VideoBitrateKbps = Math.Clamp(VideoBitrateKbps, 500, 200000);
@@ -192,6 +199,7 @@ public sealed class ControlPanelSettings
             BeatSaberInstancesRoot,
             Path.Combine(Path.GetFullPath(WorkspaceDirectory), "Instances"));
         SourceBeatSaberPath = NormalizePathOrDefault(SourceBeatSaberPath, "");
+        SourceBeatSaberStore = BeatSaberStore.Normalize(SourceBeatSaberStore);
         BeatSaberInstanceNamePrefix = BeatSaberInstanceNamePrefix?.Trim() ?? "";
         BeatSaberLaunchArguments = BeatSaberLaunchArguments?.Trim() ?? "";
         RecordingDisplayScalePercent = NormalizeScalePercent(RecordingDisplayScalePercent, 100);
@@ -268,6 +276,31 @@ public sealed class ControlPanelSettings
         }
     }
 
+    private static string NormalizeExecutablePathOrDefault(string? value)
+    {
+        var trimmed = value?.Trim().Trim('"') ?? "";
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return "";
+        }
+
+        if (!Path.IsPathRooted(trimmed) &&
+            !trimmed.Contains(Path.DirectorySeparatorChar) &&
+            !trimmed.Contains(Path.AltDirectorySeparatorChar))
+        {
+            return trimmed;
+        }
+
+        try
+        {
+            return Path.GetFullPath(trimmed);
+        }
+        catch
+        {
+            return trimmed;
+        }
+    }
+
     private static string NormalizeRecordingOutputDirectory(string? value, string workspaceDirectory)
     {
         var fallback = Path.Combine(Path.GetFullPath(workspaceDirectory), "Recordings");
@@ -314,6 +347,11 @@ public sealed class ControlPanelSettings
             return "5k-monitor-2x2";
         }
 
+        if (MatchesUltrawide1440p2UpPreset())
+        {
+            return "ultrawide-1440p-2up";
+        }
+
         if (trimmed == "720p-monitor-2x2")
         {
             if (Matches720pMonitor2x2Preset())
@@ -325,6 +363,16 @@ public sealed class ControlPanelSettings
         if (Matches1440pMonitor2x2Preset())
         {
             return "1440p-monitor-2x2";
+        }
+
+        if (trimmed == "windowed-720p" && MatchesWindowed720pPreset())
+        {
+            return "windowed-720p";
+        }
+
+        if (trimmed == "windowed-1080p" && MatchesWindowed1080pPreset())
+        {
+            return "windowed-1080p";
         }
 
         if (MatchesSingle4kPreset())
@@ -459,6 +507,24 @@ public sealed class ControlPanelSettings
                !ManageDisplayScale &&
                !HideTaskbarDuringRun &&
                string.Equals(BeatSaberLaunchArguments, Windowed5kBeatSaberLaunchArguments, StringComparison.Ordinal);
+    }
+
+    private bool MatchesUltrawide1440p2UpPreset()
+    {
+        return InstanceCount == 2 &&
+               MaxConcurrentRecordings == InstanceCount &&
+               TargetFps == 60 &&
+               CaptureWidth == 2560 &&
+               CaptureHeight == 1440 &&
+               VideoBitrateKbps == 18000 &&
+               string.Equals(OutputFormat, "mkv", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(Encoder, "h264_nvenc", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(QualityMode, "Performance", StringComparison.OrdinalIgnoreCase) &&
+               !ManageDisplayScale &&
+               RecordingDisplayScalePercent == 100 &&
+               RestoreDisplayScalePercent == 150 &&
+               HideTaskbarDuringRun &&
+               string.Equals(BeatSaberLaunchArguments, Windowed1440pBeatSaberLaunchArguments, StringComparison.Ordinal);
     }
 
     private bool Matches5kMonitor2x2Preset()

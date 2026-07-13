@@ -1,6 +1,6 @@
 param(
-    [ValidateSet("5k-monitor-2x2", "4k-monitor-2x2", "1440p-monitor-2x2", "single-1080p", "single-1440p", "single-4k", "single-5k")]
-    [string]$Preset = "4k-monitor-2x2",
+    [ValidateSet("5k-monitor-2x2", "4k-monitor-2x2", "1440p-monitor-2x2", "ultrawide-1440p-2up", "single-1080p", "single-1440p", "single-4k", "single-5k")]
+    [string]$Preset = "single-1080p",
     [string]$SourceBeatSaberPath,
     [int]$InstanceCount = 0,
     [string]$InstancesRoot = "",
@@ -496,7 +496,7 @@ function Apply-LocalSettingsDefaults {
 
     if (-not $InstallerBoundParameters.ContainsKey("Preset")) {
         $presetValue = Get-LocalSettingString -Settings $LocalSettings -Names @("preset")
-        if ($presetValue -and @("5k-monitor-2x2", "4k-monitor-2x2", "1440p-monitor-2x2", "single-1080p", "single-1440p", "single-4k", "single-5k").Contains($presetValue)) {
+        if ($presetValue -and @("5k-monitor-2x2", "4k-monitor-2x2", "1440p-monitor-2x2", "ultrawide-1440p-2up", "single-1080p", "single-1440p", "single-4k", "single-5k").Contains($presetValue)) {
             $script:Preset = $presetValue
         }
     }
@@ -601,6 +601,12 @@ $RuntimeRoot = Join-Path $RepoRoot "runtime"
 $HasPublishedRuntime = (Test-Path -LiteralPath (Join-Path $RuntimeRoot "control-panel\BSAutoReplayRecorder.ControlPanel.exe") -PathType Leaf) -and
     (Test-Path -LiteralPath (Join-Path $RuntimeRoot "recorder-host\BSAutoReplayRecorder.RecorderHost.exe") -PathType Leaf) -and
     (Test-Path -LiteralPath (Join-Path $RuntimeRoot "desktop-host\BSAutoReplayRecorder.DesktopHost.exe") -PathType Leaf)
+$BundledPluginOutput = Join-Path $RuntimeRoot "worker-plugin\Release\netstandard2.1"
+$HasBundledWorkerPlugin = (Test-Path -LiteralPath (Join-Path $BundledPluginOutput "BSAutoReplayRecorder.Plugin.dll") -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $BundledPluginOutput "BSAutoReplayRecorder.Core.dll") -PathType Leaf)
+if ($HasBundledWorkerPlugin) {
+    $PluginOutput = $BundledPluginOutput
+}
 
 function Write-Section {
     param([string]$Message)
@@ -1128,7 +1134,7 @@ function Get-PresetSettings {
                 CaptureWidth = 2560
                 CaptureHeight = 1440
                 VideoBitrateKbps = 18000
-                MonitorIndex = 1
+                MonitorIndex = 0
                 QualityMode = "Performance"
                 LaunchArguments = $fiveKArgs
                 ManageDisplayScale = $true
@@ -1146,7 +1152,7 @@ function Get-PresetSettings {
                 CaptureWidth = 1920
                 CaptureHeight = 1080
                 VideoBitrateKbps = 12000
-                MonitorIndex = 1
+                MonitorIndex = 0
                 QualityMode = "Performance"
                 LaunchArguments = $defaultArgs
                 ManageDisplayScale = $true
@@ -1164,10 +1170,28 @@ function Get-PresetSettings {
                 CaptureWidth = 1280
                 CaptureHeight = 720
                 VideoBitrateKbps = 8000
-                MonitorIndex = 1
+                MonitorIndex = 0
                 QualityMode = "Performance"
                 LaunchArguments = $smallArgs
                 ManageDisplayScale = $true
+                RecordingDisplayScalePercent = 100
+                RestoreDisplayScalePercent = 150
+                HideTaskbarDuringRun = $true
+                RequireMatchingInstanceBaseline = $true
+            }
+        }
+        "ultrawide-1440p-2up" {
+            return [pscustomobject]@{
+                InstanceCount = 2
+                MaxConcurrentRecordings = 2
+                TargetFps = 60
+                CaptureWidth = 2560
+                CaptureHeight = 1440
+                VideoBitrateKbps = 18000
+                MonitorIndex = 0
+                QualityMode = "Performance"
+                LaunchArguments = $mediumArgs
+                ManageDisplayScale = $false
                 RecordingDisplayScalePercent = 100
                 RestoreDisplayScalePercent = 150
                 HideTaskbarDuringRun = $true
@@ -1182,7 +1206,7 @@ function Get-PresetSettings {
                 CaptureWidth = 2560
                 CaptureHeight = 1440
                 VideoBitrateKbps = 18000
-                MonitorIndex = 1
+                MonitorIndex = 0
                 QualityMode = "Balanced"
                 LaunchArguments = $mediumArgs
                 ManageDisplayScale = $false
@@ -1200,7 +1224,7 @@ function Get-PresetSettings {
                 CaptureWidth = 3840
                 CaptureHeight = 2160
                 VideoBitrateKbps = 32000
-                MonitorIndex = 1
+                MonitorIndex = 0
                 QualityMode = "Quality"
                 LaunchArguments = $largeArgs
                 ManageDisplayScale = $false
@@ -1218,7 +1242,7 @@ function Get-PresetSettings {
                 CaptureWidth = 5120
                 CaptureHeight = 2880
                 VideoBitrateKbps = 56000
-                MonitorIndex = 1
+                MonitorIndex = 0
                 QualityMode = "Quality"
                 LaunchArguments = $fiveKArgs
                 ManageDisplayScale = $false
@@ -1236,7 +1260,7 @@ function Get-PresetSettings {
                 CaptureWidth = 1920
                 CaptureHeight = 1080
                 VideoBitrateKbps = 12000
-                MonitorIndex = 1
+                MonitorIndex = 0
                 QualityMode = "Balanced"
                 LaunchArguments = $defaultArgs
                 ManageDisplayScale = $false
@@ -1960,12 +1984,17 @@ try {
     }
 
     if (-not $SkipPluginDeploy) {
-        if (-not (Test-Path -LiteralPath $PluginProject -PathType Leaf)) {
-            throw "Worker plugin source was not found at $PluginProject. Reinstall the desktop package or run from a source checkout."
+        if ($HasBundledWorkerPlugin) {
+            Write-Step "Using bundled Beat Saber 1.40.6 worker plugin."
         }
+        else {
+            if (-not (Test-Path -LiteralPath $PluginProject -PathType Leaf)) {
+                throw "Worker plugin source was not found at $PluginProject. Reinstall the desktop package or run from a source checkout."
+            }
 
-        & dotnet build $PluginProject --nologo -p:BeatSaberDir="$($instanceDirectories[0])"
-        if ($LASTEXITCODE -ne 0) { throw "Plugin build failed." }
+            & dotnet build $PluginProject --nologo -p:BeatSaberDir="$($instanceDirectories[0])"
+            if ($LASTEXITCODE -ne 0) { throw "Plugin build failed." }
+        }
     }
 
     if (-not $SkipPluginDeploy) {

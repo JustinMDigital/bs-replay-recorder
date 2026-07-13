@@ -70,13 +70,19 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
                 ". Install BeatLeader in the managed baseline instance or reprovision workers from a Beat Saber folder that already has BeatLeader installed.");
         }
 
-        var pluginProjectPath = ResolvePluginProjectPath()
-                                ?? throw new InvalidOperationException("Worker plugin project was not found under " + PluginProjectRelativePath + ".");
-        var repoRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(pluginProjectPath)!, "..", ".."));
-        var buildRoot = Path.Combine(Path.GetFullPath(settings.WorkspaceDirectory), "Build", "WorkerPlugin");
-        BuildPlugin(pluginProjectPath, repoRoot, baselineDirectory, buildRoot);
+        var outputDirectory = ResolveBundledPluginOutput();
+        if (outputDirectory == null)
+        {
+            var pluginProjectPath = ResolvePluginProjectPath()
+                                    ?? throw new InvalidOperationException(
+                                        "Bundled worker plugin was not found and the source project is missing under " +
+                                        PluginProjectRelativePath + ".");
+            var repoRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(pluginProjectPath)!, "..", ".."));
+            var buildRoot = Path.Combine(Path.GetFullPath(settings.WorkspaceDirectory), "Build", "WorkerPlugin");
+            BuildPlugin(pluginProjectPath, repoRoot, baselineDirectory, buildRoot);
+            outputDirectory = Path.Combine(buildRoot, "Debug", "netstandard2.1");
+        }
 
-        var outputDirectory = Path.Combine(buildRoot, "Debug", "netstandard2.1");
         var pluginDll = Path.Combine(outputDirectory, "BSAutoReplayRecorder.Plugin.dll");
         var coreDll = Path.Combine(outputDirectory, "BSAutoReplayRecorder.Core.dll");
         if (!File.Exists(pluginDll) || !File.Exists(coreDll))
@@ -268,6 +274,21 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         {
             var candidate = Path.Combine(root, PluginProjectRelativePath.Replace('/', Path.DirectorySeparatorChar));
             if (File.Exists(candidate))
+            {
+                return Path.GetFullPath(candidate);
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ResolveBundledPluginOutput()
+    {
+        foreach (var root in EnumerateRepositorySearchRoots())
+        {
+            var candidate = Path.Combine(root, "runtime", "worker-plugin", "Release", "netstandard2.1");
+            if (File.Exists(Path.Combine(candidate, "BSAutoReplayRecorder.Plugin.dll")) &&
+                File.Exists(Path.Combine(candidate, "BSAutoReplayRecorder.Core.dll")))
             {
                 return Path.GetFullPath(candidate);
             }

@@ -40,7 +40,7 @@ public sealed class RecorderHostSettings
 
     public int DefaultVideoBitrateKbps { get; set; } = 16000;
 
-    public int DefaultMonitorIndex { get; set; } = 1;
+    public int DefaultMonitorIndex { get; set; }
 
     public string DefaultQualityMode { get; set; } = "Balanced";
 

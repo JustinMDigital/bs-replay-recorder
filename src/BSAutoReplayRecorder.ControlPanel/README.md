@@ -58,17 +58,14 @@ The control panel owns setup, queue management, worker launch, recording setting
 
 ## First Run From The Panel
 
-After `Support\install.bat` finishes:
+On a packaged first run, the setup assistant opens automatically:
 
-1. Open the dashboard.
-2. Go to `Files` and confirm the workspace and recording paths.
-3. Go to `Settings` and choose the recording monitor and feed preset.
-4. Save settings if the page shows unsaved changes.
-5. Go to `Diagnostics` and press `Launch + Verify`.
-6. Return to `Run`.
-7. Import `.bsor` or `.dat` files, or paste BeatLeader score/replay links or ScoreSaber replay links.
-8. Wait for maps, workers, baseline, audio, disk, and sync to look ready.
-9. Press `Start run`.
+1. Choose the Beat Saber source folder and install FFmpeg if the setup screen offers it.
+2. Create the managed worker copies.
+3. Press `Launch + Verify` to test the selected monitor, NVENC encoder, and driver.
+4. Return to `Run` and import `.bsor` or `.dat` files, or paste BeatLeader score/replay links or ScoreSaber replay links.
+5. Wait for maps, workers, baseline, audio, disk, and sync to look ready.
+6. Press `Start run`.
 
 Finished recordings are written under the workspace's `Recordings` folder. The default path is:
 

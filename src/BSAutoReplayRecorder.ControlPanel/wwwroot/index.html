@@ -317,6 +317,21 @@
           </div>
         </div>
 
+        <section id="firstRunSetupBanner" class="setupModeBanner" hidden>
+          <div class="setupModeCopy">
+            <span id="setupModeKicker" class="setupModeKicker">First setup</span>
+            <h3 id="setupModeTitle">Finish local recorder setup</h3>
+            <p id="setupModeText">Create managed instances, then launch and verify capture.</p>
+          </div>
+          <div class="setupModeActions">
+            <button id="setupModeInstallFfmpeg" class="secondaryButton" type="button" hidden>Install FFmpeg</button>
+            <button id="setupModeLaunchOnly" class="secondaryButton" type="button" hidden>Launch</button>
+            <button id="setupModeVerify" class="primaryButton" type="button">Launch + Verify</button>
+          </div>
+        </section>
+
+        <div id="setupWizardProgress" class="setupWizardProgress" aria-label="Setup progress"></div>
+
         <div class="setupWizardGrid">
           <div class="setupWizardColumn">
             <h3>Display</h3>
@@ -346,6 +361,7 @@
                   <input id="setupSourceBeatSaberPath" type="text" placeholder="C:\Program Files (x86)\Steam\steamapps\common\Beat Saber">
                   <button id="setupUseDetectedSource" class="secondaryButton" type="button">Use Detected</button>
                 </div>
+                <div id="setupDetectedSources" class="setupProfileList" aria-label="Detected Beat Saber installs"></div>
                 <span id="setupSourceBeatSaberHint" class="setupPathHint">Detecting Beat Saber source...</span>
               </div>
               <label class="span2">Instances root <input id="beatSaberInstancesRoot" type="text"></label>
@@ -519,6 +535,15 @@
             </div>
 
             <div class="gameSettingsSurface playerSettingsSurface" aria-label="Player settings">
+              <label class="gameToggle gameSettingsPriority">
+                <input id="restorePlayerSettingsOnExit" type="checkbox">
+                <span class="gameToggleCopy">
+                  <span class="gameToggleText">Restore player settings on close</span>
+                  <span class="gameToggleHint">Saves the current Beat Saber profile before recorder settings apply, then restores it when the managed game closes.</span>
+                </span>
+                <span class="gameSwitch" aria-hidden="true"></span>
+              </label>
+
               <div class="gameSettingsSection">
                 <span class="gameSettingsSectionTitle">Audio</span>
                 <div class="gameControlStack">
@@ -737,13 +762,14 @@
               <label class="span2">Preset
                   <select id="beatSaberLaunchPreset">
                     <option value="5k-monitor-2x2">4x 1440p streams (5k monitor)</option>
+                    <option value="ultrawide-1440p-2up">2x 1440p streams (ultrawide)</option>
                     <option value="4k-monitor-2x2">4x 1080p streams (4k monitor)</option>
                     <option value="720p-monitor-2x2">4x 720p streams (1440p monitor)</option>
                     <option value="1440p-monitor-2x2">4x 720p streams (1440p monitor)</option>
                     <option value="single-5k">1x 5K stream (5k monitor)</option>
                     <option value="single-4k">1x 4K stream (4k monitor)</option>
                     <option value="single-1440p">1x 1440p stream (1440p monitor)</option>
-                    <option value="single-1080p">1x 1080p stream (4k monitor)</option>
+                    <option value="single-1080p">1x 1080p stream (1080p monitor)</option>
                     <option value="single-720p">1x 720p stream (720p monitor)</option>
                     <option value="windowed-1080p">Windowed 1080p</option>
                     <option value="windowed-720p">Windowed 720p</option>

@@ -9,7 +9,12 @@ TestResults/
 # Node and Electron packaging output.
 node_modules/
 dist/
-artifacts/
+/artifacts/*
+!/artifacts/worker-plugin/
+!/artifacts/worker-plugin/bs-1.40.6/
+!/artifacts/worker-plugin/bs-1.40.6/BSAutoReplayRecorder.Plugin.dll
+!/artifacts/worker-plugin/bs-1.40.6/BSAutoReplayRecorder.Core.dll
+!/artifacts/worker-plugin/bs-1.40.6/release.json
 Replay Recorder.exe
 
 # IDE and OS metadata.
@@ -28,6 +33,8 @@ Thumbs.db
 *.local
 *.bak
 /settings.json
+/settings.*.json
+!/settings.example.json
 
 # Local Codex/agent workspace metadata.
 .agents/

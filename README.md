@@ -8,11 +8,11 @@ It launches one or more managed Beat Saber worker copies, plays queued replays, 
 
 The normal path is intentionally simple:
 
-1. Run `Support\install.bat` once.
+1. Extract the release folder.
 2. Open `Replay Recorder.exe`.
-3. Launch or verify the managed Beat Saber workers.
-4. Import replay files or replay links.
-5. Press `Start run`.
+3. Follow the first-run setup to choose Beat Saber and install FFmpeg if needed.
+4. Launch and verify the managed Beat Saber worker.
+5. Import replay files or replay links, then press `Start run`.
 6. Pick up videos from `ControlPanelWorkspace\Recordings`.
 
 <img src="assets/controlpanel.png" alt="Control panel" width="500"> <img src="assets/gameplay.png" alt="Gameplay" width="500">
@@ -37,7 +37,8 @@ This recorder does not use OBS, obs-websocket, VB-CABLE, or BSManager in the nor
 - A local PC Beat Saber install.
 - BSIPA and BeatLeader installed in the Beat Saber folder used as the worker template.
 - ScoreSaber in that same source folder if you want ScoreSaber replay playback.
-- .NET SDK 10.
+- An NVIDIA GPU with NVENC and a current NVIDIA driver. The default recorder profile uses NVENC H.264.
+- No .NET install is required for the packaged release. The source-tree development path still uses the .NET 10 SDK.
 - FFmpeg and ffprobe. The installer can detect common installs, offer WinGet install for `Gyan.FFmpeg`, or save a custom path.
 - Node.js and npm only when developing or rebuilding the Electron desktop package.
 - Optional: `tools\SetDpi\SetDpi.exe` or `BSARR_SETDPI_PATH` if you use presets that temporarily change Windows display scaling.
@@ -45,6 +46,10 @@ This recorder does not use OBS, obs-websocket, VB-CABLE, or BSManager in the nor
 The default plugin manifest targets Beat Saber `1.40.6`, BSIPA `^4.3.6`, and BeatLeader `^0.9.33`. The plugin can be built against another Beat Saber folder/version when needed.
 
 ## First Setup
+
+For the packaged release, open `Replay Recorder.exe`. The first-run setup creates local settings, detects Beat Saber, creates only missing managed workers, offers an FFmpeg install, and tests the selected monitor, NVENC encoder, and driver before a recording can start. It does not copy your personal workspace settings or recordings into the release defaults.
+
+Use the support installer only when working from a source checkout or repairing an extracted package:
 
 From the repo root:
 
@@ -54,7 +59,7 @@ Support\install.bat
 
 The installer creates a local `settings.json` from `settings.example.json` if needed. Keep machine-specific paths in `settings.json`; it is ignored by git.
 
-During setup, the installer may ask for:
+During source/repair setup, the installer may ask for:
 
 - an FFmpeg path, or permission to install FFmpeg with WinGet;
 - the Beat Saber source folder to copy/build against;
@@ -177,7 +182,7 @@ curl.exe http://127.0.0.1:5770/api/state
 - Managed Beat Saber workers are separate local copies. Do not point the managed instance root at your everyday Beat Saber install.
 - The current FFmpeg desktop capture path can record overlays drawn over the capture region. Keep notifications, Steam overlays, Discord overlays, and other popups away from the recording area.
 - ProcessLoopback audio is process-specific, so unrelated desktop sounds should not be mixed into the recording.
-- If FFmpeg is missing, rerun `Support\install.bat` or set `ffmpegPath` in `settings.json`. The folder with `ffmpeg.exe` should also contain `ffprobe.exe`.
+- If FFmpeg is missing, use `Install FFmpeg` in first-run setup or set `ffmpegPath` in Advanced Settings. The folder with `ffmpeg.exe` should also contain `ffprobe.exe`.
 - If workers do not connect, use `Diagnostics` -> `Launch + Verify` before changing settings by hand.
 - If maps are missing, use the queue item's map download/upload action or run shared-folder repair from `Files`.
 - If sync cannot be proven, the replay should fail instead of producing a questionable recording. Check the queue details and the adjacent `*.sync.json` file.

@@ -1,10 +1,10 @@
 {
-  "preset": "4k-monitor-2x2",
+  "preset": "single-1080p",
   "bindUrl": "http://127.0.0.1:5770",
   "workspaceDirectory": "ControlPanelWorkspace",
   "beatSaberInstancesRoot": "ControlPanelWorkspace/Instances",
-  "instanceCount": 3,
-  "maxConcurrentRecordings": 3,
+  "instanceCount": 1,
+  "maxConcurrentRecordings": 1,
   "beatSaberInstanceNamePrefix": "I-",
   "delayBetweenRecordingsSeconds": 5,
   "lagSpikeStartupGraceSeconds": 5,

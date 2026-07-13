@@ -47,6 +47,10 @@ try
     RunLocalSettingsFileCheck(Path.Combine(tempRoot, "local-settings-file"));
     RunSetupSourcePathDetectorCheck(Path.Combine(tempRoot, "setup-source-path"));
     RunLaunchPresetNormalizationCheck();
+    RunCaptureLayoutValidatorCheck();
+    RunCapturePreflightFailureClassificationCheck();
+    RunCapturePreflightStartRunGuardCheck(Path.Combine(tempRoot, "capture-preflight-run-guard"));
+    RunFfmpegSetupInstallCheck(Path.Combine(tempRoot, "ffmpeg-setup"));
     RunAudioLevelNormalizationCheck();
     RunAudioLevelSettingsUpdateCheck(Path.Combine(tempRoot, "audio-level-update"));
     RunGamePresentationSettingsSyncCheck(Path.Combine(tempRoot, "game-presentation-sync"));
@@ -454,6 +458,8 @@ static void RunSetupSourcePathDetectorCheck(string workspace)
     var detectedSource = Path.Combine(library, "steamapps", "common", "Beat Saber");
     Directory.CreateDirectory(detectedSource);
     File.WriteAllText(Path.Combine(detectedSource, "Beat Saber.exe"), "");
+    Directory.CreateDirectory(Path.Combine(detectedSource, "Beat Saber_Data", "Plugins", "x86_64"));
+    File.WriteAllText(Path.Combine(detectedSource, "Beat Saber_Data", "Plugins", "x86_64", "steam_api64.dll"), "");
 
     var detected = SetupSourcePathDetector.Detect("", new[] { library });
     AssertEqual("Detected", detected.Status, "setup source detected status");
@@ -467,6 +473,41 @@ static void RunSetupSourcePathDetectorCheck(string workspace)
     var configured = SetupSourcePathDetector.Detect(configuredSource, new[] { library });
     AssertEqual("Ready", configured.Status, "setup source configured status");
     AssertEqual(Path.GetFullPath(configuredSource), configured.EffectiveSourceBeatSaberPath, "setup source configured wins");
+
+    var metaLibrary = Path.Combine(workspace, "MetaLibrary");
+    var metaSource = Path.Combine(metaLibrary, "Software", "hyperbolic-magnetism-beat-saber");
+    Directory.CreateDirectory(Path.Combine(metaSource, "Plugins"));
+    File.WriteAllText(Path.Combine(metaSource, "Beat Saber.exe"), "");
+    File.WriteAllText(Path.Combine(metaSource, "IPA.exe"), "");
+    File.WriteAllText(Path.Combine(metaSource, "winhttp.dll"), "");
+    File.WriteAllText(Path.Combine(metaSource, "Plugins", "BeatLeader.dll"), "");
+    Directory.CreateDirectory(Path.Combine(metaLibrary, "Manifests"));
+    File.WriteAllText(
+        Path.Combine(metaLibrary, "Manifests", "hyperbolic-magnetism-beat-saber.json"),
+        "{\"version\":\"1.44.1_20239\"}");
+
+    var both = SetupSourcePathDetector.Detect("", new[] { library }, new[] { metaLibrary });
+    AssertEqual("SelectionRequired", both.Status, "multiple detected stores require selection");
+    AssertEqual(2, both.DetectedSources.Count, "both store candidates reported");
+    var meta = both.DetectedSources.Single(candidate => candidate.Store == BeatSaberStore.MetaPc);
+    AssertEqual("1.44.1_20239", meta.Version, "meta manifest version");
+    AssertEqual(true, meta.RecorderReady, "meta recorder prerequisites ready");
+
+    var configuredMeta = SetupSourcePathDetector.Detect(
+        metaSource,
+        new[] { library },
+        new[] { metaLibrary },
+        BeatSaberStore.MetaPc);
+    AssertEqual("Ready", configuredMeta.Status, "configured Meta source status");
+    AssertEqual(BeatSaberStore.MetaPc, configuredMeta.EffectiveSourceStore, "configured Meta source store");
+    AssertEqual(BeatSaberStore.Steam, SetupSourcePathDetector.InferStoreFromDirectory(detectedSource), "steam source store inference");
+
+    var steamStartInfo = new System.Diagnostics.ProcessStartInfo();
+    ControlPanelStore.ApplyStoreLaunchEnvironment(steamStartInfo, BeatSaberStore.Steam);
+    AssertEqual("620980", steamStartInfo.Environment["SteamAppId"], "steam launch environment app id");
+    var metaStartInfo = new System.Diagnostics.ProcessStartInfo();
+    ControlPanelStore.ApplyStoreLaunchEnvironment(metaStartInfo, BeatSaberStore.MetaPc);
+    AssertEqual(false, metaStartInfo.Environment.ContainsKey("SteamAppId"), "Meta launch does not inject Steam app id");
 
     var missing = SetupSourcePathDetector.Detect(Path.Combine(workspace, "Missing"), Array.Empty<string>());
     AssertEqual("Missing", missing.Status, "setup source missing status");
@@ -993,8 +1034,10 @@ static void RunDefaultLaunchArgumentsCheck(string workspace)
     AssertEqual(ControlPanelSettings.DefaultBeatSaberLaunchPreset, snapshot.Settings.BeatSaberLaunchPreset, "default launch preset");
     AssertEqual(expectedArgs, snapshot.Settings.BeatSaberLaunchArguments, "default launch arguments");
     AssertEqual(expectedArgs, snapshot.Instances[0].LaunchArguments, "default instance launch arguments");
-    AssertEqual(true, snapshot.Settings.ManageDisplayScale, "default display scale management");
-    AssertEqual(true, snapshot.Settings.RequireMatchingInstanceBaseline, "default baseline guard");
+    AssertEqual(1, snapshot.Settings.InstanceCount, "default instance count");
+    AssertEqual(1, snapshot.Settings.MaxConcurrentRecordings, "default max concurrent recordings");
+    AssertEqual(false, snapshot.Settings.ManageDisplayScale, "default display scale management");
+    AssertEqual(false, snapshot.Settings.RequireMatchingInstanceBaseline, "default baseline guard");
     AssertEqual(true, snapshot.Settings.RequireAudioForRun, "default audio guard");
     AssertEqual("Loudness", snapshot.Settings.AudioLevelMode, "default audio level mode");
     AssertEqual(-12d, snapshot.Settings.AudioTargetLevelDb, "default audio target level");
@@ -1344,6 +1387,7 @@ static void RunLaunchPresetNormalizationCheck()
         ManageDisplayScale = true,
         RecordingDisplayScalePercent = 100,
         RestoreDisplayScalePercent = 150,
+        HideTaskbarDuringRun = true,
         BeatSaberLaunchArguments = ControlPanelSettings.DefaultBeatSaberLaunchArguments
     };
     presetSettings.Normalize();
@@ -1365,6 +1409,7 @@ static void RunLaunchPresetNormalizationCheck()
         ManageDisplayScale = true,
         RecordingDisplayScalePercent = 100,
         RestoreDisplayScalePercent = 150,
+        HideTaskbarDuringRun = true,
         BeatSaberLaunchArguments = ControlPanelSettings.DefaultBeatSaberLaunchArguments
     };
     migratedPresetSettings.Normalize();
@@ -1408,6 +1453,7 @@ static void RunLaunchPresetNormalizationCheck()
         ManageDisplayScale = true,
         RecordingDisplayScalePercent = 100,
         RestoreDisplayScalePercent = 150,
+        HideTaskbarDuringRun = true,
         BeatSaberLaunchArguments = ControlPanelSettings.Windowed720pBeatSaberLaunchArguments
     };
     monitor1440pPresetSettings.Normalize();
@@ -1429,6 +1475,7 @@ static void RunLaunchPresetNormalizationCheck()
         ManageDisplayScale = true,
         RecordingDisplayScalePercent = 100,
         RestoreDisplayScalePercent = 150,
+        HideTaskbarDuringRun = true,
         BeatSaberLaunchArguments = ControlPanelSettings.Windowed720pBeatSaberLaunchArguments
     };
     monitor720pPresetSettings.Normalize();
@@ -1529,6 +1576,28 @@ static void RunLaunchPresetNormalizationCheck()
     AssertEqual(4, single4kWithInventorySettings.InstanceCount, "single 4k preserves managed inventory count");
     AssertEqual("single-4k", single4kWithInventorySettings.BeatSaberLaunchPreset, "single 4k launch preset with managed inventory");
 
+    var ultrawideSettings = new ControlPanelSettings
+    {
+        BeatSaberLaunchPreset = "ultrawide-1440p-2up",
+        InstanceCount = 2,
+        MaxConcurrentRecordings = 2,
+        TargetFps = 60,
+        CaptureWidth = 2560,
+        CaptureHeight = 1440,
+        VideoBitrateKbps = 18000,
+        OutputFormat = "mkv",
+        MonitorIndex = 0,
+        Encoder = "h264_nvenc",
+        QualityMode = "Performance",
+        ManageDisplayScale = false,
+        RecordingDisplayScalePercent = 100,
+        RestoreDisplayScalePercent = 150,
+        HideTaskbarDuringRun = true,
+        BeatSaberLaunchArguments = ControlPanelSettings.Windowed1440pBeatSaberLaunchArguments
+    };
+    ultrawideSettings.Normalize();
+    AssertEqual("ultrawide-1440p-2up", ultrawideSettings.BeatSaberLaunchPreset, "ultrawide 1440p launch preset");
+
     var instanceCountClampSettings = new ControlPanelSettings
     {
         InstanceCount = 12,
@@ -1537,6 +1606,157 @@ static void RunLaunchPresetNormalizationCheck()
     instanceCountClampSettings.Normalize();
     AssertEqual(4, instanceCountClampSettings.InstanceCount, "instance count clamps to managed maximum");
     AssertEqual(4, instanceCountClampSettings.MaxConcurrentRecordings, "max concurrent follows managed instance count");
+}
+
+static void RunCaptureLayoutValidatorCheck()
+{
+    var displayInfo = CreateDisplayInfo(5120, 1440);
+    var twoUpSettings = new ControlPanelSettings
+    {
+        InstanceCount = 2,
+        CaptureWidth = 2560,
+        CaptureHeight = 1440,
+        MonitorIndex = 0
+    };
+    twoUpSettings.Normalize();
+    AssertEqual(
+        null,
+        CaptureLayoutValidator.Validate(twoUpSettings, displayInfo, new[] { 0, 1 }),
+        "ultrawide 2-up capture layout fits");
+
+    var gridSettings = new ControlPanelSettings
+    {
+        InstanceCount = 4,
+        CaptureWidth = 2560,
+        CaptureHeight = 1440,
+        MonitorIndex = 0
+    };
+    gridSettings.Normalize();
+    var gridIssue = CaptureLayoutValidator.Validate(gridSettings, displayInfo, new[] { 0, 1, 2, 3 });
+    AssertContains("does not fit", gridIssue, "ultrawide 2x2 capture layout blocked");
+    AssertContains("Instance 3", gridIssue, "ultrawide layout identifies overflowing instance");
+
+    var invalidMonitorSettings = new ControlPanelSettings
+    {
+        InstanceCount = 1,
+        CaptureWidth = 1920,
+        CaptureHeight = 1080,
+        MonitorIndex = 1
+    };
+    invalidMonitorSettings.Normalize();
+    AssertContains(
+        "Monitor 2 is selected",
+        CaptureLayoutValidator.Validate(invalidMonitorSettings, displayInfo, new[] { 0 }),
+        "invalid monitor index blocked");
+}
+
+static void RunCapturePreflightFailureClassificationCheck()
+{
+    AssertContains(
+        "NVIDIA driver is too old",
+        CapturePreflightRunner.ClassifyFfmpegFailure("Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0"),
+        "old nvenc driver classification");
+    AssertContains(
+        "NVENC is not available",
+        CapturePreflightRunner.ClassifyFfmpegFailure("No capable devices found"),
+        "missing nvenc classification");
+    AssertContains(
+        "selected monitor",
+        CapturePreflightRunner.ClassifyFfmpegFailure("Failed to duplicate output_idx 2"),
+        "monitor capture classification");
+}
+
+static void RunCapturePreflightStartRunGuardCheck(string workspace)
+{
+    var preflight = new FakeCapturePreflightRunner(new CapturePreflightReport
+    {
+        Status = "Failed",
+        Summary = "Capture preflight failed.",
+        Detail = "NVIDIA driver is too old for this FFmpeg NVENC build."
+    });
+    var store = CreateStore(
+        workspace,
+        instanceCount: 1,
+        displayInfoProvider: new FakeDisplayInfoProvider(CreateDisplayInfo(1920, 1080)),
+        capturePreflightRunner: preflight);
+    using var files = CreateReplayFiles(1);
+    store.ImportFiles(files.Collection);
+    store.RegisterWorker(new WorkerRegisterRequest
+    {
+        WorkerId = "worker-0",
+        WorkerName = "Worker 0",
+        PreferredInstanceIndex = 0,
+        ReplayProviderStatusReported = true,
+        BeatLeaderReady = true,
+        BeatLeaderStatus = "BeatLeader test ready",
+        ScoreSaberReady = true,
+        ScoreSaberStatus = "ScoreSaber test ready"
+    });
+
+    try
+    {
+        store.StartRun();
+    }
+    catch (InvalidOperationException ex)
+    {
+        AssertContains("Capture preflight failed", ex.Message, "capture preflight run guard message");
+        AssertEqual(1, preflight.CheckCount, "capture preflight run guard check count");
+        AssertEqual("Failed", store.Snapshot().CapturePreflight.Status, "capture preflight run guard stored report");
+        return;
+    }
+
+    throw new InvalidOperationException("capture preflight run guard failed. Expected InvalidOperationException.");
+}
+
+static void RunFfmpegSetupInstallCheck(string workspace)
+{
+    var setup = new FakeFfmpegSetupService(
+        new FfmpegSetupReport
+        {
+            Status = "Missing",
+            Summary = "FFmpeg is missing.",
+            CanInstall = true
+        },
+        new FfmpegSetupReport
+        {
+            Status = "Ready",
+            Summary = "FFmpeg was installed and is ready.",
+            Detail = "Capture verification will test NVENC.",
+            FfmpegPath = Path.Combine(workspace, "ffmpeg.exe"),
+            FfprobePath = Path.Combine(workspace, "ffprobe.exe"),
+            CanInstall = true
+        });
+    var store = CreateStore(workspace, ffmpegSetupService: setup);
+
+    var checkedReport = store.CheckFfmpegSetup();
+    AssertEqual("Missing", checkedReport.Status, "ffmpeg setup check status");
+    AssertEqual(1, setup.CheckCount, "ffmpeg setup check count");
+
+    var state = store.InstallFfmpeg();
+    AssertEqual("Ready", state.FfmpegSetup.Status, "ffmpeg setup install state");
+    AssertEqual(1, setup.InstallCount, "ffmpeg setup install count");
+    AssertEqual(setup.InstalledReport.FfmpegPath, state.Settings.FfmpegPath, "ffmpeg path saved after install");
+}
+
+static DisplayInfoSnapshot CreateDisplayInfo(int width, int height)
+{
+    return new DisplayInfoSnapshot
+    {
+        Status = "Ready",
+        Summary = "1 display detected.",
+        Displays = new List<DisplayInfoRecord>
+        {
+            new DisplayInfoRecord
+            {
+                Index = 0,
+                MonitorNumber = 1,
+                FriendlyName = "Test display",
+                Width = width,
+                Height = height,
+                IsPrimary = true
+            }
+        }
+    };
 }
 
 static void RunAudioLevelNormalizationCheck()
@@ -1606,6 +1826,7 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     AssertEqual(1, initial.Settings.GamePresentationSettingsVersion, "default game presentation version");
     AssertEqual(true, initial.Settings.GamePresentation.NoHud, "default no HUD setting");
     AssertEqual(false, initial.Settings.GamePresentation.OverrideReplayPlayerSettings, "default replay player settings override");
+    AssertEqual(false, initial.Settings.GamePresentation.RestorePlayerSettingsOnExit, "default restore player settings on exit");
     AssertEqual(false, initial.Settings.GamePresentation.ApplyJdFixerSettings, "default JDFixer apply setting");
     AssertEqual(0.3f, initial.Settings.GamePresentation.SfxVolume, "default SFX volume setting");
 
@@ -1622,6 +1843,7 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
         "registration game presentation version");
     AssertEqual(true, worker.Settings.GamePresentation.NoHud, "registration no HUD setting");
     AssertEqual(false, worker.Settings.GamePresentation.OverrideReplayPlayerSettings, "registration replay player settings override");
+    AssertEqual(false, worker.Settings.GamePresentation.RestorePlayerSettingsOnExit, "registration restore player settings on exit");
     AssertEqual(false, worker.Settings.GamePresentation.ApplyJdFixerSettings, "registration JDFixer apply setting");
     AssertEqual(0.3f, worker.Settings.GamePresentation.SfxVolume, "registration SFX volume setting");
 
@@ -1630,6 +1852,7 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     {
         NoHud = false,
         OverrideReplayPlayerSettings = true,
+        RestorePlayerSettingsOnExit = true,
         ShowWatermark = false,
         ShowLeftSaber = true,
         ShowRightSaber = true,
@@ -1655,6 +1878,7 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     var updated = store.UpdateSettings(request);
     AssertEqual(false, updated.Settings.GamePresentation.NoHud, "updated no HUD setting");
     AssertEqual(true, updated.Settings.GamePresentation.OverrideReplayPlayerSettings, "updated replay player settings override");
+    AssertEqual(true, updated.Settings.GamePresentation.RestorePlayerSettingsOnExit, "updated restore player settings on exit");
     AssertEqual(false, updated.Settings.GamePresentation.ShowWatermark, "updated watermark setting");
     AssertEqual(0.45f, updated.Settings.GamePresentation.SfxVolume, "updated SFX volume setting");
     AssertEqual(false, updated.Settings.GamePresentation.NoTextsAndHuds, "updated no texts and HUDs setting");
@@ -1675,6 +1899,7 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     AssertEqual(2, heartbeat.GamePresentationSettingsVersion, "heartbeat game presentation version");
     AssertEqual(false, heartbeat.GamePresentation.NoHud, "heartbeat no HUD setting");
     AssertEqual(true, heartbeat.GamePresentation.OverrideReplayPlayerSettings, "heartbeat replay player settings override");
+    AssertEqual(true, heartbeat.GamePresentation.RestorePlayerSettingsOnExit, "heartbeat restore player settings on exit");
     AssertEqual(false, heartbeat.GamePresentation.ShowWatermark, "heartbeat watermark setting");
     AssertEqual(0.45f, heartbeat.GamePresentation.SfxVolume, "heartbeat SFX volume setting");
     AssertEqual(false, heartbeat.GamePresentation.NoTextsAndHuds, "heartbeat no texts and HUDs setting");
@@ -1689,6 +1914,7 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     AssertEqual(2, assignment.GamePresentationSettingsVersion, "assignment game presentation version");
     AssertEqual(false, assignment.GamePresentation.NoHud, "assignment no HUD setting");
     AssertEqual(true, assignment.GamePresentation.OverrideReplayPlayerSettings, "assignment replay player settings override");
+    AssertEqual(true, assignment.GamePresentation.RestorePlayerSettingsOnExit, "assignment restore player settings on exit");
     AssertEqual(false, assignment.GamePresentation.ShowWatermark, "assignment watermark setting");
     AssertEqual(0.45f, assignment.GamePresentation.SfxVolume, "assignment SFX volume setting");
     AssertEqual(true, assignment.GamePresentation.ApplyJdFixerSettings, "assignment JDFixer apply setting");
@@ -1701,6 +1927,7 @@ static void RunGamePresentationSettingsSyncCheck(string workspace)
     var preserved = store.UpdateSettings(preserveRequest);
     AssertEqual(false, preserved.Settings.GamePresentation.NoHud, "omitted game presentation keeps no HUD setting");
     AssertEqual(true, preserved.Settings.GamePresentation.OverrideReplayPlayerSettings, "omitted game presentation keeps replay player settings override");
+    AssertEqual(true, preserved.Settings.GamePresentation.RestorePlayerSettingsOnExit, "omitted game presentation keeps restore player settings on exit");
     AssertEqual(true, preserved.Settings.GamePresentation.ApplyJdFixerSettings, "omitted game presentation keeps JDFixer apply setting");
     AssertEqual(0.45f, preserved.Settings.GamePresentation.SfxVolume, "omitted game presentation keeps SFX volume");
     AssertEqual(2, preserved.Settings.GamePresentationSettingsVersion, "omitted game presentation keeps version");
@@ -3330,6 +3557,20 @@ static void RunMapCollectionSaveLoadCheck(string workspace)
     AssertEqual("Warmups", collection.Name, "saved collection name");
     AssertEqual(2, collection.Items.Count, "saved collection item count");
     AssertEqual(true, collection.Items.All(item => File.Exists(item.Path)), "saved collection copies replay files");
+    var removedCollectionItem = collection.Items[0];
+    var removedCollectionItemPath = removedCollectionItem.Path;
+    var removedCollectionSidecarPath = removedCollectionItemPath + ".metadata.json";
+    AssertEqual(true, File.Exists(removedCollectionSidecarPath), "saved collection writes replay sidecar");
+    var afterItemRemove = store.RemoveMapCollectionItem(collection.Id, removedCollectionItem.Id);
+    AssertEqual(1, afterItemRemove.Items.Count, "collection item remove count");
+    AssertEqual("Song 1", afterItemRemove.Items[0].SongName, "collection item remove keeps remaining replay");
+    AssertEqual(1, afterItemRemove.Items[0].SequenceNumber, "collection item remove resequences remaining replay");
+    AssertEqual(false, File.Exists(removedCollectionItemPath), "collection item remove deletes replay copy");
+    AssertEqual(false, File.Exists(removedCollectionSidecarPath), "collection item remove deletes sidecar");
+    AssertThrows<InvalidOperationException>(
+        () => store.RemoveMapCollectionItem(collection.Id, removedCollectionItem.Id),
+        "missing collection item remove");
+    collection = afterItemRemove;
 
     AssertThrows<InvalidOperationException>(
         () => store.RenameMapCollection(collection.Id, new RenameMapCollectionRequest { Name = " " }),
@@ -3340,7 +3581,7 @@ static void RunMapCollectionSaveLoadCheck(string workspace)
     });
     AssertEqual("Warmups Renamed", renamed.Name, "renamed collection name");
     AssertEqual(collection.Id, renamed.Id, "renamed collection id");
-    AssertEqual(2, renamed.Items.Count, "renamed collection item count");
+    AssertEqual(1, renamed.Items.Count, "renamed collection item count");
     AssertEqual(true, renamed.Items.All(item => File.Exists(item.Path)), "renamed collection keeps replay files");
     collection = renamed;
 
@@ -3351,12 +3592,11 @@ static void RunMapCollectionSaveLoadCheck(string workspace)
     AssertEqual(true, collection.Items.All(item => File.Exists(item.Path)), "collection files survive queue clear");
 
     var loaded = store.LoadMapCollection(collection.Id, new LoadMapCollectionRequest());
-    AssertEqual(2, loaded.LoadedCount, "collection load count");
+    AssertEqual(1, loaded.LoadedCount, "collection load count");
     AssertEqual("Warmups Renamed", loaded.CollectionName, "loaded renamed collection name");
     AssertEqual(0, loaded.SkippedRecordedCount, "collection initial skipped count");
-    AssertEqual(2, loaded.State.Queue.Count, "collection loaded queue count");
-    AssertEqual("Song 0", loaded.State.Queue[0].SongName, "collection preserves first order");
-    AssertEqual("Song 1", loaded.State.Queue[1].SongName, "collection preserves second order");
+    AssertEqual(1, loaded.State.Queue.Count, "collection loaded queue count");
+    AssertEqual("Song 1", loaded.State.Queue[0].SongName, "collection preserves remaining order");
 
     var worker = store.RegisterWorker(new WorkerRegisterRequest
     {
@@ -3388,7 +3628,7 @@ static void RunMapCollectionSaveLoadCheck(string workspace)
 
     var skipped = store.LoadMapCollection(collection.Id, new LoadMapCollectionRequest());
     AssertEqual(1, skipped.SkippedRecordedCount, "collection skips recorded map");
-    AssertEqual(1, skipped.LoadedCount, "collection keeps unrecorded map queued");
+    AssertEqual(0, skipped.LoadedCount, "collection keeps no unrecorded maps queued");
     var completedReplay = skipped.State.Queue.Single(item => item.Id == assignment.ReplayId);
     AssertEqual("Completed", completedReplay.Status, "collection skipped replay remains completed");
     AssertEqual(Path.GetFullPath(outputPath), Path.GetFullPath(completedReplay.OutputPath!), "collection skipped replay keeps output path");
@@ -3645,6 +3885,9 @@ static ControlPanelStore CreateStore(
     IBeatLeaderReplayDownloader? beatLeaderReplayDownloader = null,
     IScoreSaberReplayDownloader? scoreSaberReplayDownloader = null,
     IRecordingChapterEmbedder? recordingChapterEmbedder = null,
+    IDisplayInfoProvider? displayInfoProvider = null,
+    ICapturePreflightRunner? capturePreflightRunner = null,
+    IFfmpegSetupService? ffmpegSetupService = null,
     bool manageDisplayScale = false)
 {
     return new ControlPanelStore(new ControlPanelSettings
@@ -3680,7 +3923,10 @@ static ControlPanelStore CreateStore(
         workerPluginInstaller,
         beatLeaderReplayDownloader,
         scoreSaberReplayDownloader,
-        recordingChapterEmbedder);
+        recordingChapterEmbedder,
+        displayInfoProvider,
+        capturePreflightRunner,
+        ffmpegSetupService);
 }
 
 static void RegisterWorkers(ControlPanelStore store, string workerPrefix, int count = 3)
@@ -3813,6 +4059,7 @@ static SettingsUpdateRequest CreateSettingsUpdateRequest(ControlPanelSettings se
     return new SettingsUpdateRequest
     {
         RecordingOutputDirectory = settings.RecordingOutputDirectory,
+        FfmpegPath = settings.FfmpegPath,
         InstanceCount = settings.InstanceCount,
         MaxConcurrentRecordings = settings.MaxConcurrentRecordings,
         RequireAllWorkersReady = settings.RequireAllWorkersReady,
@@ -3825,6 +4072,7 @@ static SettingsUpdateRequest CreateSettingsUpdateRequest(ControlPanelSettings se
         OutputFormat = settings.OutputFormat,
         MonitorIndex = settings.MonitorIndex,
         QualityMode = settings.QualityMode,
+        CaptureEngine = settings.CaptureEngine,
         AudioMode = settings.AudioMode,
         RequireAudioForRun = settings.RequireAudioForRun,
         AudioBitrateKbps = settings.AudioBitrateKbps,
@@ -3864,6 +4112,7 @@ static SettingsUpdateRequest CreateSettingsUpdateRequest(ControlPanelSettings se
             LoadPlayerEnvironment = settings.GamePresentation?.LoadPlayerEnvironment ?? false,
             LoadPlayerJumpDistance = settings.GamePresentation?.LoadPlayerJumpDistance ?? false,
             OverrideReplayPlayerSettings = settings.GamePresentation?.OverrideReplayPlayerSettings ?? false,
+            RestorePlayerSettingsOnExit = settings.GamePresentation?.RestorePlayerSettingsOnExit ?? false,
             IgnoreModifiers = settings.GamePresentation?.IgnoreModifiers ?? false,
             ShowHead = settings.GamePresentation?.ShowHead ?? false,
             ShowLeftSaber = settings.GamePresentation?.ShowLeftSaber ?? true,
@@ -4354,6 +4603,74 @@ internal sealed class FakeRecorderHostHealthChecker : IRecorderHostHealthChecker
             Status = _processLoopbackSupported ? "ProcessLoopback fake ready" : "ProcessLoopback fake unavailable"
         };
         return capabilities;
+    }
+}
+
+internal sealed class FakeDisplayInfoProvider : IDisplayInfoProvider
+{
+    private readonly DisplayInfoSnapshot _snapshot;
+
+    public FakeDisplayInfoProvider(DisplayInfoSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+    }
+
+    public DisplayInfoSnapshot GetDisplays()
+    {
+        return _snapshot;
+    }
+}
+
+internal sealed class FakeCapturePreflightRunner : ICapturePreflightRunner
+{
+    private readonly CapturePreflightReport _report;
+
+    public FakeCapturePreflightRunner(CapturePreflightReport report)
+    {
+        _report = report;
+    }
+
+    public int CheckCount { get; private set; }
+
+    public IReadOnlyList<int> LastInstanceIndexes { get; private set; } = Array.Empty<int>();
+
+    public CapturePreflightReport Check(
+        ControlPanelSettings settings,
+        DisplayInfoSnapshot displayInfo,
+        IReadOnlyList<int> instanceIndexes)
+    {
+        CheckCount++;
+        LastInstanceIndexes = instanceIndexes.ToArray();
+        return _report;
+    }
+}
+
+internal sealed class FakeFfmpegSetupService : IFfmpegSetupService
+{
+    private readonly FfmpegSetupReport _checkReport;
+
+    public FakeFfmpegSetupService(FfmpegSetupReport checkReport, FfmpegSetupReport installedReport)
+    {
+        _checkReport = checkReport;
+        InstalledReport = installedReport;
+    }
+
+    public FfmpegSetupReport InstalledReport { get; }
+
+    public int CheckCount { get; private set; }
+
+    public int InstallCount { get; private set; }
+
+    public FfmpegSetupReport Check(string configuredPath)
+    {
+        CheckCount++;
+        return _checkReport;
+    }
+
+    public FfmpegSetupReport Install(string configuredPath)
+    {
+        InstallCount++;
+        return InstalledReport;
     }
 }
 

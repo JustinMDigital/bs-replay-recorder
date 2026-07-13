@@ -47,6 +47,7 @@ public sealed class Plugin
     [OnExit]
     public void OnExit()
     {
+        _controlPanelWorker?.RestorePlayerSettingsIfPending();
         _shutdownCancellation?.Cancel();
         _controlPanelWorker?.Dispose();
         InstanceWindowPlacementController.DestroyInstance();
