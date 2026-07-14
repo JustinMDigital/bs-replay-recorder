@@ -174,14 +174,21 @@ public sealed class ControlPanelStore
         }
     }
 
-    public SetupSourcePathReport GetSetupSourcePath()
+    public SetupSourcePathReport GetSetupSourcePath(string? bsManagerRoot = null)
     {
         lock (_sync)
         {
             _state.Settings.Normalize();
-            return SetupSourcePathDetector.Detect(
-                _state.Settings.SourceBeatSaberPath,
-                _state.Settings.SourceBeatSaberStore);
+            return string.IsNullOrWhiteSpace(bsManagerRoot)
+                ? SetupSourcePathDetector.Detect(
+                    _state.Settings.SourceBeatSaberPath,
+                    _state.Settings.SourceBeatSaberStore)
+                : SetupSourcePathDetector.DetectWithBsManagerRoots(
+                    _state.Settings.SourceBeatSaberPath,
+                    steamLibraryCandidates: null,
+                    metaLibraryCandidates: null,
+                    bsManagerRootCandidates: new[] { bsManagerRoot },
+                    configuredStore: _state.Settings.SourceBeatSaberStore);
         }
     }
 
@@ -4116,15 +4123,59 @@ public sealed class ControlPanelStore
                                 (!copyExistingSongs && IsPreviousSongLibraryRelativePath(relativePath)) ||
                                 (skipManagedSharedFolders && IsManagedSharedFolderRelativePath(relativePath, managedSharedFolderPaths)));
         }
-        catch
+        catch (Exception ex)
         {
+            var cleanupNote = "";
             if (cleanupPartialOnFailure && Directory.Exists(targetDirectory))
             {
-                DeleteDirectoryWithoutFollowingReparsePoints(targetDirectory);
+                try
+                {
+                    DeleteDirectoryWithoutFollowingReparsePoints(targetDirectory);
+                }
+                catch (Exception cleanupException)
+                {
+                    cleanupNote = " Setup could not remove the incomplete folder. Delete only '" + targetDirectory +
+                                  "' before retrying. Cleanup details: " + cleanupException.Message;
+                }
             }
 
-            throw;
+            throw new InvalidOperationException(
+                CreateManagedInstanceCopyFailureMessage(sourceDirectory, targetDirectory, ex) + cleanupNote,
+                ex);
         }
+    }
+
+    private static string CreateManagedInstanceCopyFailureMessage(
+        string sourceDirectory,
+        string targetDirectory,
+        Exception exception)
+    {
+        var detail = exception.Message;
+        if (exception is UnauthorizedAccessException ||
+            detail.Contains("access", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("used by another process", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("sharing violation", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Could not copy Beat Saber from '" + sourceDirectory + "' to '" + targetDirectory +
+                   "'. Close Beat Saber, BSManager, and File Explorer windows open in either folder, then retry setup. Details: " + detail;
+        }
+
+        if (detail.Contains("not enough space", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("disk full", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Could not copy Beat Saber because the destination drive is out of space. Free space on the drive containing '" +
+                   targetDirectory + "', then retry setup. Details: " + detail;
+        }
+
+        if (exception is PathTooLongException ||
+            detail.Contains("path too long", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("path length", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Could not copy Beat Saber because a path is too long. Move the extracted Replay Recorder folder closer to the drive root, such as C:\\Replay Recorder, then retry setup. Details: " + detail;
+        }
+
+        return "Could not copy Beat Saber from '" + sourceDirectory + "' to '" + targetDirectory +
+               "'. Retry once, then send this message if it happens again. Details: " + detail;
     }
 
     private static bool IsManagedSharedFolderRelativePath(string relativePath, IReadOnlyList<string> managedSharedFolderPaths)

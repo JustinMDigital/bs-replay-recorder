@@ -145,15 +145,17 @@ function Resolve-PluginBeatSaberDirectory {
 }
 
 function Publish-WorkerPlugin {
-    $prebuiltVersions = @("bs-1.40.6", "bs-1.44.1")
     $pluginOutput = Join-Path $runtimeFullPath "worker-plugin\Release\netstandard2.1"
 
     if ([string]::IsNullOrWhiteSpace($PluginBeatSaberDir)) {
         $copiedVersions = @()
-        foreach ($version in $prebuiltVersions) {
-            $prebuiltRoot = Join-Path $repoRoot ("artifacts\worker-plugin\" + $version)
-            $prebuiltPlugin = Join-Path $prebuiltRoot "BSAutoReplayRecorder.Plugin.dll"
-            $prebuiltCore = Join-Path $prebuiltRoot "BSAutoReplayRecorder.Core.dll"
+        $prebuiltRoots = Get-ChildItem -LiteralPath (Join-Path $repoRoot "artifacts\worker-plugin") -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "bs-*" } |
+            Sort-Object Name
+        foreach ($prebuiltRoot in $prebuiltRoots) {
+            $version = $prebuiltRoot.Name
+            $prebuiltPlugin = Join-Path $prebuiltRoot.FullName "BSAutoReplayRecorder.Plugin.dll"
+            $prebuiltCore = Join-Path $prebuiltRoot.FullName "BSAutoReplayRecorder.Core.dll"
             if (-not (Test-Path -LiteralPath $prebuiltPlugin -PathType Leaf) -or -not (Test-Path -LiteralPath $prebuiltCore -PathType Leaf)) { continue }
             $versionOutput = Join-Path $runtimeFullPath ("worker-plugin\" + $version + "\Release\netstandard2.1")
             New-Item -ItemType Directory -Path $versionOutput -Force | Out-Null

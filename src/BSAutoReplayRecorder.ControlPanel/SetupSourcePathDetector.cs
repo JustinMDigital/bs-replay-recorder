@@ -10,22 +10,45 @@ public static class SetupSourcePathDetector
 {
     private const string BeatSaberExecutableName = "Beat Saber.exe";
     private const string MetaCanonicalName = "hyperbolic-magnetism-beat-saber";
+    private static readonly string[] SupportedWorkerPluginVersions =
+    {
+        "1.39.1",
+        "1.40.6",
+        "1.40.8",
+        "1.44.1"
+    };
 
     public static SetupSourcePathReport Detect(string? configuredSourceBeatSaberPath, string? configuredStore = null)
-        => Detect(configuredSourceBeatSaberPath, steamLibraryCandidates: null, metaLibraryCandidates: null, configuredStore);
+        => DetectCore(configuredSourceBeatSaberPath, steamLibraryCandidates: null, metaLibraryCandidates: null, bsManagerRootCandidates: null, configuredStore);
 
     // Retained for the existing deterministic Steam detector tests.
     public static SetupSourcePathReport Detect(string? configuredSourceBeatSaberPath, IEnumerable<string>? steamLibraryCandidates)
-        => Detect(configuredSourceBeatSaberPath, steamLibraryCandidates, metaLibraryCandidates: Array.Empty<string>());
+        => DetectCore(configuredSourceBeatSaberPath, steamLibraryCandidates, metaLibraryCandidates: Array.Empty<string>(), bsManagerRootCandidates: Array.Empty<string>());
 
     public static SetupSourcePathReport Detect(
         string? configuredSourceBeatSaberPath,
         IEnumerable<string>? steamLibraryCandidates,
         IEnumerable<string>? metaLibraryCandidates,
         string? configuredStore = null)
+        => DetectCore(configuredSourceBeatSaberPath, steamLibraryCandidates, metaLibraryCandidates, Array.Empty<string>(), configuredStore);
+
+    public static SetupSourcePathReport DetectWithBsManagerRoots(
+        string? configuredSourceBeatSaberPath,
+        IEnumerable<string>? steamLibraryCandidates,
+        IEnumerable<string>? metaLibraryCandidates,
+        IEnumerable<string>? bsManagerRootCandidates,
+        string? configuredStore = null)
+        => DetectCore(configuredSourceBeatSaberPath, steamLibraryCandidates, metaLibraryCandidates, bsManagerRootCandidates, configuredStore);
+
+    private static SetupSourcePathReport DetectCore(
+        string? configuredSourceBeatSaberPath,
+        IEnumerable<string>? steamLibraryCandidates,
+        IEnumerable<string>? metaLibraryCandidates,
+        IEnumerable<string>? bsManagerRootCandidates,
+        string? configuredStore = null)
     {
         var configured = NormalizePath(configuredSourceBeatSaberPath);
-        var candidates = FindCandidates(steamLibraryCandidates, metaLibraryCandidates);
+        var candidates = FindCandidates(steamLibraryCandidates, metaLibraryCandidates, bsManagerRootCandidates);
         var configuredReady = IsBeatSaberDirectory(configured);
         var detectedConfiguredCandidate = candidates.FirstOrDefault(candidate => PathsEqual(candidate.Path, configured));
         var configuredStoreKind = detectedConfiguredCandidate?.Store ??
@@ -92,11 +115,9 @@ public static class SetupSourcePathDetector
     {
         var normalized = NormalizePath(directory);
         if (string.IsNullOrWhiteSpace(normalized)) return BeatSaberStore.Normalize(requestedStore);
-        var requested = BeatSaberStore.Normalize(requestedStore);
-        if (requested != BeatSaberStore.Unknown) return requested;
         if (File.Exists(Path.Combine(normalized, "Beat Saber_Data", "Plugins", "x86_64", "steam_api64.dll"))) return BeatSaberStore.Steam;
         if (normalized.Contains(MetaCanonicalName, StringComparison.OrdinalIgnoreCase)) return BeatSaberStore.MetaPc;
-        return BeatSaberStore.Unknown;
+        return BeatSaberStore.Normalize(requestedStore);
     }
 
     public static string ResolveWorkerPluginBuild(string? directory, string? requestedStore = null)
@@ -104,8 +125,13 @@ public static class SetupSourcePathDetector
         var path = NormalizePath(directory);
         var store = InferStoreFromDirectory(path, requestedStore);
         var version = ReadSourceVersion(path, store);
-        if (version.StartsWith("1.44.1", StringComparison.OrdinalIgnoreCase) ||
-            ReadUnityPlayerVersion(path).StartsWith("6000.0.40", StringComparison.Ordinal))
+        var supportedVersion = ResolveSupportedWorkerPluginVersion(version);
+        if (!string.IsNullOrWhiteSpace(supportedVersion))
+        {
+            return "bs-" + supportedVersion;
+        }
+
+        if (ReadUnityPlayerVersion(path).StartsWith("6000.0.40", StringComparison.Ordinal))
         {
             return "bs-1.44.1";
         }
@@ -115,7 +141,8 @@ public static class SetupSourcePathDetector
 
     private static List<SetupSourceCandidate> FindCandidates(
         IEnumerable<string>? steamLibraryCandidates,
-        IEnumerable<string>? metaLibraryCandidates)
+        IEnumerable<string>? metaLibraryCandidates,
+        IEnumerable<string>? bsManagerRootCandidates)
     {
         var candidates = new List<SetupSourceCandidate>();
         foreach (var library in steamLibraryCandidates ?? (OperatingSystem.IsWindows() ? GetSteamLibraryCandidates() : Array.Empty<string>()))
@@ -128,21 +155,43 @@ public static class SetupSourcePathDetector
             AddCandidate(candidates, BeatSaberStore.MetaPc, Path.Combine(NormalizePath(library), "Software", MetaCanonicalName));
         }
 
+        foreach (var root in bsManagerRootCandidates ?? (OperatingSystem.IsWindows() ? GetBsManagerRootCandidates() : Array.Empty<string>()))
+        {
+            AddBsManagerCandidates(candidates, root);
+        }
+
         return candidates;
     }
 
-    private static void AddCandidate(List<SetupSourceCandidate> candidates, string store, string? path)
+    private static void AddCandidate(
+        List<SetupSourceCandidate> candidates,
+        string store,
+        string? path,
+        string? displayName = null,
+        string sourceType = "Store",
+        string? versionOverride = null)
     {
         var normalized = NormalizePath(path);
         if (!IsBeatSaberDirectory(normalized) || candidates.Any(candidate => PathsEqual(candidate.Path, normalized))) return;
-        candidates.Add(CreateCandidate(store, normalized));
+        candidates.Add(CreateCandidate(store, normalized, displayName, sourceType, versionOverride));
     }
 
-    private static SetupSourceCandidate CreateCandidate(string store, string path)
+    private static SetupSourceCandidate CreateCandidate(
+        string store,
+        string path,
+        string? displayName = null,
+        string sourceType = "Store",
+        string? versionOverride = null)
     {
         var missing = GetMissingPrerequisites(path);
-        var version = ReadSourceVersion(path, store);
+        var version = string.IsNullOrWhiteSpace(versionOverride) ? ReadSourceVersion(path, store) : versionOverride;
         var compatibility = CheckVersionCompatibility(path, store, version);
+        if (sourceType == "BSManager" && string.IsNullOrWhiteSpace(ResolveSupportedWorkerPluginVersion(version)))
+        {
+            compatibility = (false, "Supported Beat Saber versions are " +
+                                     FormatSupportedWorkerPluginVersions() + " (found BSManager " +
+                                     (string.IsNullOrWhiteSpace(version) ? "version" : version) + ")");
+        }
         if (store == BeatSaberStore.MetaPc && !MetaSideloadedApps.IsEnabled())
         {
             missing.Add("Meta sideloaded apps");
@@ -154,8 +203,9 @@ public static class SetupSourcePathDetector
 
         return new SetupSourceCandidate
         {
+            SourceType = sourceType,
             Store = store,
-            DisplayName = BeatSaberStore.DisplayName(store),
+            DisplayName = displayName ?? BeatSaberStore.DisplayName(store),
             Path = path,
             Version = version,
             Ready = true,
@@ -164,6 +214,39 @@ public static class SetupSourcePathDetector
             VersionCompatibilityDetail = compatibility.Detail,
             MissingPrerequisites = missing
         };
+    }
+
+    private static void AddBsManagerCandidates(List<SetupSourceCandidate> candidates, string? root)
+    {
+        var normalizedRoot = NormalizePath(root);
+        if (string.IsNullOrWhiteSpace(normalizedRoot)) return;
+
+        if (IsBeatSaberDirectory(normalizedRoot))
+        {
+            AddBsManagerCandidate(candidates, normalizedRoot);
+            return;
+        }
+
+        var instancesRoot = string.Equals(Path.GetFileName(normalizedRoot), "BSInstances", StringComparison.OrdinalIgnoreCase)
+            ? normalizedRoot
+            : Path.Combine(normalizedRoot, "BSInstances");
+        if (!Directory.Exists(instancesRoot)) return;
+
+        try
+        {
+            foreach (var directory in Directory.EnumerateDirectories(instancesRoot))
+            {
+                AddBsManagerCandidate(candidates, directory);
+            }
+        }
+        catch { }
+    }
+
+    private static void AddBsManagerCandidate(List<SetupSourceCandidate> candidates, string path)
+    {
+        var version = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var store = InferStoreFromDirectory(path);
+        AddCandidate(candidates, store, path, "BSManager", "BSManager", version);
     }
 
     private static List<string> GetMissingPrerequisites(string path)
@@ -193,8 +276,26 @@ public static class SetupSourcePathDetector
 
     private static string ReadSourceVersion(string path, string store)
     {
-        return ReadMetaVersion(path, store);
+        var metaVersion = ReadMetaVersion(path, store);
+        if (!string.IsNullOrWhiteSpace(metaVersion)) return metaVersion;
+
+        var parent = Directory.GetParent(path);
+        if (string.Equals(parent?.Name, "BSInstances", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        }
+
+        return "";
     }
+
+    private static string ResolveSupportedWorkerPluginVersion(string? version)
+        => SupportedWorkerPluginVersions.FirstOrDefault(supported =>
+               !string.IsNullOrWhiteSpace(version) &&
+               version.StartsWith(supported, StringComparison.OrdinalIgnoreCase)) ?? "";
+
+    private static string FormatSupportedWorkerPluginVersions()
+        => string.Join(", ", SupportedWorkerPluginVersions.Take(SupportedWorkerPluginVersions.Length - 1)) +
+           ", or " + SupportedWorkerPluginVersions[^1];
 
     private static (bool Supported, string Detail) CheckVersionCompatibility(string path, string store, string version)
     {
@@ -239,6 +340,15 @@ public static class SetupSourcePathDetector
             }
         }
         return paths;
+    }
+
+    private static IEnumerable<string> GetBsManagerRootCandidates()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(userProfile))
+        {
+            yield return Path.Combine(userProfile, "BSManager");
+        }
     }
 
     [SupportedOSPlatform("windows")]

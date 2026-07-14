@@ -54,7 +54,8 @@ Console.CancelKeyPress += (_, _) => SafeRestoreTaskbar();
 app.MapGet("/api/state", (ControlPanelStore store) => Results.Ok(store.Snapshot()));
 app.MapGet("/api/displays", (IDisplayInfoProvider displays) => Results.Ok(displays.GetDisplays()));
 app.MapGet("/api/game-color-presets", (ControlPanelStore store) => Results.Ok(store.GetGameColorPresets()));
-app.MapGet("/api/setup/source", (ControlPanelStore store) => Results.Ok(store.GetSetupSourcePath()));
+app.MapGet("/api/setup/source", (string? bsManagerRoot, ControlPanelStore store) =>
+    Results.Ok(store.GetSetupSourcePath(bsManagerRoot)));
 app.MapGet("/api/setup/ffmpeg", (ControlPanelStore store) => Results.Ok(store.CheckFfmpegSetup()));
 app.MapPost("/api/setup/ffmpeg/install", (ControlPanelStore store) =>
     ExecuteApi(store.InstallFfmpeg));

@@ -715,6 +715,30 @@ ipcMain.handle('replay-recorder:minimize-window', (_event, recordingDisplayTarge
   return { minimized: true, reason: 'same-display' };
 });
 
+ipcMain.handle('replay-recorder:choose-directory', async (_event, requestValue) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, path: '' };
+  }
+
+  const request = typeof requestValue === 'string'
+    ? { defaultPath: requestValue }
+    : (requestValue || {});
+  const options = {
+    title: typeof request.title === 'string' ? request.title : 'Choose the Beat Saber folder',
+    buttonLabel: typeof request.buttonLabel === 'string' ? request.buttonLabel : 'Select folder',
+    properties: ['openDirectory']
+  };
+  if (typeof request.defaultPath === 'string' && path.isAbsolute(request.defaultPath)) {
+    options.defaultPath = request.defaultPath;
+  }
+
+  const result = await dialog.showOpenDialog(mainWindow, options);
+  return {
+    canceled: result.canceled,
+    path: result.canceled ? '' : (result.filePaths[0] || '')
+  };
+});
+
 app.whenReady().then(createWindow);
 
 app.on('before-quit', event => {

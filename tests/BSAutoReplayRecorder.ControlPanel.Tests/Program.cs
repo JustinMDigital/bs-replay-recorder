@@ -508,6 +508,47 @@ static void RunSetupSourcePathDetectorCheck(string workspace)
     AssertEqual("Ready", configured.Status, "setup source configured ready status");
     AssertEqual(true, configured.ConfiguredSourceRecorderReady, "setup source configured recorder readiness");
 
+    Directory.CreateDirectory(Path.Combine(configuredSource, "Beat Saber_Data", "Plugins", "x86_64"));
+    File.WriteAllText(Path.Combine(configuredSource, "Beat Saber_Data", "Plugins", "x86_64", "steam_api64.dll"), "");
+    AssertEqual(
+        BeatSaberStore.Steam,
+        SetupSourcePathDetector.InferStoreFromDirectory(configuredSource, BeatSaberStore.MetaPc),
+        "setup source file evidence overrides stale configured store");
+
+    var bsManagerRoot = Path.Combine(workspace, "BSManager");
+    foreach (var version in new[] { "1.39.1", "1.40.6", "1.40.8" })
+    {
+        var source = Path.Combine(bsManagerRoot, "BSInstances", version);
+        Directory.CreateDirectory(Path.Combine(source, "Plugins"));
+        Directory.CreateDirectory(Path.Combine(source, "Beat Saber_Data", "Plugins", "x86_64"));
+        File.WriteAllText(Path.Combine(source, "Beat Saber.exe"), "");
+        File.WriteAllText(Path.Combine(source, "IPA.exe"), "");
+        File.WriteAllText(Path.Combine(source, "winhttp.dll"), "");
+        File.WriteAllText(Path.Combine(source, "Plugins", "BeatLeader.dll"), "");
+        File.WriteAllText(Path.Combine(source, "Beat Saber_Data", "Plugins", "x86_64", "steam_api64.dll"), "");
+    }
+    var bsManagerDetected = SetupSourcePathDetector.DetectWithBsManagerRoots(
+        "",
+        Array.Empty<string>(),
+        Array.Empty<string>(),
+        new[] { bsManagerRoot });
+    AssertEqual(3, bsManagerDetected.DetectedSources.Count, "supported BSManager source count");
+    var bsManagerCandidate = bsManagerDetected.DetectedSources.Single(candidate => candidate.Version == "1.40.6");
+    AssertEqual("BSManager", bsManagerCandidate.SourceType, "BSManager source type");
+    AssertEqual("BSManager", bsManagerCandidate.DisplayName, "BSManager source display name");
+    AssertEqual("1.40.6", bsManagerCandidate.Version, "BSManager version from instance folder");
+    AssertEqual(BeatSaberStore.Steam, bsManagerCandidate.Store, "BSManager source store inference");
+    AssertEqual(true, bsManagerCandidate.RecorderReady, "BSManager recorder-ready source");
+    AssertEqual(true, bsManagerDetected.DetectedSources.All(candidate => candidate.RecorderReady), "all bundled BSManager versions ready");
+    AssertEqual(
+        "bs-1.39.1",
+        SetupSourcePathDetector.ResolveWorkerPluginBuild(Path.Combine(bsManagerRoot, "BSInstances", "1.39.1")),
+        "BSManager 1.39.1 plugin build");
+    AssertEqual(
+        "bs-1.40.8",
+        SetupSourcePathDetector.ResolveWorkerPluginBuild(Path.Combine(bsManagerRoot, "BSInstances", "1.40.8")),
+        "BSManager 1.40.8 plugin build");
+
     var metaLibrary = Path.Combine(workspace, "MetaLibrary");
     var metaSource = Path.Combine(metaLibrary, "Software", "hyperbolic-magnetism-beat-saber");
     Directory.CreateDirectory(Path.Combine(metaSource, "Plugins"));

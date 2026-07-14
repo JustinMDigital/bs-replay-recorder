@@ -5451,8 +5451,14 @@ function getDetectedSourceForPath(path) {
 }
 
 function getSetupSourceStore(settings = {}) {
-  const selected = getDetectedSourceForPath(getSetupSourcePathValue(settings));
-  return selected?.store || settings.sourceBeatSaberStore || 'Unknown';
+  const sourcePath = getSetupSourcePathValue(settings);
+  const selected = getDetectedSourceForPath(sourcePath);
+  if (selected?.store) return selected.store;
+
+  const persistedSourcePath = String(settings.sourceBeatSaberPath || '').trim();
+  return sameClientPath(sourcePath, persistedSourcePath)
+    ? (settings.sourceBeatSaberStore || 'Unknown')
+    : 'Unknown';
 }
 
 function sameClientPath(left, right) {
@@ -5834,11 +5840,15 @@ function renderFirstRunSourceStep(readiness) {
   const status = document.getElementById('firstRunSourceStatus');
   const continueButton = document.getElementById('firstRunSourceContinue');
   const enableMetaSideloadingButton = document.getElementById('firstRunEnableMetaSideloading');
+  const bsManagerActions = document.getElementById('firstRunBsManagerActions');
   if (!choices || !input || !status || !continueButton) return;
 
   const settings = buildCurrentSettingsPreview();
   const persistedSourcePath = getSetupSourcePathValue(settings);
   const candidates = setupSourcePathInfo?.detectedSources || [];
+  if (bsManagerActions) {
+    bsManagerActions.hidden = candidates.some(candidate => candidate.sourceType === 'BSManager');
+  }
   if (!firstRunSourceDraft && !readiness.sourceReady) {
     const recommendedSource = candidates.find(candidate => candidate.recorderReady);
     if (recommendedSource) firstRunSourceDraft = recommendedSource.path;
@@ -6914,6 +6924,52 @@ async function selectFirstRunSource(path) {
   render();
 }
 
+async function browseFirstRunSource() {
+  if (!window.replayRecorder?.chooseDirectory) {
+    showToast('Folder browsing is available in the Replay Recorder desktop app.');
+    return;
+  }
+
+  const input = document.getElementById('firstRunSourcePath');
+  const result = await window.replayRecorder.chooseDirectory(input?.value?.trim() || firstRunSourceDraft || '');
+  if (result?.canceled || !result?.path) return;
+
+  firstRunSourceDraft = result.path;
+  if (input) {
+    input.value = result.path;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+
+async function findFirstRunBsManager() {
+  if (!window.replayRecorder?.chooseDirectory) {
+    showToast('BSManager folder browsing is available in the Replay Recorder desktop app.');
+    return;
+  }
+
+  const result = await window.replayRecorder.chooseDirectory({
+    title: 'Choose your BSManager folder',
+    buttonLabel: 'Use BSManager folder'
+  });
+  if (result?.canceled || !result?.path) return;
+
+  const response = await fetch(`/api/setup/source?bsManagerRoot=${encodeURIComponent(result.path)}`);
+  if (!response.ok) throw new Error(await response.text());
+  setupSourcePathInfo = await response.json();
+  const bsManagerCandidates = (setupSourcePathInfo.detectedSources || [])
+    .filter(candidate => candidate.sourceType === 'BSManager');
+  if (bsManagerCandidates.length === 0) {
+    showToast('No Beat Saber installs were found in that BSManager folder.');
+    render();
+    return;
+  }
+
+  const preferred = bsManagerCandidates.find(candidate => candidate.recorderReady) || bsManagerCandidates[0];
+  firstRunSourceDraft = preferred.path;
+  render();
+  showToast(`Found ${bsManagerCandidates.length} BSManager Beat Saber install${bsManagerCandidates.length === 1 ? '' : 's'}.`);
+}
+
 async function enableFirstRunMetaSideloading() {
   await postJson('/api/setup/meta-sideloading/enable');
   showToast('Approve the Windows prompt, then select the Meta source again to recheck it.');
@@ -7147,6 +7203,8 @@ document.getElementById('setupModeInstallFfmpeg')?.addEventListener('click', () 
 document.getElementById('setupModeVerify')?.addEventListener('click', () => runAction(runSetupWizardVerify));
 document.getElementById('setupModeLaunchOnly')?.addEventListener('click', () => runAction(runSetupWizardLaunchOnly));
 document.getElementById('firstRunSourceContinue')?.addEventListener('click', () => runAction(continueFirstRunSource));
+document.getElementById('firstRunSourceBrowse')?.addEventListener('click', () => runAction(browseFirstRunSource));
+document.getElementById('firstRunFindBsManager')?.addEventListener('click', () => runAction(findFirstRunBsManager));
 document.getElementById('firstRunEnableMetaSideloading')?.addEventListener('click', () => runAction(enableFirstRunMetaSideloading));
 document.getElementById('firstRunDisplayContinue')?.addEventListener('click', () => runAction(continueFirstRunDisplay));
 document.getElementById('firstRunInstallFfmpeg')?.addEventListener('click', () => runAction(installFirstRunFfmpeg));

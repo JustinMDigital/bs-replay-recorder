@@ -44,11 +44,17 @@ function Resolve-RepoRelativePath {
 }
 
 function Resolve-DesktopHostCommand {
-    $publishedHost = Join-Path $RepoRoot "runtime\desktop-host\BSAutoReplayRecorder.DesktopHost.exe"
-    if (Test-Path -LiteralPath $publishedHost -PathType Leaf) {
-        return [pscustomobject]@{
-            File = $publishedHost
-            Arguments = @("--repo-root", $RepoRoot)
+    foreach ($runtimeRoot in @(
+        (Join-Path $RepoRoot "runtime"),
+        (Join-Path $RepoRoot "dist\runtime")
+    )) {
+        $publishedHost = Join-Path $runtimeRoot "desktop-host\BSAutoReplayRecorder.DesktopHost.exe"
+        if (Test-Path -LiteralPath $publishedHost -PathType Leaf) {
+            return [pscustomobject]@{
+                File = $publishedHost
+                Arguments = @("--repo-root", $RepoRoot)
+                RuntimeRoot = $runtimeRoot
+            }
         }
     }
 
@@ -60,7 +66,26 @@ function Resolve-DesktopHostCommand {
     return [pscustomobject]@{
         File = "dotnet"
         Arguments = @("run", "--project", $projectPath, "--", "--repo-root", $RepoRoot)
+        RuntimeRoot = ""
     }
+}
+
+function Use-PrivateDotNetRuntime {
+    param([string]$RuntimeRoot)
+
+    if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+        return
+    }
+
+    $privateDotnetRoot = Join-Path $RuntimeRoot "dotnet"
+    if (-not (Test-Path -LiteralPath (Join-Path $privateDotnetRoot "dotnet.exe") -PathType Leaf)) {
+        return
+    }
+
+    $env:DOTNET_ROOT = $privateDotnetRoot
+    $env:DOTNET_ROOT_X64 = $privateDotnetRoot
+    $env:DOTNET_MULTILEVEL_LOOKUP = "0"
+    Write-Step "Using bundled .NET runtime."
 }
 
 try {
@@ -70,6 +95,7 @@ try {
     }
 
     $hostCommand = Resolve-DesktopHostCommand
+    Use-PrivateDotNetRuntime -RuntimeRoot $hostCommand.RuntimeRoot
     $hostArgs = @($hostCommand.Arguments) + @("start")
     if ($RequireInstalled) {
         $hostArgs += "--require-installed"

@@ -79,7 +79,10 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
                                         PluginProjectRelativePath + ".");
             var repoRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(pluginProjectPath)!, "..", ".."));
             var buildRoot = Path.Combine(Path.GetFullPath(settings.WorkspaceDirectory), "Build", "WorkerPlugin");
-            BuildPlugin(pluginProjectPath, repoRoot, baselineDirectory, buildRoot);
+            var pluginBuild = SetupSourcePathDetector.ResolveWorkerPluginBuild(
+                string.IsNullOrWhiteSpace(settings.SourceBeatSaberPath) ? baselineDirectory : settings.SourceBeatSaberPath,
+                settings.SourceBeatSaberStore);
+            BuildPlugin(pluginProjectPath, repoRoot, baselineDirectory, buildRoot, pluginBuild["bs-".Length..]);
             outputDirectory = Path.Combine(buildRoot, "Debug", "netstandard2.1");
         }
 
@@ -104,7 +107,8 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         string pluginProjectPath,
         string repoRoot,
         string beatSaberDirectory,
-        string buildRoot)
+        string buildRoot,
+        string beatSaberGameVersion)
     {
         Directory.CreateDirectory(buildRoot);
         var startInfo = new ProcessStartInfo
@@ -120,6 +124,7 @@ internal sealed class DotNetWorkerPluginInstaller : IWorkerPluginInstaller
         startInfo.ArgumentList.Add(pluginProjectPath);
         startInfo.ArgumentList.Add("--nologo");
         startInfo.ArgumentList.Add("-p:BeatSaberDir=" + beatSaberDirectory);
+        startInfo.ArgumentList.Add("-p:BeatSaberGameVersion=" + beatSaberGameVersion);
         startInfo.ArgumentList.Add("-p:BaseOutputPath=" + EnsureTrailingSeparator(buildRoot));
 
         using var process = Process.Start(startInfo)

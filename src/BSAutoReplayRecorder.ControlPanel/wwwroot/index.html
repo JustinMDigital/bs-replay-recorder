@@ -325,8 +325,15 @@
             <h3>Choose the Beat Saber install to copy</h3>
             <p>Use a copy with BSIPA and BeatLeader already installed. Your normal game folder will not be changed.</p>
             <div id="firstRunSourceChoices" class="firstRunChoiceList"></div>
+            <div id="firstRunBsManagerActions" class="firstRunBsManagerActions" hidden>
+              <span>BSManager was not found in your user folder.</span>
+              <button id="firstRunFindBsManager" class="secondaryButton" type="button">Find BSManager...</button>
+            </div>
             <label class="firstRunPathField">Or enter a different folder
-              <input id="firstRunSourcePath" type="text" placeholder="C:\Program Files (x86)\Steam\steamapps\common\Beat Saber">
+              <span class="firstRunPathControl">
+                <input id="firstRunSourcePath" type="text" placeholder="C:\Program Files (x86)\Steam\steamapps\common\Beat Saber">
+                <button id="firstRunSourceBrowse" class="firstRunPathBrowseButton" type="button">Browse...</button>
+              </span>
             </label>
             <p id="firstRunSourceStatus" class="firstRunStatus"></p>
             <div class="firstRunWizardActions">

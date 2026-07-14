@@ -9032,6 +9032,54 @@ body[data-active-view="collections"] .shell.dashboardShell {
   width: 100%;
 }
 
+.firstRunBsManagerActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.firstRunBsManagerActions[hidden] {
+  display: none;
+}
+
+.firstRunBsManagerActions .secondaryButton {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 7px 12px;
+}
+
+.firstRunPathControl {
+  position: relative;
+  display: block;
+}
+
+.firstRunPathControl input {
+  padding-right: 94px;
+}
+
+.firstRunPathBrowseButton {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  transform: translateY(-50%);
+  border: 1px solid rgba(132, 184, 218, 0.34);
+  border-radius: 7px;
+  background: rgba(29, 57, 78, 0.96);
+  color: #dcecf7;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.firstRunPathBrowseButton:hover {
+  border-color: rgba(118, 202, 255, 0.66);
+  background: rgba(38, 79, 107, 0.98);
+}
+
 .firstRunStatus,
 .firstRunStatusCard {
   margin: 0;

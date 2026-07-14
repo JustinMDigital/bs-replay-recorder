@@ -580,6 +580,8 @@ public sealed class SetupSourcePathReport
 
 public sealed class SetupSourceCandidate
 {
+    public string SourceType { get; set; } = "Store";
+
     public string Store { get; set; } = "";
 
     public string DisplayName { get; set; } = "";

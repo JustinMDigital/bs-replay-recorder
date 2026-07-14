@@ -26,10 +26,30 @@ $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $SettingsPath = Join-Path $RepoRoot "settings.json"
 $SettingsExamplePath = Join-Path $RepoRoot "settings.example.json"
 $LocalSettings = $null
+$script:InstallerLogPath = ""
+
+function Write-InstallerLog {
+    param([string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($script:InstallerLogPath)) {
+        return
+    }
+
+    try {
+        $directory = Split-Path -Parent $script:InstallerLogPath
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        $timestamp = (Get-Date).ToUniversalTime().ToString("o")
+        Add-Content -LiteralPath $script:InstallerLogPath -Value "[$timestamp] $Message" -Encoding UTF8
+    }
+    catch {
+        # Diagnostics must not make the install fail.
+    }
+}
 
 function Write-Step {
     param([string]$Message)
     Write-Host "[installer] $Message"
+    Write-InstallerLog "[installer] $Message"
 }
 
 function Ensure-LocalSettingsFile {
@@ -589,6 +609,10 @@ if ([string]::IsNullOrWhiteSpace($InstancesRoot)) {
 }
 $InstancesRoot = [IO.Path]::GetFullPath($InstancesRoot)
 $StatePath = Join-Path $Workspace "control-panel-state.json"
+$script:InstallerLogPath = Join-Path $Workspace "Logs\installer.log"
+Write-InstallerLog "=== Replay Recorder installer started ==="
+Write-InstallerLog "Repository root: $RepoRoot"
+Write-InstallerLog "Workspace: $Workspace"
 $ControlPanelProject = Join-Path $RepoRoot "src\BSAutoReplayRecorder.ControlPanel\BSAutoReplayRecorder.ControlPanel.csproj"
 $RecorderHostProject = Join-Path $RepoRoot "src\BSAutoReplayRecorder.RecorderHost\BSAutoReplayRecorder.RecorderHost.csproj"
 $ProcessLoopbackProject = Join-Path $RepoRoot "tools\ProcessLoopbackCapture.Managed\ProcessLoopbackCapture.Managed.csproj"
@@ -598,6 +622,15 @@ $StartScript = Join-Path $RepoRoot "scripts\launcher\Start-ReplayRecorder.ps1"
 $StopScript = Join-Path $RepoRoot "scripts\launcher\Stop-ReplayRecorder.ps1"
 $CopyExistingSongsSelected = [bool]$CopyExistingSongs
 $RuntimeRoot = Join-Path $RepoRoot "runtime"
+foreach ($runtimeCandidate in @(
+    (Join-Path $RepoRoot "runtime"),
+    (Join-Path $RepoRoot "dist\runtime")
+)) {
+    if (Test-Path -LiteralPath (Join-Path $runtimeCandidate "control-panel\BSAutoReplayRecorder.ControlPanel.exe") -PathType Leaf) {
+        $RuntimeRoot = $runtimeCandidate
+        break
+    }
+}
 $HasPublishedRuntime = (Test-Path -LiteralPath (Join-Path $RuntimeRoot "control-panel\BSAutoReplayRecorder.ControlPanel.exe") -PathType Leaf) -and
     (Test-Path -LiteralPath (Join-Path $RuntimeRoot "recorder-host\BSAutoReplayRecorder.RecorderHost.exe") -PathType Leaf) -and
     (Test-Path -LiteralPath (Join-Path $RuntimeRoot "desktop-host\BSAutoReplayRecorder.DesktopHost.exe") -PathType Leaf)
@@ -618,7 +651,7 @@ function Assert-Command {
     param([string]$Name)
 
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        throw "Required command '$Name' was not found. Install it and run Support\install.bat again."
+        throw "Required command '$Name' was not found. Install it, then run setup again."
     }
 }
 
@@ -1286,15 +1319,32 @@ function Copy-BeatSaberInstance {
         [switch]$CopySongs
     )
 
-    if (Test-Path $Target) {
-        return
+    if (Test-Path -LiteralPath $Target) {
+        if (-not (Test-Path -LiteralPath $Target -PathType Container)) {
+            throw "Cannot create the Beat Saber instance because the target path is not a folder: $Target"
+        }
+
+        if (Test-Path -LiteralPath (Join-Path $Target "Beat Saber.exe") -PathType Leaf) {
+            return
+        }
+
+        Write-Step "Found an incomplete instance folder at $Target. Resuming the copy."
     }
 
     New-Item -ItemType Directory -Path (Split-Path -Parent $Target) -Force | Out-Null
     New-Item -ItemType Directory -Path $Target -Force | Out-Null
     $songMode = if ($CopySongs) { "including existing songs" } else { "excluding existing songs" }
     Write-Step "Copying Beat Saber to $Target ($songMode)"
-    Copy-DirectoryContents -SourceRoot $Source -TargetRoot $Target -RelativeRoot "" -CopySongs:$CopySongs
+    try {
+        Copy-DirectoryContents -SourceRoot $Source -TargetRoot $Target -RelativeRoot "" -CopySongs:$CopySongs
+    }
+    catch {
+        throw "Could not copy Beat Saber from '$Source' to '$Target'. $($_.Exception.Message)"
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $Target "Beat Saber.exe") -PathType Leaf)) {
+        throw "Beat Saber was copied from '$Source', but Beat Saber.exe is still missing from '$Target'. Close Beat Saber and BSManager, then run setup again."
+    }
 }
 
 function Test-PreviousSongLibraryPath {
@@ -1830,6 +1880,59 @@ function Invoke-StartRecorderStack {
     }
 }
 
+function Get-InstallRecoverySteps {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $detail = "$($ErrorRecord.Exception.Message) $($ErrorRecord.ScriptStackTrace)"
+    if ($detail -match "Could not copy Beat Saber|Access to the path|Access is denied|being used by another process|sharing violation") {
+        return @(
+            "Close Beat Saber, BSManager, and any File Explorer window open in the Beat Saber or Instances folders.",
+            "Run Replay Recorder.exe again. The installer will resume an incomplete I-1 folder.",
+            "If the same copy fails again, delete only '$InstancesRoot\I-1' and retry."
+        )
+    }
+
+    if ($detail -match "not enough space|disk full|There is not enough space") {
+        return @(
+            "Free space on the drive containing '$Workspace', then run Replay Recorder.exe again.",
+            "Keep the source Beat Saber folder intact; setup can resume after space is available."
+        )
+    }
+
+    if ($detail -match "path.*too long|path length|filename or extension is too long") {
+        return @(
+            "Move the extracted portable folder closer to the drive root, for example 'C:\Replay Recorder'.",
+            "Do not run the app from inside the ZIP; extract the whole folder first, then run Replay Recorder.exe."
+        )
+    }
+
+    if ($detail -match "SourceBeatSaberPath|source folder|Beat Saber.exe was not found") {
+        return @(
+            "Select the exact Beat Saber installation folder that directly contains 'Beat Saber.exe'.",
+            "For BSManager, choose the version folder, for example '...\BSInstances\1.40.6'."
+        )
+    }
+
+    if ($detail -match "FFmpeg|ffprobe") {
+        return @(
+            "Install a full FFmpeg build that includes both ffmpeg.exe and ffprobe.exe, then run setup again.",
+            "Or set ffmpegPath in settings.json to the full path of ffmpeg.exe."
+        )
+    }
+
+    if ($detail -match "dotnet|Control panel build failed|Recorder host build failed|Plugin build failed") {
+        return @(
+            "For a portable release, re-extract the complete ZIP and start the root Replay Recorder.exe.",
+            "For a source checkout, install the .NET SDK and rerun setup."
+        )
+    }
+
+    return @(
+        "Run Replay Recorder.exe again after addressing the message above.",
+        "If it still fails, send the installer log path shown below with a screenshot."
+    )
+}
+
 try {
     $runningControlPanelUrl = $ControlPanelUrl.TrimEnd("/")
     if (-not $Force -and (Test-HttpEndpoint "$runningControlPanelUrl/api/state")) {
@@ -1852,7 +1955,12 @@ try {
     }
 
     Write-Section "Prerequisites"
-    Assert-Command "dotnet"
+    if (-not $HasPublishedRuntime -or (-not $SkipPluginDeploy -and -not $HasBundledWorkerPlugin)) {
+        Assert-Command "dotnet"
+    }
+    else {
+        Write-Step "Using bundled desktop runtime; no system .NET SDK is required."
+    }
     Assert-Command "powershell.exe"
     Resolve-FfmpegPrerequisite | Out-Null
     $resolvedSource = Resolve-BeatSaberPath
@@ -1926,7 +2034,7 @@ try {
         }
 
         if ($readyInstanceDirectories.Count -lt 1) {
-            throw "Install could not create the required baseline instance."
+            throw "Could not create the baseline instance. Beat Saber.exe is still missing from '$baselineDirectory'. Close Beat Saber and BSManager, then run setup again. If it keeps failing, delete only '$baselineDirectory' and retry."
         }
 
         if ($readyInstanceDirectories.Count -lt $presetSettings.InstanceCount) {
@@ -2036,8 +2144,22 @@ try {
     Write-Step "Use Launch Games or Setup > Launch + Verify to start Beat Saber instances."
 }
 catch {
+    $failure = $_
+    Write-InstallerLog "=== Install failed ==="
+    Write-InstallerLog "Message: $($failure.Exception.Message)"
+    Write-InstallerLog "Type: $($failure.Exception.GetType().FullName)"
+    Write-InstallerLog "Stack: $($failure.ScriptStackTrace)"
     Write-Host ""
-    Write-Host "Install failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Install failed: $($failure.Exception.Message)" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "How to fix it:" -ForegroundColor Yellow
+    foreach ($step in Get-InstallRecoverySteps -ErrorRecord $failure) {
+        Write-Host "  - $step"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:InstallerLogPath)) {
+        Write-Host ""
+        Write-Host "Installer log: $script:InstallerLogPath"
+    }
     Write-Host ""
     Read-Host "Press Enter to close"
     exit 1
